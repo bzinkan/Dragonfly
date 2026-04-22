@@ -7,8 +7,8 @@ FastAPI app wrapped with Mangum for Lambda. Also runnable locally via
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 import structlog
 from fastapi import FastAPI
@@ -55,9 +55,7 @@ def configure_logging() -> None:
             structlog.processors.format_exc_info,
             structlog.processors.JSONRenderer(),
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(
-            getattr(logging, settings.log_level)
-        ),
+        wrapper_class=structlog.make_filtering_bound_logger(getattr(logging, settings.log_level)),
         logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=True,
     )
