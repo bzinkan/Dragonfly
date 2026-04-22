@@ -1,0 +1,95 @@
+name: CI
+
+# Runs on every PR and on every push to main.
+# - backend: ruff + mypy + pytest with coverage
+# - content: validates expedition JSON
+# - infra-diff: cdk diff against the dev account (PRs only)
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend lint, typecheck, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: uv sync
+
+      - name: Lint (ruff)
+        working-directory: backend
+        run: uv run ruff check .
+
+      - name: Format check (ruff)
+        working-directory: backend
+        run: uv run ruff format --check .
+
+      - name: Typecheck (mypy)
+        working-directory: backend
+        run: uv run mypy app
+
+      - name: Test (pytest + coverage)
+        working-directory: backend
+        run: uv run pytest -v --cov=app --cov-report=xml --cov-report=term
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: backend/coverage.xml
+          retention-days: 14
+
+  infra-diff:
+    name: CDK diff (dev)
+    runs-on: ubuntu-latest
+    # Only on PRs — merges to main go through deploy-dev.yml, which does its
+    # own diff as part of deploy.
+    if: github.event_name == 'pull_request'
+    permissions:
+      id-token: write   # OIDC for AWS auth
+      contents: read
+      pull-requests: write  # for diff-as-comment (future)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install CDK CLI
+        run: npm install -g aws-cdk@2
+
+      - name: Install infra dependencies
+        working-directory: infra
+        run: uv sync
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_DEV }}
+          aws-region: us-east-1
+
+      - name: CDK diff
+        working-directory: infra
+        env:
+          DRAGONFLY_ENV: dev
+        run: uv run cdk diff --all

@@ -1,0 +1,105 @@
+[project]
+name = "dragonfly-backend"
+version = "0.1.0"
+description = "Dragonfly API — citizen science for kids 9–12"
+requires-python = ">=3.12"
+readme = "README.md"
+
+dependencies = [
+    # Web framework
+    "fastapi>=0.115.0",
+    "mangum>=0.19.0",              # Lambda adapter for ASGI
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.5.0",
+
+    # AWS
+    "boto3>=1.35.0",
+    "botocore>=1.35.0",
+
+    # Auth
+    "python-jose[cryptography]>=3.3.0",  # Cognito JWT verification
+
+    # HTTP client (async, for iNat)
+    "httpx>=0.27.0",
+
+    # Observability
+    "structlog>=24.4.0",
+
+    # IDs and time
+    "python-ulid>=2.7.0",
+    "python-geohash>=0.8.5",
+]
+
+[dependency-groups]
+dev = [
+    # Testing
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=5.0.0",
+    "moto[dynamodb,s3,sqs,cognitoidp]>=5.0.0",
+    "httpx>=0.27.0",               # for TestClient
+
+    # Linting and typing
+    "ruff>=0.6.0",
+    "mypy>=1.11.0",
+    "types-python-jose",
+
+    # Local dev
+    "watchfiles>=0.24.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # bugbear
+    "C4",   # comprehensions
+    "UP",   # pyupgrade
+    "SIM",  # simplify
+    "RUF",  # ruff-specific
+]
+ignore = [
+    "E501",  # line too long — ruff format handles this
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B018"]  # allow useless-expression in tests (pytest asserts)
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["geohash.*", "moto.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+]
+markers = [
+    "integration: tests that require moto or DynamoDB Local",
+    "slow: tests that take >1s",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["tests/*", "lambdas/*/handler.py"]
+
+[tool.coverage.report]
+skip_covered = false
+show_missing = true
+fail_under = 75  # bump to 85 by end of Phase 1

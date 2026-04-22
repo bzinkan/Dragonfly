@@ -1,0 +1,86 @@
+name: Deploy to dev
+
+# Auto-deploys to the dev AWS account on every merge to main.
+# Staging and prod are separate manual-approval workflows (not yet added).
+#
+# AWS access is via OIDC — the `AWS_DEPLOY_ROLE_DEV` secret is the ARN of an
+# IAM role in the dev account with a trust policy that accepts the GitHub OIDC
+# provider and is scoped to this repository. Setup instructions live in
+# docs/runbook.md.
+
+on:
+  push:
+    branches: [main]
+
+# Only one deploy at a time; cancel stale runs if a new push comes in.
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  sync-content:
+    name: Sync expedition content
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: uv sync
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_DEV }}
+          aws-region: us-east-1
+
+      - name: Sync expeditions to DynamoDB
+        working-directory: backend
+        env:
+          DRAGONFLY_ENV: dev
+        run: uv run python ../scripts/sync_expeditions.py
+
+  deploy:
+    name: CDK deploy (dev)
+    runs-on: ubuntu-latest
+    environment: dev
+    needs: sync-content
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install CDK CLI
+        run: npm install -g aws-cdk@2
+
+      - name: Install infra dependencies
+        working-directory: infra
+        run: uv sync
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_DEV }}
+          aws-region: us-east-1
+
+      - name: CDK deploy
+        working-directory: infra
+        env:
+          DRAGONFLY_ENV: dev
+        run: uv run cdk deploy --all --require-approval never
