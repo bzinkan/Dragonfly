@@ -6,6 +6,28 @@ Related reading: `architecture.md` (what the system looks like when it's healthy
 
 ---
 
+## Smoke-testing `/health` in dev
+
+**Why this is here.** The `dragonfly-app.net` Workspace org enforces `iam.allowedPolicyMemberDomains`, which blocks `--allow-unauthenticated` on Cloud Run services. Every endpoint — including `/health` — requires a valid identity token. The org policy is intentionally left intact (per ADR 0005 deploy notes) because Firebase Auth (Week 3) replaces this with the proper auth model.
+
+**Command.**
+
+```bash
+curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" https://api.dragonfly-app.net/health
+```
+
+Expected response:
+
+```json
+{"status":"ok","env":"dev","version":"0.1.0"}
+```
+
+If you get HTTP 403 with `Your client does not have permission`: your gcloud identity isn't authorized to invoke the service. Either authenticate as `brian@dragonfly-app.net` (the Cloud Run service grants `run.invoker` on `dragonflyapp.net`-domain principals only) or impersonate a service account that has the role.
+
+**When this changes.** Once Firebase Auth lands in Week 3, `/health` should be moved to a public allow-list (org policy exception or IAP exclusion) so external monitoring can hit it without a Google identity. All other endpoints will accept Firebase ID tokens issued to parent/teacher/kid accounts.
+
+---
+
 ## iNat submit DLQ has messages
 
 **Signal.** CloudWatch alarm: `iNat submit DLQ depth > 0` for 5 minutes.
