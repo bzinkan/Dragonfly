@@ -6,6 +6,48 @@ Related reading: `architecture.md` (what the system looks like when it's healthy
 
 ---
 
+## DNS — `dragonfly-app.net` is on Cloud DNS
+
+**Authority.** As of 2026-05-05, the zone for `dragonfly-app.net` lives in Cloud DNS under managed zone `dragonfly-app-zone` in project `dragonflyapp-495423`. Squarespace is the **registrar** only — it no longer serves DNS. The four authoritative nameservers are `ns-cloud-a1` through `ns-cloud-a4.googledomains.com.`
+
+**Records under management.**
+
+| Name | Type | Value | TTL | Purpose |
+|---|---|---|---|---|
+| `dragonfly-app.net.` | A (×4) | Squarespace web hosting IPs | 14400 | Landing/marketing site (still hosted at Squarespace) |
+| `dragonfly-app.net.` | MX | `1 smtp.google.com.` | 3600 | Workspace mail |
+| `dragonfly-app.net.` | TXT | `v=spf1 include:_spf.google.com ~all` | 3600 | SPF |
+| `google._domainkey.dragonfly-app.net.` | TXT | `v=DKIM1; k=rsa; p=...` (410 chars, split) | 3600 | DKIM |
+| `www.dragonfly-app.net.` | CNAME | `ext-sq.squarespace.com.` | 14400 | www → Squarespace |
+| `api.dragonfly-app.net.` | CNAME | `ghs.googlehosted.com.` | 300 | Cloud Run mapping for `dragonfly-api` |
+
+**Adding a new record.** Always use a transaction so partial failures don't leave the zone half-changed.
+
+```bash
+gcloud dns record-sets transaction start --zone=dragonfly-app-zone
+gcloud dns record-sets transaction add "<value>" \
+  --name=<host>.dragonfly-app.net. --type=<TYPE> --ttl=<ttl> \
+  --zone=dragonfly-app-zone
+gcloud dns record-sets transaction execute --zone=dragonfly-app-zone
+```
+
+For TXT values longer than 255 chars (DKIM, long site-verification tokens), split into multiple quoted strings within one rrdata: `'"first 255 chars" "remaining chars"'`. Resolvers concatenate per RFC 6376.
+
+**Rollback to Squarespace DNS.** If something goes wrong: at the Squarespace registrar dashboard, restore the old nameservers (`nsc1–4.squarespacedns.com`). The Squarespace zone records were not deleted on migration day; cutover is reversible at the registrar level alone, no Cloud DNS changes needed.
+
+**Verifying mail continuity post-cutover.**
+
+```bash
+# After NS swap, confirm MX still resolves to Workspace from a fresh resolver:
+nslookup -type=MX dragonfly-app.net 8.8.8.8
+# Or against any Cloud DNS NS directly:
+nslookup -type=MX dragonfly-app.net ns-cloud-a1.googledomains.com
+```
+
+Expected: `dragonfly-app.net mail exchanger = 1 smtp.google.com`. If this drifts, mail to `*@dragonfly-app.net` will silently bounce — investigate immediately.
+
+---
+
 ## Smoke-testing `/health` in dev
 
 **Why this is here.** The `dragonfly-app.net` Workspace org enforces `iam.allowedPolicyMemberDomains`, which blocks `--allow-unauthenticated` on Cloud Run services. Every endpoint — including `/health` — requires a valid identity token. The org policy is intentionally left intact (per ADR 0005 deploy notes) because Firebase Auth (Week 3) replaces this with the proper auth model.
