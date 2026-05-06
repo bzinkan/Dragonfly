@@ -89,8 +89,10 @@ Structured JSON logs from every Cloud Run service, ingested by **Cloud Logging**
 
 ## Key invariants (things to preserve through all four phases)
 
+These are deliberately platform-agnostic — they survive AWS, GCP, and any future migration.
+
 1. **The submission endpoint never changes shape.** Handlers are added; the endpoint is not modified.
-2. **Expedition JSON is the source of truth.** DynamoDB is a materialized view of `content/expeditions/`. A deploy is the only write path.
-3. **Conditional `PutItem` is how first-find is detected.** Don't add a read-then-write pattern; it introduces a race.
-4. **Moderation happens in S3, not in the API Lambda.** The API path must not block on Rekognition.
+2. **Expedition JSON is the source of truth.** The operational datastore is a materialized view of `content/expeditions/`. A deploy is the only write path.
+3. **Atomic conditional writes are how first-find is detected.** Don't add a read-then-write pattern; it introduces a race. (On Postgres: `INSERT ... ON CONFLICT DO NOTHING`. On DynamoDB it was `PutItem` with `ConditionExpression`.)
+4. **Moderation happens out of band, not in the API request path.** The API must not block on the moderation provider.
 5. **Denormalized counters on membership rows are the leaderboard.** Don't aggregate at read time.

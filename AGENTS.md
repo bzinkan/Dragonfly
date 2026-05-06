@@ -344,4 +344,3 @@ For any platform migration:
 - Secrets are managed outside git.
 - Smoke test is documented and run.
 - Cost and alerting impact is understood.
-

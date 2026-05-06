@@ -26,7 +26,7 @@ scripts/    sync_expeditions, seed_dev_data, backfill_rarity, validate.
 
 ## Current direction
 
-Active migration target is **GCP / Cloud Run** for the API runtime. The AWS CDK path under `infra/` remains in the repo until a GCP architecture ADR replaces it. See AGENTS.md §"Current Direction" for the compatibility rules during the transition.
+Active migration target is **GCP / Cloud Run** for the API runtime. The GCP target architecture is documented in [ADR 0005](docs/adr/0005-gcp-target-architecture.md). The AWS CDK path under `infra/` remains in the repo until the `infra-gcp/` migration completes. See AGENTS.md §"Current Direction" for the compatibility rules during the transition.
 
 ## Getting started (Phase 0)
 

@@ -11,7 +11,6 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml uv.lock ./
 
 RUN uv sync --frozen --no-install-project --no-dev
-RUN uv pip install "uvicorn>=0.30,<1"
 
 FROM python:3.12-slim
 
