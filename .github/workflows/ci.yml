@@ -1,15 +1,13 @@
 name: CI
 
-# Runs on every PR and on every push to main.
+# Runs on every PR and every push (any branch).
 # - backend: ruff + mypy + pytest with coverage
 # - content: validates expedition JSON
 # - infra-diff: cdk diff against the dev account (PRs only)
 
 on:
   pull_request:
-    branches: [main]
   push:
-    branches: [main]
 
 concurrency:
   group: ci-${{ github.ref }}
