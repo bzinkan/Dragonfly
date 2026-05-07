@@ -22,6 +22,7 @@ Get a real deployed API responding to a real Expo client. Nothing fancy; this is
 - FastAPI on Cloud Run returns 200 on `GET /health`.
 - Expo project (new) fetches `/health` and renders the JSON.
 - GitHub Actions: build via Cloud Build on PR, `gcloud run deploy` on merge to main for `dev`.
+- Terraform owns durable dev infrastructure, including Artifact Registry, Cloud Run, Cloud SQL, GCS, IAM, Workload Identity Federation, and baseline monitoring.
 
 **Exit criterion.** Expo app on a physical device (iOS or Android) displays the `/health` response from the deployed Cloud Run service in `dev`. Phase 0 is done. Do not proceed to Week 3 until this is green.
 
@@ -48,6 +49,7 @@ The core write path, minus async workers. Synchronous everything; no iNat push y
 - `POST /v1/observations` — validates, runs the submission transaction (insert observation row + bump membership counter + first-find `INSERT ... ON CONFLICT DO NOTHING` on the dex table), invokes a stub dispatcher that returns an empty reward list.
 - SQLAlchemy models for users, groups, memberships, observations, dex.
 - Postgres access via the Cloud SQL Python connector with `asyncpg`, in `app/db/session.py`.
+- `ingest_runs` records replayable audit state for observation/photo/content/cache jobs that mutate durable state.
 
 **Exit criterion.** Kid account on mobile can pick a photo from device, upload it, and see the observation appear in a "my observations" list backed by `SELECT ... FROM observations WHERE user_id = $1 ORDER BY created_at DESC`. The list shows the photo from its GCS URL.
 
@@ -127,6 +129,7 @@ Content treadmill starts here. The tooling built this week is what makes 2-exped
 - `scripts/draft_expedition.py` — author-time LLM tool (ADR 0002 compliant). Input: theme prompt. Output: expedition JSON draft.
 - `scripts/validate_content.py` — validates `content/expeditions/**/*.json` against the Pydantic model.
 - `scripts/sync_expeditions.py` — syncs validated JSON to Postgres on merge to main.
+- Content sync writes `ingest_runs` state and is safe to replay by content hash.
 - `.github/workflows/content-validate.yml` — CI gate.
 - The five starter expeditions authored and checked in: `backyard_starter`, `park_starter`, `street_starter`, `school_starter`, `anywhere_starter`.
 
@@ -151,6 +154,7 @@ Minimum viable teacher surface, plus a richer expedition catalog so the beta has
 Last week before closed beta. Everything flagged "Phase 1 Week 12" in follow-ups lands here.
 
 - `scripts/replay_missed_dispatch.py` (ADR 0004 follow-up).
+- `scripts/replay_ingest.py` for failed ingest runs by source and cursor.
 - Cloud Monitoring alert: observations without matching dex rows older than 1 hour (ADR 0004 follow-up).
 - Cloud Monitoring alert: per-request LLM calls from the API service (ADR 0002 follow-up).
 - GCP billing budget alerts on Google Maps Platform usage (ADR 0003 follow-up).
@@ -173,6 +177,8 @@ Tracking here so they don't creep in.
 - **Teacher dashboard beyond review queue** — Phase 2.
 - **Custom MapLibre styling** — Phase 2 (use Stadia/OSM default for starters).
 - **Push notifications** — Phase 2.
+- **CrewAI or multi-agent runtime control** — not in product runtime. Internal tooling only after ADR 0007 proof of concept.
+- **Legacy AWS removal** — dedicated cleanup after Cloud Run serves production traffic: remove `infra/`, Mangum, and the paused AWS deploy workflow in one PR.
 
 If one of these starts feeling essential mid-Phase 1, write it down and keep moving. The shape of Phase 1 was chosen specifically so none of these are needed for the closed beta to succeed.
 

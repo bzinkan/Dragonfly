@@ -1,47 +1,58 @@
 # Dragonfly
 
-Citizen science field app for kids 9–12. Every observation is real science via iNaturalist, fills a personal Dex, claims map territory, and earns standing in a class or friend group. Invite-only.
+Citizen-science field app for kids ages 9-12. Every observation is real
+science via iNaturalist, fills a personal Dex, contributes to expeditions, and
+earns standing in an invite-only class or family group.
 
-## Repo layout
+## Repo Layout
 
 Exists today:
 
-```
-backend/    FastAPI app. Runs locally via uvicorn; Mangum handler kept
-            for the AWS path. Dockerfile targets Cloud Run.
-infra/      AWS CDK (Python) stacks: api, auth, data. Legacy path —
-            kept until the GCP migration ADR lands and removes it.
-docs/       Architecture, data model, ADRs. Read these first.
-AGENTS.md   Project plan, invariants, and guardrails for coding agents.
+```text
+backend/     FastAPI app. Runs locally via uvicorn; Mangum handler kept for
+             the legacy AWS path until Cloud Run is fully production.
+infra-gcp/   Terraform for Cloud Run, Cloud SQL, GCS, Artifact Registry, IAM,
+             Workload Identity Federation, monitoring, and DNS.
+infra/       Legacy AWS CDK stacks. Kept only until the GCP path is serving
+             production traffic.
+docs/        Architecture, data model, ingest rules, ADRs, and runbooks.
+internal/    Internal-only tooling such as future AI-agent experiments.
+AGENTS.md    Project plan, invariants, and guardrails for coding agents.
 ```
 
 Planned, not yet present:
 
+```text
+mobile/      Expo app for iOS, Android, and web.
+content/     Expedition JSON. Source of truth; Postgres is a materialized view.
+scripts/     Content sync, replay, seed, validation, and operational helpers.
 ```
-lambdas/    Moderation, iNat submit, rarity refresh.
-mobile/     Expo (React Native) — iOS, Android, web.
-content/    Expedition JSON. Source of truth; datastore is a view.
-scripts/    sync_expeditions, seed_dev_data, backfill_rarity, validate.
-```
 
-## Current direction
+## Current Direction
 
-Active migration target is **GCP / Cloud Run** for the API runtime. The GCP target architecture is documented in [ADR 0005](docs/adr/0005-gcp-target-architecture.md). The AWS CDK path under `infra/` remains in the repo until the `infra-gcp/` migration completes. See AGENTS.md §"Current Direction" for the compatibility rules during the transition.
+Active migration target is **GCP / Cloud Run** for the API runtime. The GCP
+target architecture is documented in
+[`docs/adr/0005-gcp-target-architecture.md`](docs/adr/0005-gcp-target-architecture.md).
+Postgres replaces the old DynamoDB data model. Ingest pipelines are explicit
+and replayable per [`docs/adr/0006-ingest-pipelines.md`](docs/adr/0006-ingest-pipelines.md).
+AI agent tooling is internal-only per
+[`docs/adr/0007-internal-ai-agent-tooling.md`](docs/adr/0007-internal-ai-agent-tooling.md).
 
-## Getting started (Phase 0)
+## Getting Started
 
-Prereqs: Python 3.12, `uv`. AWS CLI + CDK v2 only required for the legacy AWS deploy path.
+Prereqs: Python 3.12, `uv`, Docker, and Terraform for GCP infra work.
 
 ```bash
 make install
-make dev-db                 # optional local Postgres for Phase 3+ API work
-make dev                    # FastAPI on :8080
+make dev-db
+make db-migrate
+make dev
 curl localhost:8080/health
 curl localhost:8080/ready
 curl localhost:8080/v1/meta
 ```
 
-Cloud Run (current target):
+Docker smoke:
 
 ```bash
 docker build -t dragonfly-api backend/
@@ -49,25 +60,33 @@ docker run --rm -p 8080:8080 -e DRAGONFLY_ENV=local dragonfly-api
 curl localhost:8080/health
 ```
 
-AWS CDK (legacy path, dev account):
+Terraform dev plan:
+
+```bash
+make terraform-plan-dev
+```
+
+Legacy AWS CDK remains available only for historical/reference work:
 
 ```bash
 cd infra
 export DRAGONFLY_ENV=dev
-uv run cdk bootstrap        # once per account/region
+uv run cdk bootstrap
 uv run cdk deploy --all
 ```
 
-Phase 0 exit criterion: the Expo app shows the response from `/health` served by the deployed API. Don't build Phase 1 features until this round-trip works.
+## Where To Look
 
-## Where to look when
+- **Agent instructions and current phase:** `AGENTS.md`
+- **Architecture:** `docs/architecture.md`
+- **Postgres model:** `docs/data-model.md`
+- **Ingest/replay rules:** `docs/ingest.md`
+- **Rewards and dispatcher:** `docs/dispatcher.md`
+- **Mobile constraints:** `docs/mobile.md`
+- **Decisions:** `docs/adr/`
 
-- **How a feature works end-to-end:** `docs/architecture.md`
-- **What the DB looks like:** `docs/data-model.md`
-- **How to add a reward type:** `docs/dispatcher.md`
-- **How to write an expedition:** `docs/expedition-authoring.md`
-- **What decision was made and why:** `docs/adr/`
+## Current Phase
 
-## Current phase
-
-Phase 1 (MVP). 10–12 weeks solo. See `docs/roadmap.md` for the week-by-week plan.
+Phase 1 MVP, targeting closed beta. The current implementation focus is the
+production foundation: Cloud Run, Cloud SQL/Postgres, Terraform, ingest
+contracts, and deterministic API/runtime scaffolding before product features.

@@ -11,10 +11,11 @@ Start with these files, in this order:
 1. `README.md` for repo intent and current phase.
 2. `docs/architecture.md` for system shape and invariants.
 3. `docs/roadmap.md` for the Phase 1 execution plan and exit criteria.
-4. `docs/data-model.md` for entity keys and access patterns.
-5. `docs/dispatcher.md` for reward handling.
-6. `docs/mobile.md` for Expo/mobile constraints.
-7. `docs/adr/` for decisions that must not be casually reversed.
+4. `docs/data-model.md` for Postgres tables and access patterns.
+5. `docs/ingest.md` for replayable data-pipeline rules.
+6. `docs/dispatcher.md` for reward handling.
+7. `docs/mobile.md` for Expo/mobile constraints.
+8. `docs/adr/` for decisions that must not be casually reversed.
 
 If code and docs disagree, stop and reconcile them in the same PR. Do not let architecture drift silently.
 
@@ -44,6 +45,8 @@ Preserve these through every phase:
 - Expedition JSON/content is source of truth. The database is a materialized view.
 - Leaderboard counters live on membership rows. Do not aggregate observations at read time for normal leaderboard reads.
 - No ads, marketing pushes, public chat, DMs, or kid-to-kid free text in Phase 1.
+- Ingest jobs must be idempotent, replayable, and auditable.
+- CrewAI or multi-agent tooling is internal/adult-only. Do not import it from `backend/app` or put it on a kid-facing request path.
 
 ## Working Rules
 
@@ -66,11 +69,14 @@ Current backend baseline:
 - `/health` endpoint is the first deployment smoke test.
 - `Mangum` handler remains for AWS compatibility.
 - Cloud Run runtime should use uvicorn against `app.main:app`.
+- Postgres foundation lives under `backend/app/db/` with Alembic migrations.
+- Ingest contracts live under `backend/app/ingest/`.
 
 Migration scaffolding present:
 
 - `infra/` — legacy AWS CDK stacks. To be removed after Cloud Run is in prod (per ADR 0005).
-- `infra-gcp/dns/main.tf` — Terraform stub for the Cloud DNS zone `dragonfly-app-zone`. Import path documented in the file. The broader Terraform-vs-gcloud-scripts decision for the rest of the GCP infra is open per ADR 0005 follow-ups.
+- `infra-gcp/` — Terraform root for Cloud Run, Cloud SQL, GCS, Artifact Registry, IAM, Workload Identity Federation, monitoring, and DNS.
+- `infra-gcp/dns/main.tf` — Terraform stub for the Cloud DNS zone `dragonfly-app-zone`. Import path documented in the file.
 
 ## End-to-End Plan
 
@@ -153,8 +159,9 @@ Exit criteria:
 
 **Status:** In progress 2026-05-06. Backend foundation implemented locally:
 typed settings, structured request logging, error envelope, `/health`, `/ready`,
-`/v1/meta`, local Postgres compose scaffold, and focused tests. Cloud Run deploy
-of this slice is still pending before marking the phase complete.
+`/v1/meta`, local Postgres compose scaffold, Postgres model/migration baseline,
+ingest contracts, Terraform production-foundation scaffold, and focused tests.
+Cloud Run deploy of this slice is still pending before marking the phase complete.
 
 ### 4. Auth, Groups, and Roles
 
