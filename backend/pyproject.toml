@@ -23,6 +23,7 @@ dependencies = [
     "botocore>=1.35.0",
 
     # Auth
+    "firebase-admin>=6.5.0",             # Firebase ID token verification
     "python-jose[cryptography]>=3.3.0",  # JWT verification helpers
 
     # HTTP client (async, for iNat)
@@ -85,7 +86,7 @@ warn_unused_ignores = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["geohash.*", "moto.*"]
+module = ["firebase_admin.*", "geohash.*", "moto.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
