@@ -22,6 +22,7 @@ locals {
     "iamcredentials.googleapis.com",
     "logging.googleapis.com",
     "monitoring.googleapis.com",
+    "orgpolicy.googleapis.com",
     "run.googleapis.com",
     "secretmanager.googleapis.com",
     "sqladmin.googleapis.com",
@@ -280,6 +281,33 @@ resource "google_cloud_run_v2_service_iam_member" "api_invokers" {
   name     = google_cloud_run_v2_service.api.name
   role     = "roles/run.invoker"
   member   = each.key
+
+  # If the member set includes allUsers / allAuthenticatedUsers, the org
+  # policy override below must apply first or the binding will be silently
+  # dropped by iam.allowedPolicyMemberDomains. depends_on is a no-op when
+  # cloud_run_public is false (count = 0).
+  depends_on = [google_org_policy_policy.domain_restricted_sharing]
+}
+
+# Optional project-scope override of iam.allowedPolicyMemberDomains so
+# allUsers and allAuthenticatedUsers can be granted Cloud Run invoker.
+# Required for public mobile API access; gated by var.cloud_run_public so
+# staging/prod can opt in independently. See ADR 0008.
+resource "google_org_policy_policy" "domain_restricted_sharing" {
+  count = var.cloud_run_public ? 1 : 0
+
+  name   = "projects/${data.google_project.current.project_id}/policies/iam.allowedPolicyMemberDomains"
+  parent = "projects/${data.google_project.current.project_id}"
+
+  spec {
+    inherit_from_parent = false
+    reset               = false
+    rules {
+      allow_all = "TRUE"
+    }
+  }
+
+  depends_on = [google_project_service.enabled]
 }
 
 resource "google_service_account" "github_deploy" {

@@ -10,7 +10,9 @@ database_disk_size_gb = 10
 min_instance_count    = 0
 max_instance_count    = 5
 
+cloud_run_public = true
 cloud_run_invoker_members = [
+  "allUsers", # Public access; Firebase Auth enforced in app per ADR 0008
   "domain:dragonfly-app.net",
   "serviceAccount:github-deploy-dev@dragonflyapp-495423.iam.gserviceaccount.com",
 ]
