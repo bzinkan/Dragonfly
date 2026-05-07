@@ -354,9 +354,21 @@ resource "google_storage_bucket_iam_member" "github_cloudbuild_source_object_adm
   member = "serviceAccount:${google_service_account.github_deploy.email}"
 }
 
+resource "google_storage_bucket_iam_member" "github_cloudbuild_source_bucket_reader" {
+  bucket = google_storage_bucket.cloudbuild_source.name
+  role   = "roles/storage.legacyBucketReader"
+  member = "serviceAccount:${google_service_account.github_deploy.email}"
+}
+
 resource "google_storage_bucket_iam_member" "cloudbuild_source_object_viewer" {
   bucket = google_storage_bucket.cloudbuild_source.name
   role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${local.cloudbuild_service_account}"
+}
+
+resource "google_storage_bucket_iam_member" "cloudbuild_source_bucket_reader" {
+  bucket = google_storage_bucket.cloudbuild_source.name
+  role   = "roles/storage.legacyBucketReader"
   member = "serviceAccount:${local.cloudbuild_service_account}"
 }
 
@@ -366,6 +378,12 @@ resource "google_artifact_registry_repository_iam_member" "cloudbuild_artifact_w
   repository = google_artifact_registry_repository.backend.name
   role       = "roles/artifactregistry.writer"
   member     = "serviceAccount:${local.cloudbuild_service_account}"
+}
+
+resource "google_service_account_iam_member" "github_cloudbuild_service_account_user" {
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${local.cloudbuild_service_account}"
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.github_deploy.email}"
 }
 
 resource "google_service_account_iam_member" "github_service_account_user" {
