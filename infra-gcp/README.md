@@ -42,6 +42,14 @@ backend block in `versions.tf` and authenticates via Application Default
 Credentials. If you hit `oauth2: invalid_rapt`, run
 `gcloud auth application-default login` to refresh the Workspace re-auth.
 
+**The state bucket itself is currently NOT managed by this Terraform root**
+(chicken-and-egg with backend bootstrap). The `gs://dragonflyapp-tfstate`
+bucket was created via `gcloud storage buckets create` and the deploy SA
+`github-deploy-dev@dragonflyapp-495423.iam.gserviceaccount.com` was granted
+`roles/storage.objectAdmin` on it via `gcloud storage buckets
+add-iam-policy-binding`. A follow-up PR should import the bucket and
+manage the IAM binding declaratively.
+
 ## Dev Plan
 
 ```bash
