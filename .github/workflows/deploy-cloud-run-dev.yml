@@ -18,6 +18,7 @@ env:
   REGION: us-central1
   ARTIFACT_REPOSITORY: dragonfly
   SERVICE: dragonfly-api
+  RUNTIME_SERVICE_ACCOUNT: dragonfly-api-dev@dragonflyapp-495423.iam.gserviceaccount.com
 
 jobs:
   deploy:
@@ -46,6 +47,7 @@ jobs:
         run: |
           gcloud run deploy "${SERVICE}" \
             --image "${IMAGE}" \
+            --service-account "${RUNTIME_SERVICE_ACCOUNT}" \
             --region "${REGION}" \
             --project "${PROJECT_ID}" \
             --quiet
