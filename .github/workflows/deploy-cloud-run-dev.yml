@@ -42,11 +42,31 @@ jobs:
         run: |
           IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}/dragonfly-api:${GITHUB_SHA}"
           echo "IMAGE=${IMAGE}" >> "${GITHUB_ENV}"
-          gcloud builds submit backend \
+          BUILD_ID="$(gcloud builds submit backend \
             --tag "${IMAGE}" \
             --gcs-source-staging-dir "gs://${CLOUDBUILD_SOURCE_BUCKET}/source" \
             --suppress-logs \
-            --project "${PROJECT_ID}"
+            --async \
+            --format='value(id)' \
+            --project "${PROJECT_ID}")"
+          echo "Cloud Build ${BUILD_ID}"
+          for attempt in {1..120}; do
+            STATUS="$(gcloud builds describe "${BUILD_ID}" \
+              --project "${PROJECT_ID}" \
+              --format='value(status)')"
+            case "${STATUS}" in
+              SUCCESS)
+                exit 0
+                ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                echo "Cloud Build ${BUILD_ID} ended with ${STATUS}"
+                exit 1
+                ;;
+            esac
+            sleep 5
+          done
+          echo "Cloud Build ${BUILD_ID} did not finish before timeout"
+          exit 1
 
       - name: Deploy Cloud Run
         run: |
