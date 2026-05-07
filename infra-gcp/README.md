@@ -44,11 +44,17 @@ Credentials. If you hit `oauth2: invalid_rapt`, run
 
 **The state bucket itself is currently NOT managed by this Terraform root**
 (chicken-and-egg with backend bootstrap). The `gs://dragonflyapp-tfstate`
-bucket was created via `gcloud storage buckets create` and the deploy SA
-`github-deploy-dev@dragonflyapp-495423.iam.gserviceaccount.com` was granted
-`roles/storage.objectAdmin` on it via `gcloud storage buckets
-add-iam-policy-binding`. A follow-up PR should import the bucket and
-manage the IAM binding declaratively.
+bucket was created via `gcloud storage buckets create` on 2026-05-07. The
+deploy SA `github-deploy-dev@dragonflyapp-495423.iam.gserviceaccount.com`
+was granted these out-of-band roles to make `terraform plan` work in CI:
+
+- `roles/storage.objectAdmin` on the state bucket (read state + acquire locks)
+- `roles/iam.securityReviewer` at project scope (needs
+  `iam.serviceAccounts.getIamPolicy` to plan against SA IAM bindings already
+  in state)
+
+A follow-up PR should import the state bucket and codify both bindings in
+this Terraform root.
 
 ## Dev Plan
 
