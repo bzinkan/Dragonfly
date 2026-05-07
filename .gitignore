@@ -28,6 +28,11 @@ web-build/
 cdk.out/
 cdk.context.json
 
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+
 # AWS / secrets
 .env
 .env.*
