@@ -2,7 +2,7 @@
 
 ## System at a glance
 
-Dragonfly is a managed-services app on GCP, built around one synchronous request path (observation submission) and two asynchronous workers (photo moderation, rarity cache refresh). Everything else — Dex, leaderboard, expeditions — is derived data computed at submission time and cached.
+Dragonfly is a managed-services app on GCP, built around one synchronous request path (observation submission), explicit replayable ingest pipelines, and asynchronous workers for photo moderation, iNaturalist submission, and rarity cache refresh. Everything else — Dex, leaderboard, expeditions — is derived data computed at submission time and cached.
 
 Platform choices are documented in [ADR 0005](adr/0005-gcp-target-architecture.md). ADR 0001 (single-table DynamoDB) is superseded by Cloud SQL for PostgreSQL.
 
@@ -58,6 +58,8 @@ The client never knows or cares which handler produced which reward. Adding Terr
 
 **Rarity refresh (Cloud Run job, Cloud Scheduler cron).** Cron at 03:00 UTC posts to a Cloud Run job. Self-continues via a `JOB#rarity` cursor row if it runs out of time. Never parallelizes — iNat rate limits matter more than throughput. See `rarity-pipeline.md`.
 
+**Ingest runs (Postgres audit rows + typed commands).** Content sync, taxa cache refresh, geocoding cache fills, moderation events, rarity snapshots, and telemetry-derived jobs record `ingest_runs` rows with source, source run ID, cursor, checksum, retry count, and status. See `ingest.md`.
+
 ## External dependencies and failure modes
 
 | Dependency | Used for | Failure mode |
@@ -95,4 +97,5 @@ These are deliberately platform-agnostic — they survive AWS, GCP, and any futu
 2. **Expedition JSON is the source of truth.** The operational datastore is a materialized view of `content/expeditions/`. A deploy is the only write path.
 3. **Atomic conditional writes are how first-find is detected.** Don't add a read-then-write pattern; it introduces a race. (On Postgres: `INSERT ... ON CONFLICT DO NOTHING`. On DynamoDB it was `PutItem` with `ConditionExpression`.)
 4. **Moderation happens out of band, not in the API request path.** The API must not block on the moderation provider.
+5. **Ingest is idempotent and replayable.** Any job that moves repo-authored or third-party data into Postgres must record audit state and tolerate duplicate events.
 5. **Denormalized counters on membership rows are the leaderboard.** Don't aggregate at read time.
