@@ -45,6 +45,7 @@ jobs:
           gcloud builds submit backend \
             --tag "${IMAGE}" \
             --gcs-source-staging-dir "gs://${CLOUDBUILD_SOURCE_BUCKET}/source" \
+            --suppress-logs \
             --project "${PROJECT_ID}"
 
       - name: Deploy Cloud Run
