@@ -1,5 +1,18 @@
 from fastapi.testclient import TestClient
 
+from app.core.config import Settings
+from app.main import create_app
+
+
+class FakeReadyDatabase:
+    async def readiness(self) -> tuple[str, str]:
+        return "ok", "database connection succeeded"
+
+
+class FakeBrokenDatabase:
+    async def readiness(self) -> tuple[str, str]:
+        return "not_ready", "connection refused"
+
 
 def test_health_returns_ok(client: TestClient) -> None:
     response = client.get("/health")
@@ -20,6 +33,45 @@ def test_ready_returns_runtime_checks(client: TestClient) -> None:
     assert {"name": "settings", "status": "ok", "detail": None} in body["checks"]
     assert any(
         check["name"] == "database" and check["status"] == "skipped" for check in body["checks"]
+    )
+
+
+def test_ready_enforces_database_when_required() -> None:
+    app = create_app(
+        Settings(
+            env="local",
+            app_version="test",
+            readiness_database_required=True,
+        )
+    )
+    app.state.database = FakeReadyDatabase()
+
+    with TestClient(app) as test_client:
+        response = test_client.get("/ready")
+
+    assert response.status_code == 200
+    assert {"name": "database", "status": "ok", "detail": "database connection succeeded"} in (
+        response.json()["checks"]
+    )
+
+
+def test_ready_returns_503_when_database_is_not_ready() -> None:
+    app = create_app(
+        Settings(
+            env="local",
+            app_version="test",
+            readiness_database_required=True,
+        )
+    )
+    app.state.database = FakeBrokenDatabase()
+
+    with TestClient(app) as test_client:
+        response = test_client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "not_ready"
+    assert {"name": "database", "status": "not_ready", "detail": "connection refused"} in (
+        response.json()["checks"]
     )
 
 

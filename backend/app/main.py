@@ -18,10 +18,12 @@ from app.api.routes.meta import platform_router, v1_router
 from app.core.config import Settings, get_settings
 from app.core.errors import install_exception_handlers
 from app.core.logging import configure_logging, install_request_logging
+from app.db.session import Database
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     active_settings = settings or get_settings()
+    database = Database(active_settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -33,6 +35,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             gcp_project_id=active_settings.gcp_project_id,
         )
         yield
+        await database.close()
         log.info("api.shutdown")
 
     app = FastAPI(
@@ -41,6 +44,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.settings = active_settings
+    app.state.database = database
 
     app.add_middleware(
         CORSMiddleware,

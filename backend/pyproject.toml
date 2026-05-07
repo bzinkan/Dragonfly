@@ -13,6 +13,11 @@ dependencies = [
     "pydantic>=2.9.0",
     "pydantic-settings>=2.5.0",
 
+    # Persistence
+    "alembic>=1.13.3",
+    "asyncpg>=0.29.0",
+    "sqlalchemy[asyncio]>=2.0.35",
+
     # AWS
     "boto3>=1.35.0",
     "botocore>=1.35.0",

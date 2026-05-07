@@ -8,10 +8,12 @@ from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
 
 from app.core.config import Environment, Settings, get_request_settings
+from app.db.session import DatabaseProbe, get_request_database
 
 platform_router = APIRouter(tags=["meta"])
 v1_router = APIRouter(prefix="/v1", tags=["meta"])
 SettingsDep = Annotated[Settings, Depends(get_request_settings)]
+DatabaseDep = Annotated[DatabaseProbe, Depends(get_request_database)]
 
 
 class HealthResponse(BaseModel):
@@ -54,43 +56,31 @@ def health(settings: SettingsDep) -> HealthResponse:
 
 
 @platform_router.get("/ready", response_model=ReadinessResponse)
-def ready(
+async def ready(
     response: Response,
     settings: SettingsDep,
+    database: DatabaseDep,
 ) -> ReadinessResponse:
-    """Readiness probe for runtime configuration.
-
-    The database connection check is intentionally disabled until the Cloud SQL
-    session module lands. When `DRAGONFLY_READINESS_DATABASE_REQUIRED=true`,
-    this endpoint starts enforcing that database configuration is present.
-    """
+    """Readiness probe for runtime configuration and optional dependencies."""
     checks = [
         ReadinessCheck(name="settings", status="ok"),
     ]
 
     if settings.readiness_database_required:
-        if settings.database_configured:
-            checks.append(
-                ReadinessCheck(
-                    name="database_config",
-                    status="ok",
-                    detail="database settings are present",
-                )
+        database_status, database_detail = await database.readiness()
+        checks.append(
+            ReadinessCheck(
+                name="database",
+                status=database_status,
+                detail=database_detail,
             )
-        else:
-            checks.append(
-                ReadinessCheck(
-                    name="database_config",
-                    status="not_ready",
-                    detail="set database host or Cloud SQL instance",
-                )
-            )
+        )
     else:
         checks.append(
             ReadinessCheck(
                 name="database",
                 status="skipped",
-                detail="connection check disabled until app/db/session.py exists",
+                detail="set DRAGONFLY_READINESS_DATABASE_REQUIRED=true to enforce it",
             )
         )
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Literal, cast
+from urllib.parse import quote, quote_plus
 
 from fastapi import Request
 from pydantic import Field
@@ -45,12 +46,30 @@ class Settings(BaseSettings):
     database_port: int = 5432
     database_name: str = "dragonfly"
     database_user: str = "dragonfly"
+    database_password: str = "dragonfly"
     database_password_secret: str = ""
+    database_pool_size: int = 5
+    database_max_overflow: int = 2
+    database_echo_sql: bool = False
     readiness_database_required: bool = False
 
     @property
     def database_configured(self) -> bool:
         return bool(self.cloud_sql_instance or self.database_host)
+
+    @property
+    def sqlalchemy_database_url(self) -> str:
+        """Build an async SQLAlchemy URL for local Postgres or Cloud SQL sockets."""
+        user = quote_plus(self.database_user)
+        password = quote_plus(self.database_password)
+        database = quote_plus(self.database_name)
+
+        if self.database_host.startswith("/"):
+            socket_host = quote(self.database_host, safe="")
+            return f"postgresql+asyncpg://{user}:{password}@/{database}?host={socket_host}"
+
+        host = quote_plus(self.database_host)
+        return f"postgresql+asyncpg://{user}:{password}@{host}:{self.database_port}/{database}"
 
 
 @lru_cache
