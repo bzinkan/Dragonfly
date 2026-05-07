@@ -60,6 +60,7 @@ def install_exception_handlers(app: FastAPI) -> None:
         code = "not_found" if exc.status_code == 404 else "http_error"
         return JSONResponse(
             status_code=exc.status_code,
+            headers=exc.headers,
             content=_error_content(
                 code=code,
                 message=str(exc.detail or status.phrase),

@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     photos_bucket: str = "dragonfly-photos-local"
     storage_emulator_host: str = ""
 
+    firebase_project_id: str = ""
+    firebase_check_revoked: bool = True
+
     cloud_sql_instance: str = ""
     database_host: str = "localhost"
     database_port: int = 5432
