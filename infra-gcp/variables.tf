@@ -60,6 +60,12 @@ variable "cloud_run_invoker_members" {
   default     = ["domain:dragonfly-app.net"]
 }
 
+variable "cloud_run_public" {
+  description = "Override iam.allowedPolicyMemberDomains at project scope to allow allUsers on Cloud Run. Use only with Firebase Auth enforced at the application layer (see ADR 0008)."
+  type        = bool
+  default     = false
+}
+
 variable "github_repository" {
   description = "GitHub repository in owner/name form for Workload Identity Federation."
   type        = string

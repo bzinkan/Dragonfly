@@ -99,8 +99,18 @@ Use the Terraform outputs `github_workload_identity_provider` and
 
 ## Notes
 
-- Cloud Run is not public by default. `dev.tfvars` grants invoker access to the
-  `dragonfly-app.net` Workspace domain.
+- Cloud Run public access is opt-in per environment via `var.cloud_run_public`
+  (see ADR 0008). Setting it to `true` overrides
+  `iam.allowedPolicyMemberDomains` at project scope so `allUsers` becomes a
+  valid IAM principal; the actual auth boundary becomes Firebase ID token
+  verification in `app/core/auth.py`. Dev sets `cloud_run_public = true` and
+  includes `allUsers` in `cloud_run_invoker_members`. Staging and prod remain
+  restricted until per-env ADRs decide otherwise.
+- The first apply of `google_org_policy_policy` requires
+  `roles/orgpolicy.policyAdmin` at project scope. The `github-deploy-dev`
+  service account does not have this role, so the org-policy override must
+  be applied locally by a project Owner the first time. Subsequent applies
+  that don't touch the policy succeed via the SA's existing roles.
 - `DRAGONFLY_DATABASE_PASSWORD` is mounted from Secret Manager into Cloud Run.
 - Firebase Authentication is enabled at the service API level here. Firebase
   app/provider configuration should land in the auth milestone.
