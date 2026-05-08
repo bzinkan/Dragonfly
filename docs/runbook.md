@@ -32,6 +32,49 @@ token in `Authorization: Bearer ...`. Auth is enforced at the application
 layer; the IAM gate stays open for `allUsers` so mobile clients can reach
 the service without a Google identity.
 
+## Phase 4 End-to-End Smoke (Postman Equivalent)
+
+`scripts/smoke_phase4.py` runs the full Phase 4 round-trip end-to-end:
+
+1. Firebase signUp creates a parent (Firebase REST, public Web API key).
+2. `POST /v1/auth/parent-signup` materializes the `users` row + sets the
+   Firebase custom claim `role=parent`.
+3. Force-refresh the parent's ID token so the new claim takes effect.
+4. `POST /v1/groups` creates the family group, returns a 6-char join code.
+5. `POST /v1/groups/{group_id}/kids` admin-creates a kid via the Firebase
+   Admin SDK on the server side, returns a Firebase custom token.
+6. `signInWithCustomToken` exchanges the kid's custom token for an ID token.
+7. `GET /v1/me` as the kid asserts the kid's identity context.
+
+Run:
+
+```bash
+python scripts/smoke_phase4.py
+```
+
+Stdlib only -- no third-party deps. Defaults target the dev Cloud Run service
+(`api.dragonfly-app.net`) and the dev Firebase Web API key. Override via env
+vars (`DRAGONFLY_API_BASE_URL`, `DRAGONFLY_FIREBASE_API_KEY`,
+`DRAGONFLY_SMOKE_EMAIL`, `DRAGONFLY_SMOKE_PASSWORD`).
+
+**Preconditions for a green run:**
+
+- Firebase Auth is configured on `dragonflyapp-495423` with Email/Password
+  sign-in enabled (see `docs/auth.md` once written, or `dragonfly.md` in
+  agent memory).
+- ADR 0008 Terraform has been applied so `/v1/auth/parent-signup` is publicly
+  reachable (the script does not pass a Google identity token).
+- **Cloud SQL is provisioned and connected.** Steps 2/4/5 write to Postgres
+  and will 500 if the API service has no DB. As of 2026-05-08 the dev
+  Cloud SQL instance is not yet provisioned (the `db-g1-small` tier is
+  rejected by ENTERPRISE_PLUS edition; needs a `db-perf-optimized-N-*`
+  tier in `infra-gcp/environments/dev.tfvars`).
+
+**Test data left behind:** every run creates a parent + a kid in Firebase
+Auth and the corresponding rows in Postgres. They accumulate. Periodic
+cleanup is a follow-up. The test email pattern is `smoke+<ts>@dragonfly-test.invalid`
+so leakage is grep-friendly.
+
 ## Deploy Dev
 
 Dev deploys are handled by `.github/workflows/deploy-cloud-run-dev.yml` after
