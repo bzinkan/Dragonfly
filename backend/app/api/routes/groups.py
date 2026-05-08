@@ -228,9 +228,7 @@ async def create_kid(
             detail=f"Role '{caller.role}' cannot provision kids.",
         )
 
-    group_result = await session.execute(
-        select(models.Group).where(models.Group.id == group_id)
-    )
+    group_result = await session.execute(select(models.Group).where(models.Group.id == group_id))
     group = group_result.scalar_one_or_none()
     if group is None:
         raise HTTPException(
