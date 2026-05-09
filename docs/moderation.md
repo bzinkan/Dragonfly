@@ -2,9 +2,9 @@
 
 Every photo a kid uploads is screened before it's visible in the app or submitted to iNaturalist. The screening runs out of band on the photos bucket, not in the API service, so that the observation-submission hot path never blocks on the moderation provider. This doc describes the pipeline, the design decisions it depends on, and the edges that need special handling.
 
-The specific moderation provider (likely Cloud Vision SafeSearch) is being settled in a follow-up ADR. This doc reads "the moderation provider" where the choice doesn't matter, and flags places that will need provider-specific configuration once the ADR lands.
+The provider is **Cloud Vision SafeSearch** per [ADR 0009](adr/0009-moderation-provider-cloud-vision-safesearch.md). This doc still reads "the moderation provider" where the choice doesn't matter (the pipeline shape is provider-agnostic by design), and points to ADR 0009 for the per-label thresholds, region, and the alternatives that were considered and rejected.
 
-Related reading: `architecture.md` (how moderation fits into the observation flow), `data-model.md` (the `review_queue` table and membership counters), `runbook.md` (incident response for quarantined photos), `adr/0005-gcp-target-architecture.md` (Eventarc + Cloud Tasks + Cloud Run for async work).
+Related reading: `architecture.md` (how moderation fits into the observation flow), `data-model.md` (the `review_queue` table and membership counters), `runbook.md` (incident response for quarantined photos), `adr/0005-gcp-target-architecture.md` (Eventarc + Cloud Tasks + Cloud Run for async work), `adr/0009-moderation-provider-cloud-vision-safesearch.md` (provider choice + thresholds).
 
 ## The pipeline at a glance
 
@@ -53,7 +53,7 @@ The moderation Cloud Run service is the only component that writes to `observati
 
 ## Moderation provider configuration
 
-The moderation Cloud Run service calls the chosen provider's safe-content endpoint (Cloud Vision SafeSearch's `images.annotate` with feature `SAFE_SEARCH_DETECTION` is the leading candidate per the open follow-up ADR). Provider-agnostic config:
+The moderation Cloud Run service calls Cloud Vision SafeSearch (`images.annotate` with feature `SAFE_SEARCH_DETECTION`) per [ADR 0009](adr/0009-moderation-provider-cloud-vision-safesearch.md). Provider-agnostic config:
 
 - A confidence-or-likelihood threshold (provider-specific scale; tune after gathering false-positive data on a kid-photo test set).
 - A label set that triggers flagging (e.g. `adult`, `violence`, `racy` for SafeSearch). Pinned to a config version so a provider update doesn't silently change behavior.

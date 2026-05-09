@@ -70,7 +70,7 @@ Two third-party integrations on the hot path, both with fallbacks. ADR 0002 is o
 
 ## Week 6 — Moderation + photo lifecycle
 
-Moderation provider integration (per follow-up ADR). Quarantine flow. Teacher review queue schema (UI comes Week 11).
+Cloud Vision SafeSearch integration (per [ADR 0009](adr/0009-moderation-provider-cloud-vision-safesearch.md)). Quarantine flow. Teacher review queue schema (UI comes Week 11).
 
 - Cloud Run service triggered by Eventarc on `google.cloud.storage.object.v1.finalized` for the `pending/` prefix.
 - Clean photos copied to `observations/`; flagged photos moved to `quarantine/` with a row written to the `review_queue` table for the group.

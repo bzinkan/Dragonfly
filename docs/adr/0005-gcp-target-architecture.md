@@ -79,7 +79,7 @@ Three different shapes of async work, three GCP services. Each is chosen for its
 
 Pub/Sub is not used in Phase 1. It is the right tool for fan-out and streaming; we have neither pattern.
 
-The moderation worker calls a moderation provider (decided in a follow-up ADR — likely **Cloud Vision SafeSearch** as the GCP analogue of Rekognition's `DetectModerationLabels`, but worth a separate evaluation against the moderation thresholds in `docs/moderation.md`).
+The moderation worker calls **Cloud Vision SafeSearch** per [ADR 0009](0009-moderation-provider-cloud-vision-safesearch.md), with per-label thresholds defined there.
 
 ### 5. Secrets: Secret Manager
 
