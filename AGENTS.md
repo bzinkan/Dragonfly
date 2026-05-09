@@ -20,6 +20,7 @@ Start with these files, in this order:
    - [ADR 0006](docs/adr/0006-ingest-pipelines.md) — Ingest pipelines are explicit, replayable, and audited via `ingest_runs`.
    - [ADR 0007](docs/adr/0007-internal-ai-agent-tooling.md) — Multi-agent AI is internal/adult-only; never on a kid-facing request path.
    - [ADR 0008](docs/adr/0008-public-cloud-run-with-firebase-enforcement.md) — Override `iam.allowedPolicyMemberDomains` on dev project so `allUsers` can invoke Cloud Run; Firebase ID token verification becomes the only auth boundary.
+   - [ADR 0009](docs/adr/0009-moderation-provider-cloud-vision-safesearch.md) — Cloud Vision SafeSearch is the kid-photo moderation gate; per-label thresholds; LLM-vision is not the safety boundary.
 
 If code and docs disagree, stop and reconcile them in the same PR. Do not let architecture drift silently.
 
@@ -141,7 +142,7 @@ Exit criteria:
 - New ADR documents the GCP target architecture and migration order.
 - Each AWS-era invariant has an equivalent GCP implementation path.
 
-**Status:** ✅ Met 2026-05-05. [ADR 0005](docs/adr/0005-gcp-target-architecture.md) selects Firebase Auth, Cloud SQL Postgres, Cloud Storage, Eventarc + Cloud Tasks + Cloud Scheduler, Secret Manager, and Cloud Logging/Error Reporting/Monitoring. ADR 0001 (single-table DynamoDB) superseded. Open follow-ups: moderation provider ADR (gates Phase 8), Postgres rewrite of `docs/data-model.md`, infra-gcp/ Terraform-vs-scripts decision.
+**Status:** ✅ Met 2026-05-05. [ADR 0005](docs/adr/0005-gcp-target-architecture.md) selects Firebase Auth, Cloud SQL Postgres, Cloud Storage, Eventarc + Cloud Tasks + Cloud Scheduler, Secret Manager, and Cloud Logging/Error Reporting/Monitoring. ADR 0001 (single-table DynamoDB) superseded. Moderation provider settled in [ADR 0009](docs/adr/0009-moderation-provider-cloud-vision-safesearch.md) (Cloud Vision SafeSearch). Open follow-ups: Postgres rewrite of `docs/data-model.md`, infra-gcp/ Terraform-vs-scripts decision.
 
 ### 3. API Foundation
 

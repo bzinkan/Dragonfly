@@ -52,7 +52,7 @@ The client never knows or cares which handler produced which reward. Adding Terr
 
 **API service (Cloud Run, FastAPI on uvicorn).** All synchronous HTTP. Owns the dispatcher. Aim for p95 < 500ms. No blocking iNat calls on the hot path; that's what Cloud Tasks is for. Mangum handler remains in `app.main` per AGENTS.md compatibility rule until the AWS path is intentionally removed.
 
-**Moderation worker (Cloud Run service, Eventarc-triggered).** Triggered by GCS `google.cloud.storage.object.v1.finalized` on the `pending/` prefix. Calls the moderation provider (see follow-up ADR). Clean photos are copied to `observations/`; flagged photos go to `quarantine/` and write a `REVIEW#` row. See `moderation.md`.
+**Moderation worker (Cloud Run service, Eventarc-triggered).** Triggered by GCS `google.cloud.storage.object.v1.finalized` on the `pending/` prefix. Calls Cloud Vision SafeSearch per [ADR 0009](adr/0009-moderation-provider-cloud-vision-safesearch.md). Clean photos are copied to `observations/`; flagged photos go to `quarantine/` and write a `REVIEW#` row. See `moderation.md`.
 
 **iNat submit worker (Cloud Run service, Cloud Tasks consumer).** Handles retries (Cloud Tasks-managed exponential backoff), dedup via idempotency key (observation id), and writes the returned iNat observation id back onto the observation row. On terminal failure (e.g. iNat down for > 24h), the task is routed to the DLQ queue and an alert fires.
 
@@ -66,7 +66,7 @@ The client never knows or cares which handler produced which reward. Adding Terr
 |---|---|---|
 | iNaturalist CV | Species ID on upload | Fallback: let kid free-text select; log `cv_unavailable` flag on the observation |
 | iNaturalist submit | Scientific contribution | Queue retries; kid sees success regardless (we own the project account) |
-| Moderation provider (TBD per follow-up ADR; likely Cloud Vision SafeSearch) | Photo moderation | If API errors, hold in `pending/` and retry with exponential backoff; do not default-allow |
+| Cloud Vision SafeSearch (per [ADR 0009](adr/0009-moderation-provider-cloud-vision-safesearch.md)) | Photo moderation | If API errors, hold in `pending/` and retry with exponential backoff; do not default-allow |
 | USA-NPN (Phase 3) | Phenology windows | Weekly sync to local cache; offline-first |
 
 The app must degrade gracefully on all of these. The kid experience cannot depend on iNat or NPN being reachable at the moment of submission.
