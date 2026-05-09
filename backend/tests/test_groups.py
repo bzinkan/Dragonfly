@@ -431,7 +431,7 @@ def test_create_kid_happy_path(
     assert set_claims == {
         "role": "kid",
         "group_id": _GROUP_ID,
-        "parent_user_id": _USER_ID,
+        "parent_id": _USER_ID,
     }
     assert fb_calls["create_token"] == [_KID_FIREBASE_UID]
     assert fb_calls["delete_user"] == []  # no cleanup needed on success

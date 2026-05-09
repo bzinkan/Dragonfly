@@ -202,7 +202,7 @@ async def create_kid(
 
     Side effects (in order):
     1. Create a Firebase user with no email via Admin SDK.
-    2. Set custom claims `{role: 'kid', group_id, parent_user_id}` so the
+    2. Set custom claims `{role: 'kid', group_id, parent_id}` so the
        kid's ID tokens carry their identity context once they sign in.
     3. Insert `users` and `memberships` rows in one transaction.
     4. Mint a Firebase custom token for the kid's first sign-in.
@@ -249,7 +249,7 @@ async def create_kid(
     try:
         set_firebase_custom_claims(
             kid_firebase_uid,
-            {"role": "kid", "group_id": group.id, "parent_user_id": caller.id},
+            {"role": "kid", "group_id": group.id, "parent_id": caller.id},
             settings,
         )
 
