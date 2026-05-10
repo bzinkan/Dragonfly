@@ -44,6 +44,13 @@ class Settings(BaseSettings):
     firebase_project_id: str = ""
     firebase_check_revoked: bool = True
 
+    # iNaturalist API integration. Token is empty in dev / CI; the iNat client
+    # treats absence of a token as "no third-party calls allowed" and CV
+    # endpoints return a `cv_unavailable` flag instead of raising.
+    inat_base_url: str = "https://api.inaturalist.org/v1"
+    inat_oauth_token: str = ""
+    inat_request_timeout_seconds: float = 8.0
+
     cloud_sql_instance: str = ""
     database_host: str = "localhost"
     database_port: int = 5432
