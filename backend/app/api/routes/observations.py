@@ -40,6 +40,7 @@ from app.db import models
 from app.db.session import DbSessionDep
 from app.inat.client import InatClientDep, InatUnavailable
 from app.inat.cv import score_image
+from app.services import species_cache
 
 router = APIRouter(prefix="/v1/observations", tags=["observations"])
 
@@ -397,3 +398,89 @@ async def identify_observation(
             for s in suggestions
         ],
     )
+
+
+# ---------------------------------------------------------------------------
+# PATCH /v1/observations/{id}
+# ---------------------------------------------------------------------------
+
+
+class ObservationPatch(BaseModel):
+    """Partial update. Fields not present are left untouched.
+
+    `taxon_id=null` explicitly clears the taxon (kid changed their mind
+    after picking one). To clear the species_name, send an empty string.
+    """
+
+    taxon_id: int | None = Field(default=None, ge=1)
+    species_name: str | None = Field(default=None, max_length=200)
+    place_name: str | None = Field(default=None, max_length=200)
+
+
+@router.patch("/{observation_id}", response_model=ObservationResponse)
+async def patch_observation(
+    observation_id: str,
+    payload: ObservationPatch,
+    current_user: CurrentUserDep,
+    session: DbSessionDep,
+    inat_client: InatClientDep,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+) -> ObservationResponse:
+    fields = payload.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="At least one field must be provided",
+        )
+
+    user_row = (
+        await session.execute(
+            select(models.User).where(models.User.firebase_uid == current_user.uid)
+        )
+    ).scalar_one_or_none()
+    if user_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No Postgres user for this Firebase identity",
+        )
+
+    obs = (
+        await session.execute(
+            select(models.Observation).where(
+                models.Observation.id == observation_id,
+                models.Observation.user_id == user_row.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if obs is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Observation not found")
+
+    # If taxon_id is being set AND species_name wasn't explicitly sent,
+    # auto-fill species_name from the species cache. Cache miss falls
+    # through to iNat; iNat outage just leaves species_name as-is.
+    if "taxon_id" in fields and fields["taxon_id"] is not None and "species_name" not in fields:
+        try:
+            cached = await species_cache.get_or_fill(session, inat_client, fields["taxon_id"])
+        except InatUnavailable as exc:
+            log.info(
+                "observations.patch.species_lookup_unavailable",
+                observation_id=observation_id,
+                taxon_id=fields["taxon_id"],
+                reason=str(exc),
+            )
+            cached = None
+        if cached is not None:
+            fields["species_name"] = cached.common_name or cached.scientific_name
+
+    for key, value in fields.items():
+        setattr(obs, key, value)
+
+    await session.commit()
+    await session.refresh(obs)
+
+    log.info(
+        "observations.patched",
+        observation_id=observation_id,
+        fields=list(fields.keys()),
+    )
+    return ObservationResponse.from_model(obs)
