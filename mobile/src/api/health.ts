@@ -1,4 +1,4 @@
-import { env } from "@/src/config/env";
+import { apiRequest } from "@/src/api/client";
 
 export type HealthResponse = {
   status: string;
@@ -6,10 +6,6 @@ export type HealthResponse = {
   version: string;
 };
 
-export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
-  const res = await fetch(`${env.apiBaseUrl}/health`, { signal });
-  if (!res.ok) {
-    throw new Error(`/health returned HTTP ${res.status}`);
-  }
-  return (await res.json()) as HealthResponse;
+export function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
+  return apiRequest<HealthResponse>("/health", { unauthenticated: true, signal });
 }
