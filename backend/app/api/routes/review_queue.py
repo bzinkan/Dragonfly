@@ -18,6 +18,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import CurrentUserDep
 from app.core.config import Settings, get_request_settings
@@ -60,7 +61,7 @@ class ReviewQueueListResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-async def _resolve_adult_user(session, current_user_uid: str) -> models.User:  # type: ignore[no-untyped-def]
+async def _resolve_adult_user(session: AsyncSession, current_user_uid: str) -> models.User:
     user = (
         await session.execute(
             select(models.User).where(models.User.firebase_uid == current_user_uid)
@@ -79,7 +80,7 @@ async def _resolve_adult_user(session, current_user_uid: str) -> models.User:  #
     return user
 
 
-async def _adult_groups(session, user_id: str) -> list[str]:  # type: ignore[no-untyped-def]
+async def _adult_groups(session: AsyncSession, user_id: str) -> list[str]:
     rows = (
         await session.execute(
             select(models.Membership.group_id).where(
@@ -148,7 +149,7 @@ async def list_pending(
 
 
 async def _load_review_for_resolution(
-    session,  # type: ignore[no-untyped-def]
+    session: AsyncSession,
     user: models.User,
     review_id: str,
 ) -> models.ReviewQueueItem:
