@@ -35,7 +35,7 @@ async def get_species_counts(
     days: int = 1825,  # 5 years per docs/rarity-pipeline.md
 ) -> list[SpeciesCount]:
     """Return all species iNat has seen in the bounding box, with counts."""
-    params = {
+    params: dict[str, str | int | float] = {
         "swlat": bbox_swlat,
         "swlng": bbox_swlng,
         "nelat": bbox_nelat,
