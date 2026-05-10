@@ -253,6 +253,8 @@ Exit criteria:
 - 50 kid-style test observations achieve top-3 iNat CV correctness target or a risk is filed.
 - Third-party outage paths are tested.
 
+**Status:** ✅ Met 2026-05-10. Backend: iNat httpx wrapper + species_cache read-through (PR #38), `POST /v1/observations/{id}/identify` calling iNat CV server-side with `cv_unavailable=true` graceful fallback (PR #39), `PATCH /v1/observations/{id}` letting the kid pick a suggestion or type manual + auto-fill species_name from cache (PR #40), reverse-geocoding `Geocoder` provider abstraction (NoOp default, Nominatim available) + `geo_cache` read-through + `GET /v1/geocode/reverse` (PR #41). Mobile: submit screen extended into a state machine with picker UI -- presign → put → create → identify → picking → patch → done -- with parallel reverseGeocode call folded into the eventual PATCH (PR #42). **Outage paths covered**: every external call (iNat CV / iNat taxa / Nominatim) has unit tests using `respx` for 5xx, 401/403, transport error, and the empty/4xx degradation path. **The "50 kid-style observations" correctness target is filed as [risk 0001](docs/risks/0001-inat-cv-correctness-target-unverified.md)** -- needs a real iNat OAuth token (manual project signup) and a labeled benchmark dataset before it can be measured. Nearby-places-for-onboarding cache deferred to onboarding work (Phase 11). Production unblock checklist lives in the risk doc.
+
 ### 8. Async Workers
 
 Goal: move slow or failure-prone work off the hot path.
