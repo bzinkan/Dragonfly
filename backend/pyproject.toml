@@ -48,6 +48,7 @@ dev = [
     "pytest-cov>=5.0.0",
     "moto[dynamodb,s3,sqs,cognitoidp]>=5.0.0",
     "httpx>=0.27.0",               # for TestClient
+    "respx>=0.21.0",               # httpx mocks for iNat / geocoding integration tests
 
     # Linting and typing
     "ruff>=0.6.0",
