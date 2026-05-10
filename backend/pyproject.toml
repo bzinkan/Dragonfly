@@ -89,7 +89,7 @@ warn_unused_ignores = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["firebase_admin.*", "geohash.*", "moto.*"]
+module = ["firebase_admin.*", "geohash.*", "google.cloud.*", "moto.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

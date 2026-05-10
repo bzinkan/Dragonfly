@@ -10,7 +10,7 @@ SA to have `roles/iam.serviceAccountTokenCreator` on itself (codified in
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Protocol, cast
+from typing import Annotated, Any, Protocol, cast
 
 import google.auth
 import google.auth.transport.requests
@@ -42,10 +42,14 @@ class GcsSignedUrlGenerator:
 
     def __init__(self) -> None:
         self._client = storage.Client()
+        # google-auth returns a polymorphic Credentials subclass at runtime
+        # (ComputeEngineCredentials on Cloud Run); the base class doesn't
+        # declare service_account_email or a typed refresh, so we treat the
+        # handle as Any.
         creds, _project = google.auth.default(
             scopes=["https://www.googleapis.com/auth/cloud-platform"],
         )
-        self._credentials = creds
+        self._credentials: Any = creds
 
     def generate_put_url(
         self,
