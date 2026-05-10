@@ -1,0 +1,333 @@
+"""Expedition listing + start endpoints.
+
+`GET /v1/expeditions/available` -- expeditions whose prerequisites the
+caller has met, that they haven't started or completed yet.
+
+`GET /v1/expeditions/me` -- the caller's in-progress + completed
+expeditions, newest-progress first.
+
+`POST /v1/expeditions/{id}/start` -- create an empty
+`expedition_progress` row. Fails 409 if a row already exists.
+
+Per docs/expedition-authoring.md: prerequisites are ANDed; current
+kinds are `dex_count_at_least` and `completed_expedition`. The
+"never edit ids" invariant from the doc means a row keyed by
+expedition_id is a stable handle forever.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Annotated
+
+import structlog
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
+from sqlalchemy import desc, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from ulid import ULID
+
+from app.core.auth import CurrentUserDep
+from app.core.config import Settings, get_request_settings
+from app.db import models
+from app.db.session import DbSessionDep
+from app.models.expedition import (
+    Expedition,
+    PrereqCompleted,
+    PrereqDexCount,
+)
+
+router = APIRouter(prefix="/v1/expeditions", tags=["expeditions"])
+
+log = structlog.get_logger()
+
+
+# ---------------------------------------------------------------------------
+# DTOs
+# ---------------------------------------------------------------------------
+
+
+class ExpeditionSummary(BaseModel):
+    id: str
+    title: str
+    subtitle: str | None
+    tier: int
+    duration_minutes: int
+    environments: list[str]
+    intro: str
+
+
+class AvailableListResponse(BaseModel):
+    items: list[ExpeditionSummary]
+
+
+class ProgressItem(BaseModel):
+    expedition_id: str
+    title: str
+    started_at: datetime
+    completed_at: datetime | None
+    completed_step_count: int
+    total_step_count: int
+
+
+class MyProgressResponse(BaseModel):
+    items: list[ProgressItem]
+
+
+class StartResponse(BaseModel):
+    expedition_id: str
+    started_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_user(session: AsyncSession, current_user_uid: str) -> models.User:
+    user = (
+        await session.execute(
+            select(models.User).where(models.User.firebase_uid == current_user_uid)
+        )
+    ).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No Postgres user for this Firebase identity",
+        )
+    return user
+
+
+async def _user_dex_count(session: AsyncSession, user_id: str) -> int:
+    """Sum dex_count across the user's memberships (one in Phase 1)."""
+    rows = (
+        await session.execute(
+            select(models.Membership.dex_count).where(models.Membership.user_id == user_id)
+        )
+    ).all()
+    return sum(r[0] for r in rows)
+
+
+async def _completed_expedition_ids(session: AsyncSession, user_id: str) -> set[str]:
+    rows = (
+        await session.execute(
+            select(models.ExpeditionProgress.expedition_id).where(
+                models.ExpeditionProgress.user_id == user_id,
+                models.ExpeditionProgress.completed_at.is_not(None),
+            )
+        )
+    ).all()
+    return {r[0] for r in rows}
+
+
+async def _any_progress_expedition_ids(session: AsyncSession, user_id: str) -> set[str]:
+    """Both in-progress AND completed. Used to filter the "available" list."""
+    rows = (
+        await session.execute(
+            select(models.ExpeditionProgress.expedition_id).where(
+                models.ExpeditionProgress.user_id == user_id,
+            )
+        )
+    ).all()
+    return {r[0] for r in rows}
+
+
+def _prerequisites_met(exp: Expedition, *, dex_count: int, completed_ids: set[str]) -> bool:
+    for prereq in exp.prerequisites:
+        if isinstance(prereq, PrereqDexCount) and dex_count < prereq.value:
+            return False
+        if isinstance(prereq, PrereqCompleted) and prereq.value not in completed_ids:
+            return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/expeditions/available
+# ---------------------------------------------------------------------------
+
+
+@router.get("/available", response_model=AvailableListResponse)
+async def list_available(
+    current_user: CurrentUserDep,
+    session: DbSessionDep,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+) -> AvailableListResponse:
+    user = await _resolve_user(session, current_user.uid)
+    dex_count = await _user_dex_count(session, user.id)
+    completed_ids = await _completed_expedition_ids(session, user.id)
+    any_progress_ids = await _any_progress_expedition_ids(session, user.id)
+
+    rows = (
+        (
+            await session.execute(
+                select(models.ExpeditionContent)
+                .where(models.ExpeditionContent.archived.is_(False))
+                .order_by(models.ExpeditionContent.tier, models.ExpeditionContent.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    items: list[ExpeditionSummary] = []
+    for row in rows:
+        if row.id in any_progress_ids:
+            # Either in-progress or already done -- not "available".
+            continue
+        try:
+            exp = Expedition.model_validate(row.body)
+        except Exception:
+            log.warning("expeditions.available.bad_content", id=row.id)
+            continue
+        if not _prerequisites_met(exp, dex_count=dex_count, completed_ids=completed_ids):
+            continue
+        items.append(
+            ExpeditionSummary(
+                id=exp.id,
+                title=exp.title,
+                subtitle=exp.subtitle,
+                tier=exp.tier,
+                duration_minutes=exp.duration_minutes,
+                environments=list(exp.environments),
+                intro=exp.intro,
+            )
+        )
+
+    return AvailableListResponse(items=items)
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/expeditions/me
+# ---------------------------------------------------------------------------
+
+
+@router.get("/me", response_model=MyProgressResponse)
+async def list_my_progress(
+    current_user: CurrentUserDep,
+    session: DbSessionDep,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+) -> MyProgressResponse:
+    user = await _resolve_user(session, current_user.uid)
+
+    rows = (
+        await session.execute(
+            select(models.ExpeditionProgress, models.ExpeditionContent)
+            .join(
+                models.ExpeditionContent,
+                models.ExpeditionProgress.expedition_id == models.ExpeditionContent.id,
+            )
+            .where(models.ExpeditionProgress.user_id == user.id)
+            .order_by(desc(models.ExpeditionProgress.created_at))
+        )
+    ).all()
+
+    items: list[ProgressItem] = []
+    for progress, content in rows:
+        try:
+            exp = Expedition.model_validate(content.body)
+            total_steps = len(exp.steps)
+            title = exp.title
+        except Exception:
+            log.warning("expeditions.me.bad_content", id=content.id)
+            total_steps = 0
+            title = content.id
+        completed = progress.completed_steps or {}
+        items.append(
+            ProgressItem(
+                expedition_id=progress.expedition_id,
+                title=title,
+                started_at=progress.created_at,
+                completed_at=progress.completed_at,
+                completed_step_count=len(completed),
+                total_step_count=total_steps,
+            )
+        )
+
+    return MyProgressResponse(items=items)
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/expeditions/{id}/start
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{expedition_id}/start",
+    response_model=StartResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def start_expedition(
+    expedition_id: str,
+    current_user: CurrentUserDep,
+    session: DbSessionDep,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+) -> StartResponse:
+    user = await _resolve_user(session, current_user.uid)
+    if not current_user.group_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token is missing group_id claim",
+        )
+    group_id = current_user.group_id
+
+    content = (
+        await session.execute(
+            select(models.ExpeditionContent).where(
+                models.ExpeditionContent.id == expedition_id,
+                models.ExpeditionContent.archived.is_(False),
+            )
+        )
+    ).scalar_one_or_none()
+    if content is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expedition not found")
+
+    try:
+        exp = Expedition.model_validate(content.body)
+    except Exception as exc:
+        log.warning("expeditions.start.bad_content", id=expedition_id, error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Expedition content is invalid",
+        ) from exc
+
+    # Prerequisite check
+    dex_count = await _user_dex_count(session, user.id)
+    completed_ids = await _completed_expedition_ids(session, user.id)
+    if not _prerequisites_met(exp, dex_count=dex_count, completed_ids=completed_ids):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Prerequisites not met",
+        )
+
+    # Already started / completed?
+    existing = (
+        await session.execute(
+            select(models.ExpeditionProgress.id).where(
+                models.ExpeditionProgress.user_id == user.id,
+                models.ExpeditionProgress.expedition_id == expedition_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Expedition already started",
+        )
+
+    progress = models.ExpeditionProgress(
+        id=str(ULID()),
+        user_id=user.id,
+        group_id=group_id,
+        expedition_id=expedition_id,
+        completed_steps={},
+    )
+    session.add(progress)
+    await session.commit()
+    await session.refresh(progress)
+
+    log.info(
+        "expeditions.started",
+        expedition_id=expedition_id,
+        user_id=user.id,
+    )
+    return StartResponse(expedition_id=expedition_id, started_at=progress.created_at)
