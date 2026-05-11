@@ -285,7 +285,10 @@ async def list_group_members(
         .join(models.User, models.User.id == models.Membership.user_id)
         .where(models.Membership.group_id == group.id)
     )
-    rows = members_result.all()
+    # Materialize rows as plain tuples up front so the sort key has a
+    # stable, mypy-friendly type (Result.all() returns Row[tuple[...]],
+    # which sorted() doesn't accept directly).
+    rows: list[tuple[models.Membership, models.User]] = [(m, u) for m, u in members_result.all()]
 
     def sort_key(row: tuple[models.Membership, models.User]) -> tuple[int, str]:
         # 0 -> adults first, 1 -> kids; then alpha by display name (case-insensitive).
