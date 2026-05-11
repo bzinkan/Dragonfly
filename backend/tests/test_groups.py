@@ -854,6 +854,8 @@ def test_list_members_orders_adults_first_then_kids_alpha(
         group_id=_GROUP_ID,
         user_id=parent_user.id,
         role="parent",
+        observation_count=0,
+        dex_count=0,
     )
 
     kid_zoe = models.User(
