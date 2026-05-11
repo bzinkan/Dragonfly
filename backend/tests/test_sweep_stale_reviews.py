@@ -15,7 +15,9 @@ from app.db import models
 def _review(
     review_id: str = "01J0REVIEWID0000000000ULID", status: str = "pending"
 ) -> models.ReviewQueueItem:
-    return models.ReviewQueueItem(
+    from datetime import UTC, datetime, timedelta
+
+    r = models.ReviewQueueItem(
         id=review_id,
         group_id="g1",
         photo_id="p1",
@@ -23,6 +25,10 @@ def _review(
         status=status,
         reason='{"adult":"LIKELY"}',
     )
+    # Server defaults don't fire on in-memory construction; the sweep
+    # logs `now - created_at` so we need a real timestamp.
+    r.created_at = datetime.now(UTC) - timedelta(days=45)
+    return r
 
 
 def _photo() -> models.Photo:
