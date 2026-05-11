@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+from datetime import datetime
 from typing import Annotated, Literal
 
 import structlog
@@ -152,6 +153,163 @@ async def create_group(
         owner_role=user.role,
     )
     return GroupResponse.from_model(group)
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/groups -- list groups the caller belongs to
+# ---------------------------------------------------------------------------
+
+
+class GroupListResponse(BaseModel):
+    items: list[GroupResponse]
+
+
+@router.get("/groups", response_model=GroupListResponse)
+async def list_groups(
+    current_user: CurrentUserDep,
+    session: DbSessionDep,
+) -> GroupListResponse:
+    """List every non-archived group the caller has a membership in.
+
+    Used by the adult-console group picker. Both groups the caller owns
+    and groups the caller joined as a co-parent / co-teacher show up --
+    we don't distinguish here; the consumer can compare `owner_user_id`
+    to the caller's `id` if it cares.
+
+    Order is newest-group-first so a freshly-created group is at the top.
+    """
+    user_result = await session.execute(
+        select(models.User).where(models.User.firebase_uid == current_user.uid)
+    )
+    user = user_result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                "Calling Firebase user has no `users` row. "
+                "Sign up via /v1/auth/parent-signup or the teacher equivalent first."
+            ),
+        )
+
+    result = await session.execute(
+        select(models.Group)
+        .join(models.Membership, models.Membership.group_id == models.Group.id)
+        .where(
+            models.Membership.user_id == user.id,
+            models.Group.archived_at.is_(None),
+        )
+        .order_by(models.Group.created_at.desc())
+    )
+    groups = result.scalars().all()
+    return GroupListResponse(items=[GroupResponse.from_model(g) for g in groups])
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/groups/{group_id}/members -- class roster
+# ---------------------------------------------------------------------------
+
+
+class RosterMember(BaseModel):
+    """One row of the class roster -- the user + their membership context."""
+
+    user_id: str
+    display_name: str
+    role: str
+    age_band: str | None
+    membership_id: str
+    observation_count: int
+    dex_count: int
+    rarest_tier: str | None
+    last_observed_at: datetime | None
+
+
+class RosterResponse(BaseModel):
+    group: GroupResponse
+    items: list[RosterMember]
+
+
+@router.get(
+    "/groups/{group_id}/members",
+    response_model=RosterResponse,
+)
+async def list_group_members(
+    group_id: str,
+    current_user: CurrentUserDep,
+    session: DbSessionDep,
+) -> RosterResponse:
+    """Return every member of `group_id` along with their progress counters.
+
+    Authorization: caller must already be a member of the group. Kids in
+    the group can read this too (so the kid app can show "you and your
+    classmates"); the response carries no PII beyond display names and
+    age bands, which the kid already sees in the join flow.
+
+    Order: adults first (parents, teachers), then kids alphabetically by
+    display name. Stable so the UI doesn't shuffle on refresh.
+    """
+    user_result = await session.execute(
+        select(models.User).where(models.User.firebase_uid == current_user.uid)
+    )
+    caller = user_result.scalar_one_or_none()
+    if caller is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                "Calling Firebase user has no `users` row. "
+                "Sign up via /v1/auth/parent-signup or the teacher equivalent first."
+            ),
+        )
+
+    group_result = await session.execute(select(models.Group).where(models.Group.id == group_id))
+    group = group_result.scalar_one_or_none()
+    if group is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Group '{group_id}' not found.",
+        )
+
+    caller_membership_result = await session.execute(
+        select(models.Membership.id).where(
+            models.Membership.group_id == group.id,
+            models.Membership.user_id == caller.id,
+        )
+    )
+    if caller_membership_result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not a member of this group.",
+        )
+
+    members_result = await session.execute(
+        select(models.Membership, models.User)
+        .join(models.User, models.User.id == models.Membership.user_id)
+        .where(models.Membership.group_id == group.id)
+    )
+    # Materialize rows as plain tuples up front so the sort key has a
+    # stable, mypy-friendly type (Result.all() returns Row[tuple[...]],
+    # which sorted() doesn't accept directly).
+    rows: list[tuple[models.Membership, models.User]] = [(m, u) for m, u in members_result.all()]
+
+    def sort_key(row: tuple[models.Membership, models.User]) -> tuple[int, str]:
+        # 0 -> adults first, 1 -> kids; then alpha by display name (case-insensitive).
+        membership, user = row
+        return (1 if membership.role == "kid" else 0, user.display_name.lower())
+
+    items = [
+        RosterMember(
+            user_id=u.id,
+            display_name=u.display_name,
+            role=m.role,
+            age_band=u.age_band,
+            membership_id=m.id,
+            observation_count=m.observation_count,
+            dex_count=m.dex_count,
+            rarest_tier=m.rarest_tier,
+            last_observed_at=m.last_observed_at,
+        )
+        for m, u in sorted(rows, key=sort_key)
+    ]
+    return RosterResponse(group=GroupResponse.from_model(group), items=items)
 
 
 # ---------------------------------------------------------------------------

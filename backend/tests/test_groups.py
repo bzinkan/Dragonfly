@@ -675,3 +675,247 @@ def test_join_group_normalizes_lowercase_code(
     # 200 (not 422 for invalid format, not 404 because the mocked group
     # lookup returns the group regardless of code value).
     assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/groups
+# ---------------------------------------------------------------------------
+
+
+def _set_list_groups_lookups(
+    fake_session: AsyncMock,
+    *,
+    user: models.User | None,
+    groups: list[models.Group],
+) -> None:
+    user_result = MagicMock()
+    user_result.scalar_one_or_none = MagicMock(return_value=user)
+
+    groups_result = MagicMock()
+    scalars = MagicMock()
+    scalars.all = MagicMock(return_value=groups)
+    groups_result.scalars = MagicMock(return_value=scalars)
+
+    fake_session.execute = AsyncMock(side_effect=[user_result, groups_result])
+
+
+def test_list_groups_requires_bearer_token(groups_client: TestClient) -> None:
+    response = groups_client.get("/v1/groups")
+    assert response.status_code == 401
+
+
+def test_list_groups_returns_404_when_user_row_missing(
+    groups_client: TestClient,
+    fake_session: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_token_verifier(monkeypatch)
+
+    user_result = MagicMock()
+    user_result.scalar_one_or_none = MagicMock(return_value=None)
+    fake_session.execute = AsyncMock(return_value=user_result)
+
+    response = groups_client.get(
+        "/v1/groups",
+        headers={"Authorization": "Bearer valid"},
+    )
+    assert response.status_code == 404
+
+
+def test_list_groups_returns_empty_list(
+    groups_client: TestClient,
+    fake_session: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    _set_list_groups_lookups(fake_session, user=_user_row(role="parent"), groups=[])
+
+    response = groups_client.get(
+        "/v1/groups",
+        headers={"Authorization": "Bearer valid"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"items": []}
+
+
+def test_list_groups_returns_groups(
+    groups_client: TestClient,
+    fake_session: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    g = _group_row()
+    _set_list_groups_lookups(fake_session, user=_user_row(role="parent"), groups=[g])
+
+    response = groups_client.get(
+        "/v1/groups",
+        headers={"Authorization": "Bearer valid"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["items"]) == 1
+    assert body["items"][0]["id"] == _GROUP_ID
+    assert body["items"][0]["join_code"] == "ABC123"
+    assert body["items"][0]["owner_user_id"] == _USER_ID
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/groups/{group_id}/members
+# ---------------------------------------------------------------------------
+
+
+def _set_roster_lookups(
+    fake_session: AsyncMock,
+    *,
+    caller: models.User | None,
+    group: models.Group | None,
+    caller_membership_id: str | None,
+    rows: list[tuple[models.Membership, models.User]] | None = None,
+) -> None:
+    caller_result = MagicMock()
+    caller_result.scalar_one_or_none = MagicMock(return_value=caller)
+
+    group_result = MagicMock()
+    group_result.scalar_one_or_none = MagicMock(return_value=group)
+
+    membership_result = MagicMock()
+    membership_result.scalar_one_or_none = MagicMock(return_value=caller_membership_id)
+
+    members_result = MagicMock()
+    members_result.all = MagicMock(return_value=rows or [])
+
+    side_effects: list[MagicMock] = [caller_result]
+    if caller is not None:
+        side_effects.append(group_result)
+    if caller is not None and group is not None:
+        side_effects.append(membership_result)
+    if caller_membership_id is not None and caller is not None and group is not None:
+        side_effects.append(members_result)
+
+    fake_session.execute = AsyncMock(side_effect=side_effects)
+
+
+def test_list_members_requires_bearer_token(groups_client: TestClient) -> None:
+    response = groups_client.get(f"/v1/groups/{_GROUP_ID}/members")
+    assert response.status_code == 401
+
+
+def test_list_members_returns_404_when_group_missing(
+    groups_client: TestClient,
+    fake_session: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    _set_roster_lookups(
+        fake_session,
+        caller=_user_row(role="parent"),
+        group=None,
+        caller_membership_id=None,
+    )
+
+    response = groups_client.get(
+        f"/v1/groups/{_GROUP_ID}/members",
+        headers={"Authorization": "Bearer valid"},
+    )
+    assert response.status_code == 404
+
+
+def test_list_members_rejects_non_member(
+    groups_client: TestClient,
+    fake_session: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    _set_roster_lookups(
+        fake_session,
+        caller=_user_row(role="parent"),
+        group=_group_row(),
+        caller_membership_id=None,
+    )
+
+    response = groups_client.get(
+        f"/v1/groups/{_GROUP_ID}/members",
+        headers={"Authorization": "Bearer valid"},
+    )
+    assert response.status_code == 403
+    assert "not a member" in response.json()["error"]["message"]
+
+
+def test_list_members_orders_adults_first_then_kids_alpha(
+    groups_client: TestClient,
+    fake_session: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_token_verifier(monkeypatch)
+
+    parent_user = _user_row(role="parent")
+    parent_membership = models.Membership(
+        id="01J0PARENTMEMBERSHIPID0001",
+        group_id=_GROUP_ID,
+        user_id=parent_user.id,
+        role="parent",
+        observation_count=0,
+        dex_count=0,
+    )
+
+    kid_zoe = models.User(
+        id="01J0KID0000000000000000ZOE",
+        firebase_uid="firebase-kid-zoe",
+        role="kid",
+        display_name="Zoe",
+        age_band="9-10",
+    )
+    kid_zoe_membership = models.Membership(
+        id="01J0KIDMEMBERSHIP000000ZOE",
+        group_id=_GROUP_ID,
+        user_id=kid_zoe.id,
+        role="kid",
+        observation_count=3,
+        dex_count=2,
+    )
+
+    kid_amy = models.User(
+        id="01J0KID0000000000000000AMY",
+        firebase_uid="firebase-kid-amy",
+        role="kid",
+        display_name="amy",  # lowercase to verify case-insensitive sort
+        age_band="11-12",
+    )
+    kid_amy_membership = models.Membership(
+        id="01J0KIDMEMBERSHIP000000AMY",
+        group_id=_GROUP_ID,
+        user_id=kid_amy.id,
+        role="kid",
+        observation_count=1,
+        dex_count=1,
+    )
+
+    # Pass in an intentionally jumbled order so the sort is the thing
+    # under test, not the input order.
+    rows: list[tuple[models.Membership, models.User]] = [
+        (kid_zoe_membership, kid_zoe),
+        (parent_membership, parent_user),
+        (kid_amy_membership, kid_amy),
+    ]
+
+    _set_roster_lookups(
+        fake_session,
+        caller=parent_user,
+        group=_group_row(),
+        caller_membership_id=parent_membership.id,
+        rows=rows,
+    )
+
+    response = groups_client.get(
+        f"/v1/groups/{_GROUP_ID}/members",
+        headers={"Authorization": "Bearer valid"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["group"]["id"] == _GROUP_ID
+
+    names = [m["display_name"] for m in body["items"]]
+    assert names == ["Brian", "amy", "Zoe"]
+
+    roles = [m["role"] for m in body["items"]]
+    assert roles == ["parent", "kid", "kid"]
