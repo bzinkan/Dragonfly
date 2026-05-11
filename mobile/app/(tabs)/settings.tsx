@@ -136,6 +136,12 @@ export default function SettingsScreen() {
         <Text style={styles.label}>Adult tools</Text>
         <Pressable
           style={[styles.button, styles.buttonGhost]}
+          onPress={() => router.push("/classroom")}
+        >
+          <Text style={styles.buttonText}>Open classroom</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.button, styles.buttonGhost]}
           onPress={() => router.push("/review-queue")}
         >
           <Text style={styles.buttonText}>Open review queue</Text>
