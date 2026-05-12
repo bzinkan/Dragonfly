@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "site": "dragonfly-parents-dev",
+    "target": "parents",
     "public": "dist",
     "ignore": [
       "firebase.json",
