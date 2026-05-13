@@ -6,7 +6,7 @@
     "dragonflyapp-495423": {
       "hosting": {
         "www": [
-          "dragonfly-www-dev"
+          "dragonfly-landing-dev"
         ]
       }
     }
