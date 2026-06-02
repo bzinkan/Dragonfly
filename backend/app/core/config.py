@@ -41,6 +41,15 @@ class Settings(BaseSettings):
     photos_bucket: str = "dragonfly-photos-local"
     storage_emulator_host: str = ""
 
+    # Object-storage backend. `noop` falls through to a fake impl in tests
+    # (set explicitly via app.state.signed_url_generator). `gcs` uses the
+    # original Cloud Storage impl with IAM signBlob -- still wired through
+    # Phase 9 so emergency rollback works. `blob` uses Azure Blob Storage
+    # with user-delegation SAS URLs minted via the Container Apps managed
+    # identity (Storage Blob Data Contributor on the account).
+    storage_provider: Literal["noop", "gcs", "blob"] = "gcs"
+    blob_account_endpoint: str = ""
+
     firebase_project_id: str = ""
     firebase_check_revoked: bool = True
 
