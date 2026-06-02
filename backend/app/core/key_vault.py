@@ -63,7 +63,10 @@ def _get_secret_value(vault_url: str, secret_name: str) -> str:
     value = secret.value
     if value is None:
         raise KidJwtSecretsUnavailable(f"Key Vault secret {secret_name!r} has no value")
-    return value
+    # `azure-keyvault-secrets` types `value` as `str | None`; we've eliminated
+    # the None branch above, so the return is unambiguously str -- but mypy
+    # still infers Any when the SDK package lacks a `py.typed` marker.
+    return str(value)
 
 
 def get_kid_signing_pem(settings: Settings) -> bytes:

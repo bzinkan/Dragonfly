@@ -152,23 +152,12 @@ def _unverified_iss(token: str) -> str | None:
 def _verify_entra(token: str, settings: Settings) -> dict[str, object]:
     """Verify an Entra ID access token via JWKS.
 
-    Imports the Entra verifier lazily so :mod:`app.core.auth` stays
-    importable without the verifier module on disk (it is created in a
-    sibling slice of the same Phase 6a PR).
+    Phase 6a inlines the verifier in this module (see
+    ``_verify_entra_inline``). If a future ``app.core.entra`` module
+    arrives -- e.g. to share the JWKS cache with a webhook -- swap the
+    body for a direct call into it.
     """
-    try:
-        from app.core.entra import (
-            InvalidEntraToken,
-            verify_entra_id_token,
-        )
-    except ImportError:
-        # Inline verifier used when the dedicated entra module is absent.
-        return _verify_entra_inline(token, settings)
-
-    try:
-        return verify_entra_id_token(token, settings)
-    except InvalidEntraToken as exc:
-        raise InvalidAuthToken(str(exc)) from exc
+    return _verify_entra_inline(token, settings)
 
 
 def _verify_entra_inline(token: str, settings: Settings) -> dict[str, object]:

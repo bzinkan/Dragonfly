@@ -115,7 +115,7 @@ async def parent_signup(
     if existing is not None:
         # Backfill entra_oid on legacy rows whose first sign-in is via Entra.
         if entra_oid is not None and getattr(existing, "entra_oid", None) is None:
-            existing.entra_oid = entra_oid  # type: ignore[attr-defined]
+            existing.entra_oid = entra_oid
             await session.commit()
         log.info(
             "auth.parent_signup.idempotent",
@@ -133,7 +133,7 @@ async def parent_signup(
         display_name=request_body.display_name,
     )
     if entra_oid is not None:
-        new_user.entra_oid = entra_oid  # type: ignore[attr-defined]
+        new_user.entra_oid = entra_oid
     else:
         # Legacy stub path: keep the Firebase uid populated so the existing
         # test assertions that read `added_user.firebase_uid` still see a
@@ -211,7 +211,7 @@ async def kid_exchange(
         )
     jti = jti_value
     kid_user_id = sub_value
-    expires_at = datetime.fromtimestamp(int(exp_value), tz=UTC)  # type: ignore[arg-type]
+    expires_at = datetime.fromtimestamp(int(exp_value), tz=UTC)
 
     parent_id_claim = claims.get("parent_id")
     parent_id = parent_id_claim if isinstance(parent_id_claim, str) else ""
