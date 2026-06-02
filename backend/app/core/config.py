@@ -44,6 +44,45 @@ class Settings(BaseSettings):
     firebase_project_id: str = ""
     firebase_check_revoked: bool = True
 
+    # Microsoft Entra External ID (formerly Azure AD B2C) -- Phase 6 adult
+    # auth. The tenant lives at dfd7ebb4-0b29-42cb-aa05-e5e0124bab8f and the
+    # API audience is registered as "api://dragonfly-api". The verifier is
+    # JWKS-only via PyJWT; msal lives in the mobile client.
+    entra_tenant_id: str = "dfd7ebb4-0b29-42cb-aa05-e5e0124bab8f"
+    entra_api_audience: str = "api://dragonfly-api"
+    entra_issuer: str = (
+        "https://login.microsoftonline.com/dfd7ebb4-0b29-42cb-aa05-e5e0124bab8f/v2.0"
+    )
+    entra_jwks_url: str = (
+        "https://login.microsoftonline.com/dfd7ebb4-0b29-42cb-aa05-e5e0124bab8f/discovery/v2.0/keys"
+    )
+
+    # Dragonfly RS256 kid JWTs (handoff + session). Backend mints and
+    # verifies these locally; the kid app stores the session JWT and sends
+    # it as a Bearer token. JWKS published at /.well-known/...json.
+    dragonfly_jwt_issuer: str = "https://api.dragonfly-app.net"
+    dragonfly_jwt_audience: str = "dragonfly-api"
+    dragonfly_jwt_kid: str = "k1-2026-06"
+    dragonfly_handoff_ttl_seconds: int = 900  # 15 minutes
+    dragonfly_session_ttl_seconds: int = 60 * 60 * 24 * 30  # 30 days
+
+    # Azure Key Vault holding the kid-JWT signing PEM (RS256). Read once
+    # per process via DefaultAzureCredential (UAMI in Container Apps).
+    key_vault_url: str = "https://dragonfly-kv-dev.vault.azure.net/"
+    key_vault_kid_signing_secret: str = "kid-jwt-signing-key"
+    key_vault_kid_public_secret: str = "kid-jwt-public-key"
+
+    # Local fallbacks for tests / dev runs without Key Vault access. When
+    # set, key_vault reads from these env vars instead of hitting AKV.
+    kid_jwt_signing_pem: str = ""
+    kid_jwt_public_pem: str = ""
+
+    # Backend-augmented claim cache (Option C). Lookups for role +
+    # group_id are short-circuited from a per-process TTLCache to keep
+    # the per-request DB hit bounded.
+    user_claims_cache_ttl_seconds: float = 30.0
+    user_claims_cache_max_size: int = 1024
+
     # iNaturalist API integration. Token is empty in dev / CI; the iNat client
     # treats absence of a token as "no third-party calls allowed" and CV
     # endpoints return a `cv_unavailable` flag instead of raising.

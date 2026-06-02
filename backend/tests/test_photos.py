@@ -7,12 +7,12 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.core.auth as auth_module
 from app.core.config import Settings
 from app.core.storage import SignedUrlGenerator
 from app.db import models
 from app.db.session import get_db_session
 from app.main import create_app
+from tests.helpers.auth import stub_token_verifier
 
 _FIREBASE_UID = "firebase-kid-001"
 _USER_ID = "01J0KIDID0000000000000ULID"
@@ -76,10 +76,12 @@ class _StubSignedUrlGenerator:
 
 
 def _stub_token_verifier(monkeypatch: pytest.MonkeyPatch, uid: str = _FIREBASE_UID) -> None:
-    def fake_verify(token: str, settings: Settings) -> dict[str, object]:
-        return {"uid": uid, "email": "kid@example.com"}
+    """Back-compat shim that delegates to the shared helper.
 
-    monkeypatch.setattr(auth_module, "verify_firebase_id_token", fake_verify)
+    Intentionally omits role/group_id -- the photos route's 403 path is
+    exercised by the absent role claim.
+    """
+    stub_token_verifier(monkeypatch, uid=uid, email="kid@example.com", role=None, group_id=None)
 
 
 def _build_client(

@@ -11,7 +11,6 @@ import respx
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.core.auth as auth_module
 from app.core.config import Settings
 from app.db import models
 from app.db.session import get_db_session
@@ -22,6 +21,7 @@ from app.geocoding.provider import (
     build_geocoder,
 )
 from app.main import create_app
+from tests.helpers.auth import stub_token_verifier
 
 _FIREBASE_UID = "firebase-kid-001"
 
@@ -177,10 +177,8 @@ async def test_cache_miss_geocoder_none_no_write(fake_session: AsyncMock) -> Non
 
 
 def _stub_token_verifier(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_verify(token: str, settings: Settings) -> dict[str, object]:
-        return {"uid": _FIREBASE_UID, "role": "kid"}
-
-    monkeypatch.setattr(auth_module, "verify_firebase_id_token", fake_verify)
+    """Back-compat shim that delegates to the shared helper."""
+    stub_token_verifier(monkeypatch, uid=_FIREBASE_UID, role="kid")
 
 
 def _build_client(fake_session: AsyncMock, geocoder: _StaticGeocoder) -> Iterator[TestClient]:
