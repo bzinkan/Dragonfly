@@ -32,10 +32,25 @@ export type AgeBand = "9-10" | "11-12" | "13+";
 
 export type CreateKidResponse = {
   id: string;
-  firebase_uid: string;
   display_name: string;
   age_band: string;
-  custom_token: string;
+  /**
+   * One-time, 15-minute backend-signed JWT the kid app exchanges at
+   * `POST /v1/auth/kid-exchange` for a long-lived session JWT. Renamed
+   * from `custom_token` in Phase 6a when the backend swapped from
+   * Firebase custom tokens to Dragonfly-issued RS256 JWTs.
+   */
+  handoff_token: string;
+};
+
+export type KidExchangeResponse = {
+  session_token: string;
+  expires_at: string;
+  user: {
+    id: string;
+    role: string;
+    display_name: string;
+  };
 };
 
 export function listGroups(): Promise<GroupListResponse> {
