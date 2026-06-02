@@ -175,11 +175,118 @@ class CloudVisionSafeSearchModerator:
         return ModerationResult(decision=decision, labels=labels)
 
 
+class AzureContentSafetyModerator:
+    """Azure AI Content Safety implementation of the Moderator protocol.
+
+    Uses the image:analyze REST endpoint with a subscription key (the
+    Container App receives the key as an env var sourced from Key Vault
+    via the UAMI). Maps the four Content Safety categories (Hate,
+    SelfHarm, Sexual, Violence) onto a single quarantine decision at
+    `severity >= settings.content_safety_severity_threshold` (default
+    4 / Medium per ADR 0010).
+
+    Category mapping vs SafeSearch:
+        Adult     -> Sexual
+        Violence  -> Violence
+        Racy      -> (folded into Sexual at low severity)
+        Medical   -> (no direct equivalent; ignored)
+    """
+
+    API_VERSION = "2023-10-01"
+    CATEGORIES = ("Hate", "SelfHarm", "Sexual", "Violence")
+
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        key: str,
+        timeout: float,
+        severity_threshold: int = 4,
+    ) -> None:
+        self._endpoint = endpoint.rstrip("/")
+        self._key = key
+        self._timeout = timeout
+        self._severity_threshold = severity_threshold
+
+    async def moderate(self, image_bytes: bytes) -> ModerationResult:
+        if not self._endpoint or not self._key:
+            raise ModerationUnavailable("Content Safety endpoint/key missing -- check KV secrets.")
+        encoded = base64.b64encode(image_bytes).decode("ascii")
+        body = {
+            "image": {"content": encoded},
+            "categories": list(self.CATEGORIES),
+            "outputType": "FourSeverityLevels",
+        }
+        url = f"{self._endpoint}/contentsafety/image:analyze?api-version={self.API_VERSION}"
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._timeout,
+                headers={
+                    "Ocp-Apim-Subscription-Key": self._key,
+                    "Content-Type": "application/json",
+                },
+            ) as client:
+                res = await client.post(url, json=body)
+        except (httpx.TransportError, httpx.TimeoutException) as exc:
+            log.warning("moderation.acs.transport_error", error=str(exc))
+            raise ModerationUnavailable("Content Safety transport error") from exc
+
+        if res.status_code in (401, 403):
+            log.warning("moderation.acs.unauthorized", status=res.status_code)
+            raise ModerationUnavailable(f"Content Safety unauthorized: {res.status_code}")
+        if res.status_code >= 500:
+            log.warning("moderation.acs.server_error", status=res.status_code)
+            raise ModerationUnavailable(f"Content Safety server error: {res.status_code}")
+        if res.status_code != 200:
+            log.warning(
+                "moderation.acs.client_error",
+                status=res.status_code,
+                body=res.text[:200],
+            )
+            raise ModerationUnavailable(f"Content Safety client error: {res.status_code}")
+
+        payload = cast(dict[str, object], res.json())
+        analyses = payload.get("categoriesAnalysis")
+        if not isinstance(analyses, list):
+            return ModerationResult(decision="clean", labels={})
+
+        labels: dict[str, str] = {}
+        flagged: dict[str, str] = {}
+        for entry in analyses:
+            if not isinstance(entry, dict):
+                continue
+            category = entry.get("category")
+            severity = entry.get("severity", 0)
+            if not isinstance(category, str) or not isinstance(severity, int):
+                continue
+            labels[category] = str(severity)
+            if severity >= self._severity_threshold:
+                flagged[category] = str(severity)
+
+        decision: Decision = "flagged" if flagged else "clean"
+        log.info(
+            "moderation.acs.classified",
+            decision=decision,
+            labels=labels,
+            flagged=flagged,
+            threshold=self._severity_threshold,
+        )
+        return ModerationResult(decision=decision, labels=labels)
+
+
 def build_moderator(settings: Settings) -> Moderator:
     if settings.moderation_provider == "cloud_vision_safesearch":
         return CloudVisionSafeSearchModerator(
             endpoint=settings.vision_api_endpoint,
             timeout=settings.vision_request_timeout_seconds,
+        )
+    if settings.moderation_provider == "azure_content_safety":
+        return AzureContentSafetyModerator(
+            endpoint=settings.content_safety_endpoint,
+            key=settings.content_safety_key,
+            timeout=settings.content_safety_request_timeout_seconds,
+            severity_threshold=settings.content_safety_severity_threshold,
         )
     return NoOpModerator()
 
