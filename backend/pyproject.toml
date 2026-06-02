@@ -31,6 +31,7 @@ dependencies = [
     "pyjwt[crypto]>=2.9.0",              # Phase 6: RS256 verification for Entra + Dragonfly JWTs
     "azure-identity>=1.19.0",            # Phase 6: DefaultAzureCredential picks up UAMI in Container Apps
     "azure-keyvault-secrets>=4.8.0",     # Phase 6: read kid-jwt signing/public PEMs + Entra settings
+    "azure-storage-blob>=12.23.0",       # Phase 6b: user-delegation SAS URLs for photo upload + download
     "cachetools>=5.5.0",                 # Phase 6: TTLCache for backend-augmented role/group_id lookup
 
     # HTTP client (async, for iNat)

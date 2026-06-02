@@ -169,11 +169,143 @@ class GcsSignedUrlGenerator:
         return cast(str, url), expires_at
 
 
+class BlobSignedUrlGenerator:
+    """Azure Blob Storage impl using user-delegation SAS URLs.
+
+    Container Apps managed identity must have Storage Blob Data
+    Contributor on the storage account (granted in Phase 5). User
+    delegation SAS is the AAD-credentialed equivalent of GCS V4 signed
+    URLs -- no account key on the runtime.
+
+    The `bucket` arg on every protocol method maps to a Blob container
+    name on the configured account (single account per env, set via
+    settings.blob_account_endpoint). The Protocol's `bucket` name is
+    preserved for back-compat with the GCS-shaped call sites.
+    """
+
+    def __init__(self, account_endpoint: str) -> None:
+        # Lazy imports so test collection doesn't require azure-storage-blob
+        # when the storage_provider isn't "blob".
+        from azure.identity import DefaultAzureCredential
+        from azure.storage.blob import BlobServiceClient
+
+        self._account_endpoint = account_endpoint
+        self._credential = DefaultAzureCredential()
+        self._service = BlobServiceClient(account_url=account_endpoint, credential=self._credential)
+
+    def _user_delegation_key(self, lifetime: timedelta) -> Any:
+        # Issue a fresh user-delegation key for each SAS mint. The key is
+        # cheap to mint (one AAD call) and pinning per-request avoids
+        # cross-request lifetime leaks. Later we can cache for 50min if
+        # SAS minting becomes hot.
+        start = datetime.now(UTC)
+        return self._service.get_user_delegation_key(
+            key_start_time=start,
+            key_expiry_time=start + lifetime + timedelta(minutes=5),
+        )
+
+    def generate_put_url(
+        self,
+        *,
+        bucket: str,
+        object_name: str,
+        content_type: str,
+        expires_in: timedelta,
+    ) -> tuple[str, datetime]:
+        from azure.storage.blob import BlobSasPermissions, generate_blob_sas
+
+        udk = self._user_delegation_key(expires_in)
+        # parse account name out of the endpoint host
+        account_name = self._account_endpoint.split("//")[1].split(".")[0]
+        expires_at = datetime.now(UTC) + expires_in
+        sas = generate_blob_sas(
+            account_name=account_name,
+            container_name=bucket,
+            blob_name=object_name,
+            user_delegation_key=udk,
+            permission=BlobSasPermissions(write=True, create=True),
+            expiry=expires_at,
+            content_type=content_type,
+        )
+        url = f"{self._account_endpoint.rstrip('/')}/{bucket}/{object_name}?{sas}"
+        return url, expires_at
+
+    def fetch_object_bytes(self, *, bucket: str, object_name: str) -> bytes:
+        blob = self._service.get_blob_client(container=bucket, blob=object_name)
+        return blob.download_blob().readall()
+
+    def copy_object(
+        self,
+        *,
+        src_bucket: str,
+        src_object: str,
+        dst_bucket: str,
+        dst_object: str,
+    ) -> None:
+        # In-account copy: pass the source blob URL with a short-lived read
+        # SAS so the dst container can pull it server-side.
+        from azure.storage.blob import BlobSasPermissions, generate_blob_sas
+
+        udk = self._user_delegation_key(timedelta(minutes=5))
+        account_name = self._account_endpoint.split("//")[1].split(".")[0]
+        src_sas = generate_blob_sas(
+            account_name=account_name,
+            container_name=src_bucket,
+            blob_name=src_object,
+            user_delegation_key=udk,
+            permission=BlobSasPermissions(read=True),
+            expiry=datetime.now(UTC) + timedelta(minutes=5),
+        )
+        src_url = f"{self._account_endpoint.rstrip('/')}/{src_bucket}/{src_object}?{src_sas}"
+        dst = self._service.get_blob_client(container=dst_bucket, blob=dst_object)
+        dst.start_copy_from_url(src_url)
+
+    def delete_object(self, *, bucket: str, object_name: str) -> None:
+        blob = self._service.get_blob_client(container=bucket, blob=object_name)
+        blob.delete_blob()
+
+    def generate_get_url(
+        self,
+        *,
+        bucket: str,
+        object_name: str,
+        expires_in: timedelta,
+    ) -> tuple[str, datetime]:
+        from azure.storage.blob import BlobSasPermissions, generate_blob_sas
+
+        udk = self._user_delegation_key(expires_in)
+        account_name = self._account_endpoint.split("//")[1].split(".")[0]
+        expires_at = datetime.now(UTC) + expires_in
+        sas = generate_blob_sas(
+            account_name=account_name,
+            container_name=bucket,
+            blob_name=object_name,
+            user_delegation_key=udk,
+            permission=BlobSasPermissions(read=True),
+            expiry=expires_at,
+        )
+        url = f"{self._account_endpoint.rstrip('/')}/{bucket}/{object_name}?{sas}"
+        return url, expires_at
+
+
+def _build_generator_for(settings: Any) -> SignedUrlGenerator:
+    """Construct the configured backend. Picks GCS by default for back-compat."""
+    provider = getattr(settings, "storage_provider", "gcs")
+    if provider == "blob":
+        endpoint = getattr(settings, "blob_account_endpoint", "")
+        if not endpoint:
+            raise RuntimeError("storage_provider=blob requires blob_account_endpoint to be set.")
+        return BlobSignedUrlGenerator(endpoint)
+    # Fall through to GCS (the legacy default through Phase 9).
+    return GcsSignedUrlGenerator()
+
+
 def get_signed_url_generator(request: Request) -> SignedUrlGenerator:
     """Pull the generator off `app.state` so tests can inject a fake."""
     generator = getattr(request.app.state, "signed_url_generator", None)
     if generator is None:
-        generator = GcsSignedUrlGenerator()
+        settings = getattr(request.app.state, "settings", None)
+        generator = _build_generator_for(settings) if settings else GcsSignedUrlGenerator()
         request.app.state.signed_url_generator = generator
     return cast(SignedUrlGenerator, generator)
 
