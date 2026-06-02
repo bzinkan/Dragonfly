@@ -9,6 +9,7 @@
     "web": "expo start --web"
   },
   "dependencies": {
+    "@azure/msal-browser": "^5.11.0",
     "@expo/vector-icons": "^15.0.3",
     "@react-navigation/native": "^7.1.8",
     "@tanstack/react-query": "^5.100.9",

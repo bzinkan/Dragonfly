@@ -11,11 +11,18 @@ type FirebaseConfig = {
   projectId: string;
 };
 
+type EntraConfig = {
+  clientId: string;
+  authority: string;
+  redirectUri: string;
+};
+
 type EnvConfig = {
   apiBaseUrl: string;
   bundleIdSuffix: string;
   updatesChannel: string;
   firebase: FirebaseConfig;
+  entra: EntraConfig;
 };
 
 // Firebase Web API keys are public identifiers, not secrets -- access is
@@ -26,24 +33,38 @@ const FIREBASE_DEV: FirebaseConfig = {
   projectId: "dragonflyapp-495423",
 };
 
+// Entra External Identities customer tenant (CIAM) from Phase 1.
+// clientId is the `dragonfly-client` public app registration; authority
+// targets the `login.microsoftonline.com/{ciam-tenant-id}/v2.0` flow.
+// Public values; access is gated by Entra + pre-authorized scope.
+const ENTRA_DEV: EntraConfig = {
+  clientId: "6d1b6e1f-42fa-4977-b67f-a15b1f84d4ff",
+  authority:
+    "https://login.microsoftonline.com/dfd7ebb4-0b29-42cb-aa05-e5e0124bab8f",
+  redirectUri: "https://parents.dragonfly-app.net/auth/callback",
+};
+
 const ENV: Record<AppEnv, EnvConfig> = {
   development: {
     apiBaseUrl: "https://api.dragonfly-app.net",
     bundleIdSuffix: ".dev",
     updatesChannel: "development",
     firebase: FIREBASE_DEV,
+    entra: ENTRA_DEV,
   },
   preview: {
     apiBaseUrl: "https://api.staging.dragonfly-app.net",
     bundleIdSuffix: ".staging",
     updatesChannel: "preview",
     firebase: FIREBASE_DEV,
+    entra: ENTRA_DEV,
   },
   production: {
     apiBaseUrl: "https://api.dragonfly-app.net",
     bundleIdSuffix: "",
     updatesChannel: "production",
     firebase: FIREBASE_DEV,
+    entra: ENTRA_DEV,
   },
 };
 
@@ -115,6 +136,7 @@ const config: ExpoConfig = {
     apiBaseUrl: env.apiBaseUrl,
     updatesChannel: env.updatesChannel,
     firebase: env.firebase,
+    entra: env.entra,
   },
 };
 

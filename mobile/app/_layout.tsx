@@ -9,7 +9,8 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import { queryClient } from '@/src/api/queryClient';
-import { ensureTokenSync } from '@/src/auth/firebase';
+import { ensureTokenSync as ensureFirebaseTokenSync } from '@/src/auth/firebase';
+import { ensureTokenSync as ensureMsalTokenSync } from '@/src/auth/msal';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -42,7 +43,13 @@ export default function RootLayout() {
   }, [loaded]);
 
   useEffect(() => {
-    ensureTokenSync();
+    // Phase 7: Both auth bootstraps run idempotently. Firebase stays
+    // wired for native parent flows until react-native-msal lands;
+    // MSAL handles the parents.dragonfly-app.net web surface. Whichever
+    // backend signs the user in writes the bearer token; only one is
+    // ever active at a time.
+    ensureFirebaseTokenSync();
+    ensureMsalTokenSync();
   }, []);
 
   if (!loaded) {
