@@ -113,9 +113,23 @@ class Settings(BaseSettings):
     # SafeSearch in production. Dev / CI default to "noop" -- every
     # photo is treated as clean. Per-label thresholds are baked into the
     # CloudVisionSafeSearchModerator class; the env vars below tune them.
-    moderation_provider: Literal["noop", "cloud_vision_safesearch"] = "noop"
+    moderation_provider: Literal[
+        "noop",
+        "cloud_vision_safesearch",
+        "azure_content_safety",
+    ] = "noop"
     vision_api_endpoint: str = "https://vision.googleapis.com/v1"
     vision_request_timeout_seconds: float = 8.0
+
+    # Azure AI Content Safety wiring (Phase 6c). Severity 0-6: 4 / Medium
+    # is the quarantine threshold per ADR 0010. Endpoint + key are pulled
+    # from Key Vault secrets `content-safety-endpoint` /
+    # `content-safety-key` and surfaced as env vars at Container App
+    # boot time.
+    content_safety_endpoint: str = ""
+    content_safety_key: str = ""
+    content_safety_severity_threshold: int = 4
+    content_safety_request_timeout_seconds: float = 8.0
 
     cloud_sql_instance: str = ""
     database_host: str = "localhost"
