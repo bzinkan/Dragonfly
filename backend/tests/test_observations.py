@@ -7,11 +7,11 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.core.auth as auth_module
 from app.core.config import Settings
 from app.db import models
 from app.db.session import get_db_session
 from app.main import create_app
+from tests.helpers.auth import stub_token_verifier
 
 _FIREBASE_UID = "firebase-kid-001"
 _USER_ID = "01J0KIDID0000000000000ULID"
@@ -25,13 +25,8 @@ def _stub_token_verifier(
     uid: str = _FIREBASE_UID,
     group_id: str | None = _GROUP_ID,
 ) -> None:
-    def fake_verify(token: str, settings: Settings) -> dict[str, object]:
-        claims: dict[str, object] = {"uid": uid, "role": "kid"}
-        if group_id is not None:
-            claims["group_id"] = group_id
-        return claims
-
-    monkeypatch.setattr(auth_module, "verify_firebase_id_token", fake_verify)
+    """Back-compat shim that delegates to the shared helper."""
+    stub_token_verifier(monkeypatch, uid=uid, role="kid", group_id=group_id)
 
 
 def _build_client(fake_session: AsyncMock) -> Iterator[TestClient]:

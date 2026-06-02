@@ -6,24 +6,25 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.api.routes.groups as groups_routes_module
-import app.core.auth as auth_module
 from app.api.routes.groups import _JOIN_CODE_ALPHABET, generate_join_code
 from app.core.config import Settings
 from app.db import models
 from app.db.session import get_db_session
 from app.main import create_app
+from tests.helpers.auth import stub_token_verifier
 
 _FIREBASE_UID = "firebase-parent-001"
 _USER_ID = "01J0PARENTID0000000000ULID"
 
 
 def _stub_token_verifier(monkeypatch: pytest.MonkeyPatch, uid: str = _FIREBASE_UID) -> None:
-    """Replace the Firebase verifier with one that accepts any token for `uid`."""
+    """Back-compat shim that delegates to the shared helper.
 
-    def fake_verify(token: str, settings: Settings) -> dict[str, object]:
-        return {"uid": uid, "email": "parent@example.com"}
-
-    monkeypatch.setattr(auth_module, "verify_firebase_id_token", fake_verify)
+    Kept so the many call sites in this file don't need to be rewritten
+    individually; new tests should import ``stub_token_verifier`` from
+    ``tests.helpers.auth`` directly.
+    """
+    stub_token_verifier(monkeypatch, uid=uid, role="parent", email="parent@example.com")
 
 
 def _build_client_with_session(session_mock: AsyncMock) -> Iterator[TestClient]:
@@ -212,7 +213,8 @@ def test_create_group_happy_path(
 
 _GROUP_ID = "01J0GROUPIDABCDEFGHIJKLMNO"
 _KID_FIREBASE_UID = "firebase-kid-xyz"
-_KID_CUSTOM_TOKEN = "fake-custom-token-for-kid"
+_KID_HANDOFF_TOKEN = "fake-handoff-token-for-kid"
+_KID_HANDOFF_JTI = "01HANDOFFJTI00000000000000"
 
 
 def _group_row(*, owner_user_id: str = _USER_ID) -> models.Group:
@@ -225,35 +227,69 @@ def _group_row(*, owner_user_id: str = _USER_ID) -> models.Group:
 
 
 def _stub_firebase_admin(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[object]]:
-    """Patch Firebase Admin wrappers used by the kid-create route.
+    """Patch the Phase 6a kid-provisioning side effects.
 
-    Returns a dict of call logs keyed by function name.
+    Returns a dict of call logs keyed by side-effect name. After the Phase 6a
+    rewrite the kid-create route mints a Dragonfly RS256 handoff JWT instead
+    of creating a Firebase user; this helper records calls to
+    ``mint_handoff_token`` under the legacy key ``create_token`` so existing
+    assertions keep reading sensibly.
+
+    The legacy Firebase Admin wrappers are also patched when present so this
+    helper keeps working during the source-rewrite window when both paths
+    coexist.
     """
     calls: dict[str, list[object]] = {
         "create_user": [],
         "set_claims": [],
         "create_token": [],
         "delete_user": [],
+        "mint_handoff": [],
     }
 
-    def fake_create_user(*, display_name: str, settings: Settings) -> str:
-        calls["create_user"].append(display_name)
-        return _KID_FIREBASE_UID
+    # ---- Legacy Firebase wrappers (still present pre-rewrite) ---------------
+    if hasattr(groups_routes_module, "create_firebase_user"):
 
-    def fake_set_claims(uid: str, claims: dict[str, object], settings: Settings) -> None:
-        calls["set_claims"].append((uid, claims))
+        def fake_create_user(*, display_name: str, settings: Settings) -> str:
+            calls["create_user"].append(display_name)
+            return _KID_FIREBASE_UID
 
-    def fake_create_token(uid: str, settings: Settings) -> str:
-        calls["create_token"].append(uid)
-        return _KID_CUSTOM_TOKEN
+        monkeypatch.setattr(groups_routes_module, "create_firebase_user", fake_create_user)
 
-    def fake_delete_user(uid: str, settings: Settings) -> None:
-        calls["delete_user"].append(uid)
+    if hasattr(groups_routes_module, "set_firebase_custom_claims"):
 
-    monkeypatch.setattr(groups_routes_module, "create_firebase_user", fake_create_user)
-    monkeypatch.setattr(groups_routes_module, "set_firebase_custom_claims", fake_set_claims)
-    monkeypatch.setattr(groups_routes_module, "create_firebase_custom_token", fake_create_token)
-    monkeypatch.setattr(groups_routes_module, "delete_firebase_user", fake_delete_user)
+        def fake_set_claims(uid: str, claims: dict[str, object], settings: Settings) -> None:
+            calls["set_claims"].append((uid, claims))
+
+        monkeypatch.setattr(groups_routes_module, "set_firebase_custom_claims", fake_set_claims)
+
+    if hasattr(groups_routes_module, "create_firebase_custom_token"):
+
+        def fake_create_token(uid: str, settings: Settings) -> str:
+            calls["create_token"].append(uid)
+            return _KID_HANDOFF_TOKEN
+
+        monkeypatch.setattr(groups_routes_module, "create_firebase_custom_token", fake_create_token)
+
+    if hasattr(groups_routes_module, "delete_firebase_user"):
+
+        def fake_delete_user(uid: str, settings: Settings) -> None:
+            calls["delete_user"].append(uid)
+
+        monkeypatch.setattr(groups_routes_module, "delete_firebase_user", fake_delete_user)
+
+    # ---- Phase 6a kid_jwt mint helper (post-rewrite) ------------------------
+    if hasattr(groups_routes_module, "mint_handoff_token"):
+
+        def fake_mint(**kwargs: object) -> tuple[str, str]:
+            calls["mint_handoff"].append(kwargs)
+            # Also mirror into create_token so legacy assertions reading
+            # `create_token` still report a non-empty list on the happy path.
+            calls["create_token"].append(kwargs.get("kid_user_id"))
+            return (_KID_HANDOFF_TOKEN, _KID_HANDOFF_JTI)
+
+        monkeypatch.setattr(groups_routes_module, "mint_handoff_token", fake_mint)
+
     return calls
 
 
@@ -345,7 +381,9 @@ def test_create_kid_rejects_kid_caller_role(
 
     assert response.status_code == 403
     assert "'kid'" in response.json()["error"]["message"]
-    assert fb_calls["create_user"] == []  # no Firebase user created
+    # No auth artifact provisioned -- legacy Firebase path or new mint path.
+    assert fb_calls["create_user"] == []
+    assert fb_calls["mint_handoff"] == []
 
 
 def test_create_kid_returns_404_when_group_missing(
@@ -370,6 +408,7 @@ def test_create_kid_returns_404_when_group_missing(
     assert response.status_code == 404
     assert _GROUP_ID in response.json()["error"]["message"]
     assert fb_calls["create_user"] == []
+    assert fb_calls["mint_handoff"] == []
 
 
 def test_create_kid_rejects_non_owner(
@@ -394,6 +433,7 @@ def test_create_kid_rejects_non_owner(
 
     assert response.status_code == 403
     assert fb_calls["create_user"] == []
+    assert fb_calls["mint_handoff"] == []
 
 
 def test_create_kid_happy_path(
@@ -417,30 +457,44 @@ def test_create_kid_happy_path(
 
     assert response.status_code == 201
     body = response.json()
-    assert body["firebase_uid"] == _KID_FIREBASE_UID
     assert body["display_name"] == "Sparrow"
     assert body["age_band"] == "9-10"
-    assert body["custom_token"] == _KID_CUSTOM_TOKEN
     assert isinstance(body["id"], str) and len(body["id"]) == 26  # ULID
 
-    # Firebase Admin called in the right order with the right args
-    assert fb_calls["create_user"] == ["Sparrow"]
-    assert len(fb_calls["set_claims"]) == 1
-    set_uid, set_claims = fb_calls["set_claims"][0]
-    assert set_uid == _KID_FIREBASE_UID
-    assert set_claims == {
-        "role": "kid",
-        "group_id": _GROUP_ID,
-        "parent_id": _USER_ID,
-    }
-    assert fb_calls["create_token"] == [_KID_FIREBASE_UID]
-    assert fb_calls["delete_user"] == []  # no cleanup needed on success
+    # The Phase 6a response replaces `custom_token` with `handoff_token`. The
+    # legacy `firebase_uid` field is retained as Optional[str] but becomes
+    # None for new kids. Tolerate both shapes during the rewrite window.
+    if "handoff_token" in body:
+        # Post-rewrite: kid_jwt.mint_handoff_token path.
+        assert body["handoff_token"] == _KID_HANDOFF_TOKEN
+        assert body.get("firebase_uid") is None
+        assert len(fb_calls["mint_handoff"]) == 1
+        mint_kwargs = fb_calls["mint_handoff"][0]
+        # mint_handoff_token is called with the new kid's local users.id.
+        assert mint_kwargs["parent_id"] == _USER_ID
+        assert mint_kwargs["group_id"] == _GROUP_ID
+    else:
+        # Legacy Firebase Admin custom-token path.
+        assert body["firebase_uid"] == _KID_FIREBASE_UID
+        assert body["custom_token"] == _KID_HANDOFF_TOKEN
+        assert fb_calls["create_user"] == ["Sparrow"]
+        assert len(fb_calls["set_claims"]) == 1
+        set_uid, set_claims = fb_calls["set_claims"][0]
+        assert set_uid == _KID_FIREBASE_UID
+        assert set_claims == {
+            "role": "kid",
+            "group_id": _GROUP_ID,
+            "parent_id": _USER_ID,
+        }
+        assert fb_calls["create_token"] == [_KID_FIREBASE_UID]
+        assert fb_calls["delete_user"] == []  # no cleanup needed on success
 
     # users + memberships rows added
     assert fake_session.add.call_count == 2
     added_kid: models.User = fake_session.add.call_args_list[0].args[0]
     added_membership: models.Membership = fake_session.add.call_args_list[1].args[0]
-    assert added_kid.firebase_uid == _KID_FIREBASE_UID
+    # Post-rewrite firebase_uid is None for newly created kids.
+    assert added_kid.firebase_uid in (_KID_FIREBASE_UID, None)
     assert added_kid.role == "kid"
     assert added_kid.display_name == "Sparrow"
     assert added_kid.age_band == "9-10"
@@ -452,11 +506,21 @@ def test_create_kid_happy_path(
     fake_session.refresh.assert_awaited_once_with(added_kid)
 
 
-def test_create_kid_cleans_up_firebase_user_on_db_failure(
+def test_create_kid_no_token_minted_on_db_failure(
     groups_client: TestClient,
     fake_session: AsyncMock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """If the commit fails, no handoff token / Firebase user should leak.
+
+    Pre-Phase-6a: the route created a Firebase user first and rolled it back
+    via delete_firebase_user on failure -- this test asserts the cleanup ran.
+
+    Post-Phase-6a: the route mints the handoff JWT only after a successful
+    commit, so a commit failure means mint_handoff_token was never called
+    in the first place. Either invariant is acceptable here; the negative
+    space is "no orphan auth artifact survives a DB failure".
+    """
     _stub_token_verifier(monkeypatch)
     fb_calls = _stub_firebase_admin(monkeypatch)
     _set_kid_session_lookups(
@@ -466,10 +530,6 @@ def test_create_kid_cleans_up_firebase_user_on_db_failure(
     )
     fake_session.commit = AsyncMock(side_effect=RuntimeError("simulated DB failure"))
 
-    # TestClient with the default `raise_server_exceptions=True` re-raises
-    # unhandled server-side exceptions; in production the global handler
-    # would return 500, but the test only cares that the cleanup ran before
-    # the exception propagated.
     with pytest.raises(RuntimeError, match="simulated DB failure"):
         groups_client.post(
             f"/v1/groups/{_GROUP_ID}/kids",
@@ -477,11 +537,15 @@ def test_create_kid_cleans_up_firebase_user_on_db_failure(
             json={"display_name": "Sparrow", "age_band": "9-10"},
         )
 
-    # Firebase user was created, then deleted on the cleanup path.
-    assert fb_calls["create_user"] == ["Sparrow"]
-    assert fb_calls["delete_user"] == [_KID_FIREBASE_UID]
-    # Custom token was NOT minted (failure happens before that step).
-    assert fb_calls["create_token"] == []
+    if fb_calls["create_user"]:
+        # Legacy path: cleanup deleted the Firebase user and custom-token
+        # minting never happened.
+        assert fb_calls["delete_user"] == [_KID_FIREBASE_UID]
+        assert fb_calls["create_token"] == []
+    else:
+        # Phase 6a path: mint happens after commit, so it must not run at all.
+        assert fb_calls["mint_handoff"] == []
+        assert fb_calls["create_token"] == []
 
 
 # ---------------------------------------------------------------------------

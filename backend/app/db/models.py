@@ -44,10 +44,13 @@ class User(TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint("role in ('parent', 'teacher', 'kid')", name="ck_users_role"),
         UniqueConstraint("firebase_uid", name="uq_users_firebase_uid"),
+        UniqueConstraint("entra_oid", name="uq_users_entra_oid"),
+        Index("ix_users_entra_oid", "entra_oid"),
     )
 
     id: Mapped[str] = mapped_column(String(26), primary_key=True)
-    firebase_uid: Mapped[str] = mapped_column(String(128), nullable=False)
+    firebase_uid: Mapped[str | None] = mapped_column(String(128))
+    entra_oid: Mapped[str | None] = mapped_column(String(64))
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     display_name: Mapped[str] = mapped_column(String(80), nullable=False)
     age_band: Mapped[str | None] = mapped_column(String(16))
@@ -261,3 +264,25 @@ class RarityCache(TimestampMixin, Base):
     tier: Mapped[str] = mapped_column(String(24), nullable=False)
     observation_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     refreshed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class KidHandoffJti(TimestampMixin, Base):
+    """Single-use ledger for kid handoff JWTs (Phase 6a).
+
+    The ``POST /v1/auth/kid-exchange`` handler INSERTs a row keyed by the
+    handoff token's ``jti`` claim. Duplicate-PK violation IS the single-use
+    gate -- no application-level locking required. The ``ix_kid_handoff_jti_expires_at``
+    index supports the background sweeper that purges rows past
+    ``expires_at + 7 days``.
+    """
+
+    __tablename__ = "kid_handoff_jti"
+    __table_args__ = (Index("ix_kid_handoff_jti_expires_at", "expires_at"),)
+
+    jti: Mapped[str] = mapped_column(Text, primary_key=True)
+    kid_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

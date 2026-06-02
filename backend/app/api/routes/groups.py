@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import secrets
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
 import structlog
@@ -12,14 +12,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from ulid import ULID
 
-from app.core.auth import (
-    CurrentUserDep,
-    create_firebase_custom_token,
-    create_firebase_user,
-    delete_firebase_user,
-    set_firebase_custom_claims,
-)
+from app.core.auth import CurrentUserDep
 from app.core.config import Settings, get_request_settings
+from app.core.kid_jwt import mint_handoff_token
 from app.db import models
 from app.db.session import DbSessionDep
 
@@ -93,7 +88,11 @@ async def create_group(
     per parent, so the client should gate the call.
     """
     user_result = await session.execute(
-        select(models.User).where(models.User.firebase_uid == current_user.uid)
+        select(models.User).where(
+            (models.User.id == current_user.uid)
+            | (models.User.firebase_uid == current_user.uid)
+            | (models.User.entra_oid == current_user.uid)
+        )
     )
     user = user_result.scalar_one_or_none()
     if user is None:
@@ -179,7 +178,11 @@ async def list_groups(
     Order is newest-group-first so a freshly-created group is at the top.
     """
     user_result = await session.execute(
-        select(models.User).where(models.User.firebase_uid == current_user.uid)
+        select(models.User).where(
+            (models.User.id == current_user.uid)
+            | (models.User.firebase_uid == current_user.uid)
+            | (models.User.entra_oid == current_user.uid)
+        )
     )
     user = user_result.scalar_one_or_none()
     if user is None:
@@ -248,7 +251,11 @@ async def list_group_members(
     display name. Stable so the UI doesn't shuffle on refresh.
     """
     user_result = await session.execute(
-        select(models.User).where(models.User.firebase_uid == current_user.uid)
+        select(models.User).where(
+            (models.User.id == current_user.uid)
+            | (models.User.firebase_uid == current_user.uid)
+            | (models.User.entra_oid == current_user.uid)
+        )
     )
     caller = user_result.scalar_one_or_none()
     if caller is None:
@@ -326,18 +333,21 @@ class KidCreateRequest(BaseModel):
 
 
 class KidCreateResponse(BaseModel):
-    """Public shape of a freshly-provisioned kid + the Firebase custom token.
+    """Public shape of a freshly-provisioned kid + their handoff JWT.
 
-    The custom token is one-time-use; the parent hands it to the kid's
-    device, the kid's Firebase Web SDK calls `signInWithCustomToken`, and
-    from then on the kid's app uses normal ID tokens.
+    The `handoff_token` is a single-use Dragonfly-signed RS256 JWT (typ
+    `handoff`, 15-minute TTL). The parent hands it to the kid's device via
+    QR code / NFC; the kid's app POSTs it to `/v1/auth/kid-exchange` to
+    swap it for a long-lived session JWT. The handoff JWT's `jti` is
+    consumed atomically on first exchange.
     """
 
     id: str
-    firebase_uid: str
+    firebase_uid: str | None = None
     display_name: str
     age_band: str
-    custom_token: str
+    handoff_token: str
+    expires_at: datetime
 
 
 @router.post(
@@ -352,31 +362,42 @@ async def create_kid(
     session: DbSessionDep,
     settings: Annotated[Settings, Depends(get_request_settings)],
 ) -> KidCreateResponse:
-    """Admin-create a kid account inside a group.
+    """Admin-create a kid account inside a group and return a handoff JWT.
 
     Authorization: caller must have a `users` row with role parent or teacher
     AND must own the target group. Phase 1 keeps this strict (only the owner)
     -- co-parent / co-teacher flows can ride the join-code redemption path.
 
     Side effects (in order):
-    1. Create a Firebase user with no email via Admin SDK.
-    2. Set custom claims `{role: 'kid', group_id, parent_id}` so the
-       kid's ID tokens carry their identity context once they sign in.
-    3. Insert `users` and `memberships` rows in one transaction.
-    4. Mint a Firebase custom token for the kid's first sign-in.
+    1. Insert `users` row (firebase_uid=NULL, entra_oid=NULL; kids have no
+       external IdP identity in the post-Firebase world).
+    2. Insert `memberships` row binding the kid to the group.
+    3. Mint a Dragonfly-signed RS256 handoff JWT (15-minute TTL, single-use)
+       embedding `sub=kid_id`, `group_id`, `parent_id`, `token_use=handoff`.
 
-    On any failure after step 1, the Firebase user is best-effort deleted to
-    avoid orphan auth records.
+    The kid's device receives the handoff JWT (via QR/NFC from the parent),
+    then POSTs it to `/v1/auth/kid-exchange` for a long-lived session JWT.
+    Single-use is enforced by an atomic INSERT into `kid_handoff_jti` at
+    redemption time -- no orphan-cleanup logic needed here.
     """
+    # NOTE: The OR-clause shim below is a Phase 6a back-compat bridge --
+    # CurrentUser.uid carries the local users.id for resolved Entra
+    # tokens but may carry a Firebase uid for legacy stub-token test
+    # paths. Phase 10 removes the firebase_uid / entra_oid branches.
+    # TODO(phase-10): drop firebase_uid and entra_oid fallbacks.
     user_result = await session.execute(
-        select(models.User).where(models.User.firebase_uid == current_user.uid)
+        select(models.User).where(
+            (models.User.id == current_user.uid)
+            | (models.User.firebase_uid == current_user.uid)
+            | (models.User.entra_oid == current_user.uid)
+        )
     )
     caller = user_result.scalar_one_or_none()
     if caller is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=(
-                "Calling Firebase user has no `users` row. "
+                "Calling user has no `users` row. "
                 "Sign up via /v1/auth/parent-signup or the teacher equivalent first."
             ),
         )
@@ -399,64 +420,62 @@ async def create_kid(
             detail="Only the group owner can provision kids in this group.",
         )
 
-    kid_firebase_uid = create_firebase_user(
+    # Kids have no external IdP identity: no Firebase uid, no Entra OID.
+    # The local users.id (ULID) IS their identity for token `sub` claims.
+    kid_id = str(ULID())
+    kid = models.User(
+        id=kid_id,
+        firebase_uid=None,
+        role="kid",
         display_name=request_body.display_name,
+        age_band=request_body.age_band,
+        parent_user_id=caller.id,
+    )
+    membership = models.Membership(
+        id=str(ULID()),
+        group_id=group.id,
+        user_id=kid.id,
+        role="kid",
+    )
+    # Flush the kid User insert before adding the Membership so the FK
+    # target exists by the time the Membership INSERT runs. SQLAlchemy's
+    # topological sort gets confused by the self-referential User
+    # parent_user_id FK in the same flush as a Membership FK to users.id;
+    # the explicit flush forces the right order.
+    session.add(kid)
+    await session.flush()
+    session.add(membership)
+    await session.commit()
+    await session.refresh(kid)
+
+    # Mint the handoff JWT only after the kid + membership are durably
+    # committed. If anything above raises, the SQLAlchemy session rolls
+    # back and no token is ever produced -- no orphan to clean up.
+    handoff_token, _jti = mint_handoff_token(
+        kid_user_id=kid.id,
+        parent_id=caller.id,
+        group_id=group.id,
         settings=settings,
     )
-
-    try:
-        set_firebase_custom_claims(
-            kid_firebase_uid,
-            {"role": "kid", "group_id": group.id, "parent_id": caller.id},
-            settings,
-        )
-
-        kid = models.User(
-            id=str(ULID()),
-            firebase_uid=kid_firebase_uid,
-            role="kid",
-            display_name=request_body.display_name,
-            age_band=request_body.age_band,
-            parent_user_id=caller.id,
-        )
-        membership = models.Membership(
-            id=str(ULID()),
-            group_id=group.id,
-            user_id=kid.id,
-            role="kid",
-        )
-        # Flush the kid User insert before adding the Membership so the FK
-        # target exists by the time the Membership INSERT runs. SQLAlchemy's
-        # topological sort gets confused by the self-referential User
-        # parent_user_id FK in the same flush as a Membership FK to users.id;
-        # the explicit flush forces the right order.
-        session.add(kid)
-        await session.flush()
-        session.add(membership)
-        await session.commit()
-        await session.refresh(kid)
-    except Exception:
-        # Best-effort cleanup so we don't leak a Firebase user that has no
-        # corresponding `users` row. Swallow cleanup errors -- raising here
-        # would mask the original cause.
-        delete_firebase_user(kid_firebase_uid, settings)
-        raise
-
-    custom_token = create_firebase_custom_token(kid_firebase_uid, settings)
+    handoff_expires_at = datetime.now(UTC) + timedelta(
+        seconds=settings.dragonfly_handoff_ttl_seconds
+    )
 
     log.info(
         "groups.create_kid",
         group_id=group.id,
         kid_id=kid.id,
         parent_id=caller.id,
+        jti=_jti,
     )
 
     return KidCreateResponse(
         id=kid.id,
-        firebase_uid=kid.firebase_uid,
+        firebase_uid=None,
         display_name=kid.display_name,
         age_band=str(kid.age_band),
-        custom_token=custom_token,
+        handoff_token=handoff_token,
+        expires_at=handoff_expires_at,
     )
 
 
@@ -511,7 +530,11 @@ async def join_group(
     against duplicates.
     """
     user_result = await session.execute(
-        select(models.User).where(models.User.firebase_uid == current_user.uid)
+        select(models.User).where(
+            (models.User.id == current_user.uid)
+            | (models.User.firebase_uid == current_user.uid)
+            | (models.User.entra_oid == current_user.uid)
+        )
     )
     user = user_result.scalar_one_or_none()
     if user is None:
