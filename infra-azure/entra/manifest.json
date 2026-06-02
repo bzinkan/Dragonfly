@@ -1,7 +1,7 @@
 {
   "$schema": "./manifest.schema.json",
   "comment": "Source of truth for Phase 1 Entra + Key Vault identifiers. Downstream phases (6 backend verifier, 7 mobile MSAL) read from here. Hand-edited only when the underlying Azure resource changes.",
-  "phase": 4,
+  "phase": 5,
   "capturedAt": "2026-06-02",
   "tenants": {
     "management": {
@@ -133,6 +133,12 @@
       },
       "acr-login-server": {
         "id": "https://dragonfly-kv-dev.vault.azure.net/secrets/acr-login-server/eb91436309ae462bb936b035c5d4633c"
+      },
+      "containerapp-fqdn": {
+        "id": "https://dragonfly-kv-dev.vault.azure.net/secrets/containerapp-fqdn/3e01b4cda84142af956bd082edcad4ea"
+      },
+      "containerapp-name": {
+        "id": "https://dragonfly-kv-dev.vault.azure.net/secrets/containerapp-name/a16ed35c64924f68912727158d542b3b"
       }
     }
   },
@@ -200,6 +206,42 @@
         "note": "Built from main 2026-06-02 prior to Phase 6 code changes. Still points at GCP services (firebase-admin, GCS, Cloud Vision). Phase 5 will deploy this image to validate the deploy pipeline; runtime correctness lands in Phase 6."
       }
     }
+  },
+  "containerApps": {
+    "managedEnvironment": {
+      "name": "dragonfly-cae-dev",
+      "location": "eastus2",
+      "logAnalyticsWorkspace": {
+        "name": "dragonfly-law-dev",
+        "customerId": "75e992fb-cc84-410a-845f-1635b5e84ced"
+      }
+    },
+    "uami": {
+      "name": "dragonfly-api-mi",
+      "clientId": "57405a57-4f4b-42e5-9a13-daed83efd31c",
+      "principalId": "5846f3cb-a1b3-4ace-a8e8-625e10ae8b9a",
+      "resourceId": "/subscriptions/5a04114f-9102-4e0b-828b-b385096edfbc/resourceGroups/dragonfly-dev-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/dragonfly-api-mi",
+      "roles": [
+        {"role": "Key Vault Secrets User", "roleDefinitionId": "4633458b-17de-408a-b874-0445c86b69e6", "scope": "dragonfly-kv-dev"},
+        {"role": "Storage Blob Data Contributor", "roleDefinitionId": "ba92f5b4-2d11-453d-a403-e96b0029c9fe", "scope": "dragonflyphotosdev"},
+        {"role": "AcrPull", "roleDefinitionId": "7f951dda-4ed3-4680-a7ca-43fe172d538d", "scope": "dragonflyacrdev"}
+      ]
+    },
+    "app": {
+      "name": "dragonfly-api",
+      "fqdn": "dragonfly-api.salmonrock-e0019fcd.eastus2.azurecontainerapps.io",
+      "image": "dragonflyacrdev.azurecr.io/dragonfly-api:phase4-bootstrap",
+      "ingress": "external",
+      "targetPort": 8080,
+      "minReplicas": 0,
+      "maxReplicas": 3,
+      "cpu": 0.5,
+      "memoryGiB": 1.0,
+      "healthCheck": "GET /health returns 200",
+      "status": "DEPLOYED-BOOTSTRAP",
+      "note": "Image is the Phase 4 bootstrap (still firebase-admin/GCS/Cloud Vision). /health responds 200; any authenticated route will fail until Phase 6 swaps the backend code."
+    },
+    "buildBashGotcha": "az containerapp create with --user-assigned and --registry-identity using a resource ID (leading /) requires MSYS_NO_PATHCONV=1 on Git Bash on Windows -- otherwise the leading slash gets converted to 'C:/Program Files/Git/subscriptions/...' and the CLI rejects the input."
   },
   "kidJwt": {
     "kid": "k1-2026-06",
