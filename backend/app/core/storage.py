@@ -232,7 +232,7 @@ class BlobSignedUrlGenerator:
 
     def fetch_object_bytes(self, *, bucket: str, object_name: str) -> bytes:
         blob = self._service.get_blob_client(container=bucket, blob=object_name)
-        return cast(bytes, blob.download_blob().readall())
+        return blob.download_blob().readall()
 
     def copy_object(
         self,
