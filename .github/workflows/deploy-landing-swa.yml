@@ -1,0 +1,40 @@
+name: Deploy landing site to Azure Static Web Apps (dev)
+
+# Phase 8 of the GCP -> Azure migration. Ships the static landing/legal
+# pages (web/public/) to Azure Static Web Apps site `dragonfly-landing-swa`.
+# Runs alongside the existing Firebase Hosting deploy workflow during
+# the Phase 9 DNS cutover; the Firebase workflow is removed in Phase 10.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "web/**"
+      - ".github/workflows/deploy-landing-swa.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-landing-swa
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Static Web Apps
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Deploy to dragonfly-landing-swa
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_LANDING_SWA_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: upload
+          app_location: "web/public"
+          output_location: ""
+          skip_app_build: true

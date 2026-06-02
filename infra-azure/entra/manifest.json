@@ -1,7 +1,7 @@
 {
   "$schema": "./manifest.schema.json",
   "comment": "Source of truth for Phase 1 Entra + Key Vault identifiers. Downstream phases (6 backend verifier, 7 mobile MSAL) read from here. Hand-edited only when the underlying Azure resource changes.",
-  "phase": 5,
+  "phase": 8,
   "capturedAt": "2026-06-02",
   "tenants": {
     "management": {
@@ -139,8 +139,39 @@
       },
       "containerapp-name": {
         "id": "https://dragonfly-kv-dev.vault.azure.net/secrets/containerapp-name/a16ed35c64924f68912727158d542b3b"
+      },
+      "swa-landing-hostname": {
+        "id": "https://dragonfly-kv-dev.vault.azure.net/secrets/swa-landing-hostname/455b0db698cd4bf3806e058b1bd12fc7"
+      },
+      "swa-parents-hostname": {
+        "id": "https://dragonfly-kv-dev.vault.azure.net/secrets/swa-parents-hostname/ae048036094641c88aa979f2cc00a172"
+      },
+      "content-safety-endpoint": {
+        "id": "https://dragonfly-kv-dev.vault.azure.net/secrets/content-safety-endpoint/e92cb066b3794376827795c58ff06b1c"
+      },
+      "content-safety-key": {
+        "id": "https://dragonfly-kv-dev.vault.azure.net/secrets/content-safety-key/cf8c8b4057b84685ada85b8f7defe937"
       }
     }
+  },
+  "staticWebApps": {
+    "landing": {
+      "name": "dragonfly-landing-swa",
+      "defaultHostname": "purple-smoke-033982a0f.7.azurestaticapps.net",
+      "sku": "Free",
+      "location": "eastus2",
+      "purpose": "Serves dragonfly-app.net + www. Source: web/public.",
+      "resourceId": "/subscriptions/5a04114f-9102-4e0b-828b-b385096edfbc/resourceGroups/dragonfly-dev-rg/providers/Microsoft.Web/staticSites/dragonfly-landing-swa"
+    },
+    "parents": {
+      "name": "dragonfly-parents-swa",
+      "defaultHostname": "purple-sand-09360630f.7.azurestaticapps.net",
+      "sku": "Free",
+      "location": "eastus2",
+      "purpose": "Serves parents.dragonfly-app.net. Source: mobile/dist (Expo web export).",
+      "resourceId": "/subscriptions/5a04114f-9102-4e0b-828b-b385096edfbc/resourceGroups/dragonfly-dev-rg/providers/Microsoft.Web/staticSites/dragonfly-parents-swa"
+    },
+    "deploymentSecrets": "GitHub Actions secrets AZURE_LANDING_SWA_TOKEN + AZURE_PARENTS_SWA_TOKEN. Tokens also stashed in KV as swa-*-deployment-token for emergency recovery."
   },
   "postgres": {
     "serverName": "dragonfly-postgres-dev",
