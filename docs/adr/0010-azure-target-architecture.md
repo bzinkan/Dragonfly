@@ -157,3 +157,67 @@ Each phase is one PR (or a small group of related PRs) — same cadence as the G
 - Whether to keep Cloud DNS during the migration (probably yes, until Phase 9) or cut over earlier.
 - Whether to keep Firebase Auth temporarily as a fallback for emergency rollback (probably no — it adds complexity and the beta is small).
 - Whether the kid handoff token needs RFC 8693 token-exchange semantics or a simpler "exchange this opaque token for an Entra session" custom endpoint (leaning custom; full token-exchange is over-engineered for one flow).
+
+---
+
+## Phase 1 frozen contract
+
+Resolved decisions from the Phase 1 design review (2026-06-02). These supersede the corresponding open items above and the looser sketches in Section 1 and Section 6.
+
+### Two-path token verifier
+
+The FastAPI auth dependency dispatches on the `iss` claim:
+
+- **Entra path (adults — parents and teachers).** Verify against the CIAM tenant's discovery document:
+  - issuer: `https://login.microsoftonline.com/dfd7ebb4-0b29-42cb-aa05-e5e0124bab8f/v2.0`
+  - audience: `api://dragonfly-api` (the API app's identifier URI; access tokens are v2 because `requestedAccessTokenVersion=2`)
+  - signature: RS256 against Entra's JWKS at `https://login.microsoftonline.com/dfd7ebb4-0b29-42cb-aa05-e5e0124bab8f/discovery/v2.0/keys`
+- **Dragonfly path (kids).** Verify against the backend's own JWKS:
+  - issuer: `https://api.dragonfly-app.net`
+  - audience: `dragonfly-api`
+  - signature: RS256 with the kid-handoff RSA-2048 keypair stored in Key Vault; public JWKS served at `/.well-known/dragonfly-kid-jwks.json`
+
+Kids never receive an Entra-issued token. This overrides ADR Section 1's RFC 8693 token-exchange sketch — RFC 8693 is over-engineered for one flow, and shipping kid tokens through Entra would require seat-licenses we don't want.
+
+### Option C: backend-augmented claims
+
+Claims `role` and `group_id` are NOT carried in the JWT (neither Entra-issued nor Dragonfly-issued). On every request the auth dependency resolves them from Postgres (`users.role`, `users.group_id`) and attaches them to the request context.
+
+A 30-second TTL in-memory per-process cache (`{user_id: (role, group_id, expires_at)}`) keeps the per-request DB hit cheap. A `bust_user_cache(user_id)` hook is called from any code path that mutates `users.role` or `users.disabled_at`, so admin demotions and disablement take effect within one in-flight request rather than on cache expiry.
+
+This resolves ADR Section 1's "claims-mapping policy or backend-augmented claims on first request" open question in favor of backend-augmented, on every request, with the cache. Rationale: avoids the Entra claims-mapping policy round trip and lets us revoke role + disable users without waiting for token refresh.
+
+### Kid handoff flow
+
+1. Parent calls Admin API → backend mints a kid-handoff JWT: RS256, kid header = `k1-2026-06`, issuer `https://api.dragonfly-app.net`, audience `dragonfly-api`, `jti` = random ULID, `exp` = now + 15 minutes, single-use.
+2. QR encodes the handoff JWT (same QR shape as PR #69, only the token contents changed).
+3. Kid device scans QR, POSTs the handoff JWT to `/v1/auth/kid-exchange`.
+4. Backend validates signature + claims, checks `jti` is unused (atomic insert into `kid_handoff_jti`), then issues a session JWT with the same Dragonfly-path issuer/audience and a 30-day expiry.
+5. Kid app stores the session JWT and uses it as a Bearer token on subsequent requests.
+
+The public verification key is served from `/.well-known/dragonfly-kid-jwks.json` so the Dragonfly verifier path can fetch + rotate without an out-of-band trust bootstrap.
+
+This overrides ADR Section 6's mention of HS256/Ed25519 for handoff tokens — RS256 with a public JWKS is the chosen shape so the verifier can run the same JWKS-fetch code for both paths.
+
+### Phase 6 schema delta
+
+Alembic migration `add_entra_identity_columns` (lands in Phase 6 PR 6a):
+
+- `users.entra_oid` — `String(64)`, unique, nullable, indexed. Set on first Entra sign-in by looking up by `email` and writing back the `oid` claim. Becomes the primary identity column at Phase 10.
+- `users.disabled_at` — `timestamptz`, nullable. When non-null, the auth dependency rejects the request after backend-claim resolution. Used by `bust_user_cache` to force immediate effect.
+- `kid_handoff_jti` — new table. Columns: `jti` (text, primary key), `kid_user_id` (FK → `users.id`), `consumed_at` (timestamptz nullable), `expires_at` (timestamptz). Pre-insert with `consumed_at=null` at mint, `UPDATE ... WHERE consumed_at IS NULL` at exchange (atomic single-use). Background sweeper purges rows past `expires_at + 7 days`.
+- `users.firebase_uid` is **retained** through Phase 9 and only dropped in Phase 10 alongside the Firebase Auth tenant decommission, so emergency rollback during Phases 6-9 remains possible.
+
+### Locked identifiers
+
+- `dragonfly-api` user.access scope GUID = `7a4fc048-4930-eb02-b9df-179c2f8e0fb2`. **Do not regenerate.** The pre-authorized application grant on `dragonfly-client` references this id, and MSAL clients will request the literal scope string `api://dragonfly-api/user.access`. Rotating the GUID would force every client to re-consent.
+- Kid handoff JWT key id = `k1-2026-06`. The first rotation lands as `k2-...`; the JWKS will return both during the overlap window.
+
+### Override summary
+
+| Earlier ADR statement | Phase 1 resolution |
+|---|---|
+| Section 1: RFC 8693 token exchange for kids | Kids never get an Entra token. Backend-signed Dragonfly-path JWT only. |
+| Section 1: claims via Entra claims-mapping policy or backend on first request | Backend-augmented on every request, 30s TTL cache, `bust_user_cache` hook. |
+| Section 6: handoff token signed with a project secret (HS-style) | RS256 with public JWKS at `/.well-known/dragonfly-kid-jwks.json`. |
+| Open question: kid handoff token semantics | Custom `/v1/auth/kid-exchange`, 15-min single-use handoff → 30-day session JWT. |
