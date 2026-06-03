@@ -65,9 +65,7 @@ def _added_consent_row(fake_session: AsyncMock) -> models.ParentConsentRecord:
     return matches[0]
 
 
-def test_consent_records_with_no_auth(
-    consent_client: TestClient, fake_session: AsyncMock
-) -> None:
+def test_consent_records_with_no_auth(consent_client: TestClient, fake_session: AsyncMock) -> None:
     """Public endpoint -- no Authorization header required."""
     response = consent_client.post(
         "/v1/auth/consent",
@@ -131,9 +129,7 @@ def test_consent_accepts_optional_kid_display_name(
     assert row.kid_display_name == "Sparrow"
 
 
-def test_consent_response_shape(
-    consent_client: TestClient, fake_session: AsyncMock
-) -> None:
+def test_consent_response_shape(consent_client: TestClient, fake_session: AsyncMock) -> None:
     """Response carries id + recorded_at + policy_version, no extras."""
     response = consent_client.post(
         "/v1/auth/consent",
