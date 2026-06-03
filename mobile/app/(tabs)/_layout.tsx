@@ -63,6 +63,14 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="sanctuary"
+        options={{
+          title: "Sanctuary",
+          tabBarIcon: ({ color }) => <TabBarIcon name="leaf" color={color} />,
+          href: IS_WEB ? null : "/sanctuary",
+        }}
+      />
+      <Tabs.Screen
         name="settings"
         options={{
           title: "Settings",

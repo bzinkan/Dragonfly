@@ -5,13 +5,15 @@ parent-consent / teacher dashboard surface (per `docs/mobile.md`).
 
 Phase 6+ surface: Home tab lists the signed-in user's observations
 (`GET /v1/observations/me`), Observe tab is the camera capture + submit flow,
-Dex / Expeditions placeholder + real Expeditions tab. Settings holds the dev
-"paste a Firebase ID token" auth shortcut + build info + the Adult tools
+Dex / Expeditions placeholder + real Expeditions tab, and Sanctuary tab
+renders the kid's living-diorama from `GET /v1/sanctuary/me` (MVP with
+placeholder art -- see `docs/sanctuary.md` section 10). Settings holds the
+dev "paste a Firebase ID token" auth shortcut + build info + the Adult tools
 section (review queue link).
 
 **Web build is the adult-console surface only** (per `docs/mobile.md`):
-`npm run web` shows Home + Settings only -- Observe / Dex / Expeditions are
-hidden from the nav since those are kid-phone surfaces. The review queue is
+`npm run web` shows Home + Settings only -- Observe / Dex / Expeditions /
+Sanctuary are hidden from the nav since those are kid-phone surfaces. The review queue is
 reachable from Settings the same way on both platforms. The kid capture flow
 isn't there because: (a) docs/mobile.md is explicit that web isn't the kid
 experience, and (b) outdoor-with-a-laptop isn't the kid use case. Classroom
@@ -43,13 +45,14 @@ mobile/
   app.config.ts          # env-switched Expo config (replaces app.json)
   eas.json               # development / preview / production build profiles
   app/                   # Expo Router file-based routes
-    (tabs)/              # bottom tab nav: Home, Observe, Dex, Expeditions, Settings
+    (tabs)/              # bottom tab nav: Home, Observe, Dex, Expeditions, Sanctuary, Settings
     observe-submit.tsx   # stack-pushed submit screen after camera capture
   src/
     api/                 # client + typed endpoint wrappers + queryClient
     auth/token.ts        # bearer token in expo-secure-store
     config/env.ts        # typed read of expoConfig.extra
     observation/         # draftStore (Zustand) + useMyObservations (TanStack Query)
+    sanctuary/           # useSanctuary (TanStack Query) over GET /v1/sanctuary/me
   components/            # shared UI bits
 ```
 
