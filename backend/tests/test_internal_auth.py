@@ -648,10 +648,10 @@ def test_internal_principal_carries_claims(monkeypatch: pytest.MonkeyPatch) -> N
 
     capture_router = APIRouter(prefix="/probe2")
 
-    PrincipalDep = Annotated[InternalPrincipal | None, Depends(require_internal_oidc)]
-
     @capture_router.get("/who")
-    def who(principal: PrincipalDep) -> dict[str, str]:
+    def who(
+        principal: Annotated[InternalPrincipal | None, Depends(require_internal_oidc)],
+    ) -> dict[str, str]:
         captured.append(principal)
         return {"email": principal.email if principal else ""}
 
