@@ -49,8 +49,11 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: upload
           # Output of `expo export --platform web` lives in mobile/dist.
+          # The SWA action runs in a docker container with /github/workspace
+          # mounted at repo root, so the path is resolved from there --
+          # NOT from the workflow's working-directory.
           # `skip_app_build: true` short-circuits the Oryx build that
           # static-web-apps-deploy would otherwise attempt.
-          app_location: "dist"
+          app_location: "mobile/dist"
           output_location: ""
           skip_app_build: true
