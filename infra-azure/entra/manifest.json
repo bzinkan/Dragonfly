@@ -1,7 +1,7 @@
 {
   "$schema": "./manifest.schema.json",
   "comment": "Source of truth for Phase 1 Entra + Key Vault identifiers. Downstream phases (6 backend verifier, 7 mobile MSAL) read from here. Hand-edited only when the underlying Azure resource changes.",
-  "phase": 8,
+  "phase": 10,
   "capturedAt": "2026-06-02",
   "tenants": {
     "management": {

@@ -160,6 +160,19 @@ Each phase is one PR (or a small group of related PRs) — same cadence as the G
 
 ---
 
+## Migration completed -- 2026-06-03
+
+Phases 0-10 landed. The full state + scope cuts are documented in
+[`infra-azure/phase-10-gcp-decommission.md`](../../infra-azure/phase-10-gcp-decommission.md).
+Key deltas vs the ADR plan:
+
+- **Postgres landed in centralus**, not eastus2. This Sponsored subscription's quota blocks Burstable Postgres in eastus + eastus2; the ~25ms cross-region latency to the Container App in eastus2 is acceptable.
+- **apex (`dragonfly-app.net`) + `www`** stay on Firebase Hosting indefinitely. Azure SWA apex requires Azure DNS; keeping Cloud DNS authoritative + Firebase Hosting Free tier is $1/mo vs the zone-migration churn.
+- **Cloud SQL was stopped, not deleted.** Activation-policy NEVER preserves data and backups, zero compute cost, instant restart.
+- **MSAL bundler issue** in `@azure/msal-browser` is unresolved as of Phase 7. The mobile parents web bundle ships with Firebase Auth via the existing sign-in.tsx. Phase 11 candidate.
+
+---
+
 ## Phase 1 frozen contract
 
 Resolved decisions from the Phase 1 design review (2026-06-02). These supersede the corresponding open items above and the looser sketches in Section 1 and Section 6.
