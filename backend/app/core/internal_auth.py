@@ -103,7 +103,15 @@ def verify_google_oidc_token(token: str, audience: str) -> dict[str, Any]:
         ) from exc
 
     try:
-        claims = id_token.verify_oauth2_token(token, GoogleRequest(), audience=audience)
+        # google-auth has no py.typed marker so mypy can't resolve the
+        # return signature; the project's existing pattern is to silence
+        # the `no-untyped-call` on the boundary call and then narrow the
+        # result via the `isinstance(claims, dict)` check below.
+        claims = id_token.verify_oauth2_token(  # type: ignore[no-untyped-call]
+            token,
+            GoogleRequest(),
+            audience=audience,
+        )
     except Exception as exc:
         # google-auth raises ValueError for audience/signature/expiry
         # and GoogleAuthError for JWKS transport failures. Catching
