@@ -798,6 +798,31 @@ materialized view over what the handler already committed.
 
 ## 10. Mobile UX
 
+### MVP tab shipped (placeholder art)
+
+The first iteration of the Sanctuary tab is live at
+[`mobile/app/(tabs)/sanctuary.tsx`](../mobile/app/(tabs)/sanctuary.tsx)
+backed by [`mobile/src/sanctuary/useSanctuary.ts`](../mobile/src/sanctuary/useSanctuary.ts)
+(TanStack Query) and the typed API client at
+[`mobile/src/api/sanctuary.ts`](../mobile/src/api/sanctuary.ts). The
+diorama is rendered from React Native primitives (`View`, `Text`,
+`Pressable`, `Modal`, `ScrollView`) tinted per habitat — no art
+assets, no new heavy dependencies. The tab is registered in
+[`mobile/app/(tabs)/_layout.tsx`](../mobile/app/(tabs)/_layout.tsx)
+with the same `IS_WEB ? null : "/sanctuary"` hidden-on-web rule the
+other kid-facing tabs use. Loading / error / empty states are
+implemented; pull-to-refresh uses `RefreshControl`; tap-to-inspect
+opens a modal with the element title / detail / icon-key.
+
+Remaining work (later PRs):
+
+- Final illustration, audio bed, and soft motion beyond opacity fades.
+- Lottie / Reanimated 3 reveal beat (post-submit celebration; tracked
+  separately from this MVP because the dispatcher reveal flow ships
+  in the same PR cluster as the on-submit celebration sequence).
+- Mystery cue silhouettes once art lands.
+- Real authored guide audio.
+
 ### screen
 
 A new Sanctuary route under the Expo Router file-based tree
