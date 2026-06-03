@@ -1,0 +1,39 @@
+{
+  "zones": [
+    {
+      "id": "meadow",
+      "title": "Meadow",
+      "mood": "Open grass, wildflowers, warm sun, and the small flying things that drift between blooms."
+    },
+    {
+      "id": "woodland",
+      "title": "Woodland",
+      "mood": "Trees holding their own quiet, leaf litter underfoot, and creatures that prefer the cover of branches."
+    },
+    {
+      "id": "pond",
+      "title": "Pond",
+      "mood": "Still water and soft edges, where everything that breathes through skin or gills tends to gather."
+    },
+    {
+      "id": "sky",
+      "title": "Sky",
+      "mood": "The air above the other zones, where wings and weather pass through."
+    },
+    {
+      "id": "soil",
+      "title": "Soil",
+      "mood": "The quiet layer underfoot, where fungi, decomposers, and slow lives work beneath the leaves."
+    },
+    {
+      "id": "urban",
+      "title": "Urban",
+      "mood": "Sidewalks, walls, parks, and the wildlife that has learned to live alongside people."
+    },
+    {
+      "id": "elsewhere",
+      "title": "Elsewhere",
+      "mood": "Everything else -- the finds that wander past the edges of the other zones."
+    }
+  ]
+}

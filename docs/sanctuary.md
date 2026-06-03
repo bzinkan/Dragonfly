@@ -844,42 +844,63 @@ leaves the app shippable. Nothing rewrites the submission spine.
    variants gated on Phase 3 `SeasonHandler`. Content-only PRs from
    this point; no further schema or handler changes required.
 
-### content layout (sketch)
+### content layout
 
 ```
 content/
-  expeditions/
-    starters/
-      anywhere_starter.json
-      ...
   sanctuary/
-    zones/
-      meadow.json
-      woodland.json
-      pond.json
-      sky.json
-      soil.json
-      urban.json
-      elsewhere.json
-    routing/
-      iconic_taxon_map.json
-      urban_taxa.json
-    elements/
-      coarse/
-        meadow_butterfly_coarse.json
-        ...
-      charismatic/
-        monarch.json
-        ...
-      relationships/
-        meadow_pollination.json
-        ...
+    zones.json
+    coarse_unlocks.json
+    charismatic_unlocks.json
+    relationship_moments.json
+    guide_lines.json
+    mystery_cues.json
+    tiny_surprises.json
+    seasonal_variants.json
+  schema/
+    sanctuary.schema.json
 ```
 
-Filename stems equal the `id` field on each authored object — same
-rule the expedition validator enforces. The `content/sanctuary/`
-tree is created in step 1 and populated through steps 1 and 7;
-no other steps need to author content.
+Single file per content kind keeps validation and authoring simple;
+per-element-file sharding can come later if files get unwieldy
+(`scripts/validate_content.py` already walks with `rglob` so a
+nested layout drops in without a tooling change). Each file is a JSON
+object with one top-level key matching the content kind
+(`{"zones": [...]}`, `{"coarse_unlocks": [...]}`, ...); element `id`
+fields inside the JSON are lowercase snake_case (enforced by
+[`backend/app/models/sanctuary.py`](../backend/app/models/sanctuary.py)).
+The `content/sanctuary/` tree is created in step 1 and populated
+through steps 1 and 7; no other steps need to author content.
+
+`content/schema/sanctuary.schema.json` is generated, not authored —
+[`scripts/regenerate_schema.py`](../scripts/regenerate_schema.py)
+emits it from `SanctuaryConfig.model_json_schema()`, and CI fails if
+the committed file drifts from the model.
+
+### authoring future Sanctuary content
+
+When you want to add or edit Sanctuary content:
+
+1. Edit or add JSON to `content/sanctuary/<kind>.json` (one of the
+   eight files in the flat layout above).
+2. Run `python scripts/validate_content.py` locally — it validates
+   both expedition and sanctuary content. The per-file pass checks
+   shapes; the whole-tree pass resolves cross-references (relationship
+   moment refs, seasonal variant element_refs, zone refs).
+3. Run `python scripts/regenerate_schema.py` if you added new fields
+   to `backend/app/models/sanctuary.py`. This re-emits
+   `content/schema/sanctuary.schema.json`; CI catches drift via
+   `git diff --exit-code`.
+4. CI runs the same validator on every push that touches
+   `content/sanctuary/**`, `backend/app/models/sanctuary.py`,
+   `scripts/validate_content.py`, or `scripts/regenerate_schema.py`
+   (see [`.github/workflows/content-validate.yml`](../.github/workflows/content-validate.yml)).
+
+Charismatic unlock authoring rule: every entry ships with
+`taxon_id_verified: false` until an author has manually opened
+`inaturalist.org/taxa/<id>` and confirmed the numeric id matches the
+intended species. The flag is advisory in this PR; a follow-up will
+gate production builds on `taxon_id_verified=true`.
 
 Every step preserves every Phase 1 invariant. The submission spine
 is untouched. The dispatcher contract is unchanged. The kid still

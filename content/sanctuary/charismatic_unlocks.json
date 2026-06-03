@@ -1,0 +1,104 @@
+{
+  "charismatic_unlocks": [
+    {
+      "id": "pond_charismatic_dragonfly",
+      "zone": "pond",
+      "taxon_id": 47792,
+      "common_name": "Dragonfly",
+      "title": "A dragonfly hovers over the pond.",
+      "detail": "Four clear wings, eyes like beads, and a path that zigzags above the water.",
+      "icon": "sanctuary.pond.dragonfly",
+      "taxon_id_verified": false
+    },
+    {
+      "id": "meadow_charismatic_butterfly",
+      "zone": "meadow",
+      "taxon_id": 47157,
+      "common_name": "Butterfly",
+      "title": "A butterfly drifts through the meadow.",
+      "detail": "Soft wings open and close, resting on a flower, then lifting again on the breeze.",
+      "icon": "sanctuary.meadow.butterfly",
+      "taxon_id_verified": false
+    },
+    {
+      "id": "pond_charismatic_bullfrog",
+      "zone": "pond",
+      "taxon_id": 65854,
+      "common_name": "American bullfrog",
+      "title": "A bullfrog rests at the pond's edge.",
+      "detail": "Green skin, gold eyes just above the water, a low call that carries across the pond.",
+      "icon": "sanctuary.pond.bullfrog",
+      "taxon_id_verified": false
+    },
+    {
+      "id": "sky_charismatic_red_tailed_hawk",
+      "zone": "sky",
+      "taxon_id": 5097,
+      "common_name": "Red-tailed hawk",
+      "title": "A red-tailed hawk circles overhead.",
+      "detail": "Broad wings open wide, a rusty tail catching the light as it rides a slow spiral.",
+      "icon": "sanctuary.sky.red_tailed_hawk",
+      "taxon_id_verified": false
+    },
+    {
+      "id": "woodland_charismatic_red_fox",
+      "zone": "woodland",
+      "taxon_id": 42069,
+      "common_name": "Red fox",
+      "title": "A red fox steps between the trees.",
+      "detail": "Rust-orange coat, white-tipped tail, quiet paws moving through fallen leaves.",
+      "icon": "sanctuary.woodland.red_fox",
+      "taxon_id_verified": false
+    },
+    {
+      "id": "woodland_charismatic_white_tailed_deer",
+      "zone": "woodland",
+      "taxon_id": 42100,
+      "common_name": "White-tailed deer",
+      "title": "A deer pauses in the woodland.",
+      "detail": "Long ears turn, a white tail flicks, then it steps quietly back into the trees.",
+      "icon": "sanctuary.woodland.white_tailed_deer",
+      "taxon_id_verified": false
+    },
+    {
+      "id": "urban_charismatic_raccoon",
+      "zone": "urban",
+      "taxon_id": 41663,
+      "common_name": "Raccoon",
+      "title": "A raccoon ambles along the alley.",
+      "detail": "A masked face, a striped tail, careful hands turning over leaves and small things at night.",
+      "icon": "sanctuary.urban.raccoon",
+      "taxon_id_verified": false
+    },
+    {
+      "id": "meadow_charismatic_hummingbird",
+      "zone": "meadow",
+      "taxon_id": 6018,
+      "common_name": "Ruby-throated hummingbird",
+      "title": "A hummingbird hovers at a flower.",
+      "detail": "Tiny wings blur, the throat flashes red, and it darts to the next bloom.",
+      "icon": "sanctuary.meadow.hummingbird",
+      "taxon_id_verified": false
+    },
+    {
+      "id": "meadow_charismatic_monarch",
+      "zone": "meadow",
+      "taxon_id": 48662,
+      "common_name": "Monarch butterfly",
+      "title": "A monarch visits your meadow.",
+      "detail": "Orange wings edged in black, gentle as a leaf, drifting from milkweed to milkweed.",
+      "icon": "sanctuary.meadow.monarch",
+      "taxon_id_verified": false
+    },
+    {
+      "id": "soil_charismatic_fly_agaric",
+      "zone": "soil",
+      "taxon_id": 47330,
+      "common_name": "Fly agaric mushroom",
+      "title": "A red-capped mushroom rises from the soil.",
+      "detail": "A bright red cap with white flecks, pushing up through the moss after rain.",
+      "icon": "sanctuary.soil.fly_agaric",
+      "taxon_id_verified": false
+    }
+  ]
+}

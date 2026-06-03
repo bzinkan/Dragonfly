@@ -1,0 +1,475 @@
+{
+  "$defs": {
+    "CharismaticUnlock": {
+      "description": "Charismatic single-taxon unlock keyed by a verified iNat taxon_id.\n\n`taxon_id_verified` defaults to False; authors must set it true only\nafter manually confirming the numeric id on inaturalist.org. Content\nwith `taxon_id_verified=false` is acceptable as a draft but MUST be\nflipped to true before any production release. Enforcement of that\nrule at build time is a follow-up PR (see PR description).",
+      "properties": {
+        "common_name": {
+          "maxLength": 60,
+          "minLength": 1,
+          "title": "Common Name",
+          "type": "string"
+        },
+        "detail": {
+          "maxLength": 180,
+          "minLength": 1,
+          "title": "Detail",
+          "type": "string"
+        },
+        "icon": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Icon",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "taxon_id": {
+          "minimum": 1,
+          "title": "Taxon Id",
+          "type": "integer"
+        },
+        "taxon_id_verified": {
+          "default": false,
+          "title": "Taxon Id Verified",
+          "type": "boolean"
+        },
+        "title": {
+          "maxLength": 60,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "zone": {
+          "enum": [
+            "meadow",
+            "woodland",
+            "pond",
+            "sky",
+            "soil",
+            "urban",
+            "elsewhere"
+          ],
+          "title": "Zone",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "zone",
+        "taxon_id",
+        "common_name",
+        "title",
+        "detail",
+        "icon"
+      ],
+      "title": "CharismaticUnlock",
+      "type": "object"
+    },
+    "CoarseUnlock": {
+      "description": "Broad-category sanctuary element keyed by one or more iNat iconic taxa.",
+      "properties": {
+        "detail": {
+          "maxLength": 180,
+          "minLength": 1,
+          "title": "Detail",
+          "type": "string"
+        },
+        "icon": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Icon",
+          "type": "string"
+        },
+        "iconic_taxa": {
+          "items": {
+            "enum": [
+              "Plantae",
+              "Insecta",
+              "Aves",
+              "Mammalia",
+              "Amphibia",
+              "Reptilia",
+              "Actinopterygii",
+              "Mollusca",
+              "Annelida",
+              "Arachnida",
+              "Fungi",
+              "Chromista",
+              "Protozoa",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Iconic Taxa",
+          "type": "array"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 60,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "zone": {
+          "enum": [
+            "meadow",
+            "woodland",
+            "pond",
+            "sky",
+            "soil",
+            "urban",
+            "elsewhere"
+          ],
+          "title": "Zone",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "zone",
+        "iconic_taxa",
+        "title",
+        "detail",
+        "icon"
+      ],
+      "title": "CoarseUnlock",
+      "type": "object"
+    },
+    "GuideLine": {
+      "description": "One-liner guide copy. `zone=None` is global; otherwise scoped to a zone.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 140,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "zone": {
+          "anyOf": [
+            {
+              "enum": [
+                "meadow",
+                "woodland",
+                "pond",
+                "sky",
+                "soil",
+                "urban",
+                "elsewhere"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Zone"
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ],
+      "title": "GuideLine",
+      "type": "object"
+    },
+    "MysteryCue": {
+      "description": "Ambient zone cue with a soft hint about what iconic_taxon would unlock here.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 140,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "unlock_hint": {
+          "maxLength": 140,
+          "minLength": 1,
+          "title": "Unlock Hint",
+          "type": "string"
+        },
+        "zone": {
+          "enum": [
+            "meadow",
+            "woodland",
+            "pond",
+            "sky",
+            "soil",
+            "urban",
+            "elsewhere"
+          ],
+          "title": "Zone",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "zone",
+        "text",
+        "unlock_hint"
+      ],
+      "title": "MysteryCue",
+      "type": "object"
+    },
+    "RelationshipMoment": {
+      "description": "Cross-element moment: refs two or more existing coarse/charismatic ids.\n\nExistence of each ref id is enforced at whole-tree validation time on\n`SanctuaryConfig`, not at per-file validation. `zones` is `min_length=1`\nbecause intra-zone relationships are allowed (e.g. meadow Plantae +\nmeadow Monarch); cross-zone moments simply list more than one zone.",
+      "properties": {
+        "detail": {
+          "maxLength": 180,
+          "minLength": 1,
+          "title": "Detail",
+          "type": "string"
+        },
+        "icon": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Icon",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "refs": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2,
+          "title": "Refs",
+          "type": "array"
+        },
+        "title": {
+          "maxLength": 60,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "zones": {
+          "items": {
+            "enum": [
+              "meadow",
+              "woodland",
+              "pond",
+              "sky",
+              "soil",
+              "urban",
+              "elsewhere"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Zones",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "zones",
+        "refs",
+        "title",
+        "detail",
+        "icon"
+      ],
+      "title": "RelationshipMoment",
+      "type": "object"
+    },
+    "SanctuaryZone": {
+      "description": "One sanctuary zone (meadow, woodland, pond, sky, soil, urban, elsewhere).",
+      "properties": {
+        "id": {
+          "enum": [
+            "meadow",
+            "woodland",
+            "pond",
+            "sky",
+            "soil",
+            "urban",
+            "elsewhere"
+          ],
+          "title": "Id",
+          "type": "string"
+        },
+        "mood": {
+          "maxLength": 180,
+          "minLength": 1,
+          "title": "Mood",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 60,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "mood"
+      ],
+      "title": "SanctuaryZone",
+      "type": "object"
+    },
+    "SeasonalVariant": {
+      "description": "Seasonal description attached to an existing coarse/charismatic element.",
+      "properties": {
+        "description": {
+          "maxLength": 180,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "element_ref": {
+          "title": "Element Ref",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "season": {
+          "enum": [
+            "spring",
+            "summer",
+            "autumn",
+            "winter"
+          ],
+          "title": "Season",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "element_ref",
+        "season",
+        "description"
+      ],
+      "title": "SeasonalVariant",
+      "type": "object"
+    },
+    "TinySurprise": {
+      "description": "Low-weight zone ambient detail at intermediate deepening thresholds (3, 5, 10).",
+      "properties": {
+        "description": {
+          "maxLength": 180,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "threshold": {
+          "enum": [
+            3,
+            5,
+            10
+          ],
+          "title": "Threshold",
+          "type": "integer"
+        },
+        "zone": {
+          "enum": [
+            "meadow",
+            "woodland",
+            "pond",
+            "sky",
+            "soil",
+            "urban",
+            "elsewhere"
+          ],
+          "title": "Zone",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "zone",
+        "threshold",
+        "description"
+      ],
+      "title": "TinySurprise",
+      "type": "object"
+    }
+  },
+  "description": "The whole sanctuary content tree, assembled for cross-reference checks.\n\nPer-file validation happens in `scripts/validate_content.py` against\nthe individual element models above. After per-file validation passes,\nthe validator gathers all instances into this wrapper to enforce\ncross-file invariants: id uniqueness across element kinds, and the\nexistence of every referenced id / zone.\n\n`model_validator(mode=\"after\")` is the one intentional divergence from\nthe expedition pattern: cross-file id resolution needs every list-field\ntyped and validated before it runs, which `field_validator` cannot\nexpress in a single check.",
+  "properties": {
+    "charismatic_unlocks": {
+      "items": {
+        "$ref": "#/$defs/CharismaticUnlock"
+      },
+      "title": "Charismatic Unlocks",
+      "type": "array"
+    },
+    "coarse_unlocks": {
+      "items": {
+        "$ref": "#/$defs/CoarseUnlock"
+      },
+      "title": "Coarse Unlocks",
+      "type": "array"
+    },
+    "guide_lines": {
+      "items": {
+        "$ref": "#/$defs/GuideLine"
+      },
+      "title": "Guide Lines",
+      "type": "array"
+    },
+    "mystery_cues": {
+      "items": {
+        "$ref": "#/$defs/MysteryCue"
+      },
+      "title": "Mystery Cues",
+      "type": "array"
+    },
+    "relationship_moments": {
+      "items": {
+        "$ref": "#/$defs/RelationshipMoment"
+      },
+      "title": "Relationship Moments",
+      "type": "array"
+    },
+    "seasonal_variants": {
+      "items": {
+        "$ref": "#/$defs/SeasonalVariant"
+      },
+      "title": "Seasonal Variants",
+      "type": "array"
+    },
+    "tiny_surprises": {
+      "items": {
+        "$ref": "#/$defs/TinySurprise"
+      },
+      "title": "Tiny Surprises",
+      "type": "array"
+    },
+    "zones": {
+      "items": {
+        "$ref": "#/$defs/SanctuaryZone"
+      },
+      "minItems": 1,
+      "title": "Zones",
+      "type": "array"
+    }
+  },
+  "required": [
+    "zones"
+  ],
+  "title": "SanctuaryConfig",
+  "type": "object"
+}

@@ -1,0 +1,76 @@
+{
+  "tiny_surprises": [
+    {
+      "id": "meadow_surprise_drifting_petal",
+      "zone": "meadow",
+      "threshold": 3,
+      "description": "A single petal drifts across the grass and settles near the edge of the scene."
+    },
+    {
+      "id": "meadow_surprise_seed_head_glow",
+      "zone": "meadow",
+      "threshold": 5,
+      "description": "A seed head catches a slant of late light and glows for a quiet moment."
+    },
+    {
+      "id": "woodland_surprise_mushroom_ring",
+      "zone": "woodland",
+      "threshold": 5,
+      "description": "A small ring of mushrooms has appeared in the leaf litter near a mossy log."
+    },
+    {
+      "id": "woodland_surprise_fallen_acorn",
+      "zone": "woodland",
+      "threshold": 3,
+      "description": "An acorn rests on the path where it was not before, its cap still attached."
+    },
+    {
+      "id": "woodland_surprise_distant_woodpecker",
+      "zone": "woodland",
+      "threshold": 10,
+      "description": "A faint, steady tapping carries through the trees from somewhere out of sight."
+    },
+    {
+      "id": "pond_surprise_extra_ripple",
+      "zone": "pond",
+      "threshold": 5,
+      "description": "An extra ripple ring widens across the surface as the scene settles."
+    },
+    {
+      "id": "pond_surprise_lily_pad_drift",
+      "zone": "pond",
+      "threshold": 3,
+      "description": "A lily pad has drifted a hand's width along the bank since the last visit."
+    },
+    {
+      "id": "sky_surprise_small_flock",
+      "zone": "sky",
+      "threshold": 10,
+      "description": "A small flock crosses the corner of the scene in a loose, easy line."
+    },
+    {
+      "id": "sky_surprise_high_cloud_streak",
+      "zone": "sky",
+      "threshold": 3,
+      "description": "A single high cloud streak stretches thin across the upper sky."
+    },
+    {
+      "id": "soil_surprise_pebble_uncovered",
+      "zone": "soil",
+      "threshold": 5,
+      "description": "A small pebble has been nudged loose, the dark soil beneath it freshly exposed."
+    },
+    {
+      "id": "urban_surprise_sidewalk_seedling",
+      "zone": "urban",
+      "threshold": 10,
+      "description": "A tiny green seedling has pushed up between two sidewalk cracks near the curb."
+    },
+    {
+      "id": "elsewhere_surprise_quiet_shimmer",
+      "zone": "elsewhere",
+      "threshold": 3,
+      "description": "A soft shimmer passes across the scene and fades, leaving the quiet behind."
+    }
+  ]
+}
