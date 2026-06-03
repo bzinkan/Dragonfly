@@ -87,6 +87,116 @@ Expected build properties:
 - Target API URL: `https://api.dragonfly-app.net` (the dev API; no
   staging API exists yet, per the brief)
 
+### Final build commands
+
+The strict, gated build procedure that the W1 pilot uses. This is
+what closes Gate 1 of
+[`one-week-kid-pilot-checklist.md`](one-week-kid-pilot-checklist.md);
+the casual walkthrough above is for first-time familiarisation.
+
+Working directory: `mobile/`.
+
+1. **Install dependencies.** The repo's package manager is npm
+   (`mobile/package-lock.json` is the lockfile). Prefer `npm ci` for
+   reproducibility; fall back to `npm install` only if you
+   intentionally changed `package.json` in the same PR.
+
+   ```sh
+   cd mobile
+   npm ci
+   ```
+
+2. **Type-check.** Local fast-fail gate; EAS will re-typecheck on
+   the remote builder, but failing early saves a build minute.
+
+   ```sh
+   npx tsc --noEmit
+   ```
+
+   Must exit 0 before you spend an EAS build minute.
+
+3. **Inspect the resolved Expo config** and verify the
+   `play-internal` branch of `app.config.ts` resolved correctly:
+
+   ```sh
+   APP_ENV=play-internal npx expo config --type public
+   ```
+
+   Confirm in the printed JSON (key locations may vary by Expo CLI
+   version — cross-check against `mobile/app.config.ts` if a key is
+   not at the expected path):
+
+   - [ ] `android.package` is `com.dragonfly.app` (NOT
+     `com.dragonfly.app.dev` or `com.dragonfly.app.staging`).
+   - [ ] `name` is `Dragonfly Internal` (the `play-internal` branch
+     of `displayName()` in `mobile/app.config.ts`).
+   - [ ] `version` is `0.1.0` (the `version` field in
+     `mobile/app.config.ts`; `android.versionCode` is NOT pinned in
+     source — EAS manages it remotely via `appVersionSource:
+     "remote"` + `autoIncrement: true`).
+   - [ ] `extra.appEnv` is `play-internal`.
+   - [ ] `extra.apiBaseUrl` is `https://api.dragonfly-app.net`.
+   - [ ] `extra.updatesChannel` is `play-internal`.
+   - [ ] `extra.firebase` and `extra.entra` are populated.
+
+   If `android.package` is anything other than `com.dragonfly.app`:
+   STOP. You are in the wrong `APP_ENV`. Re-run with
+   `APP_ENV=play-internal` prefixed.
+
+4. **Build the AAB with EAS.** Exact command from the
+   `play-internal` profile in `eas.json` (`channel: play-internal`,
+   `autoIncrement: true`, `android.buildType: app-bundle`,
+   `env.APP_ENV: play-internal`):
+
+   ```sh
+   APP_ENV=play-internal npx eas-cli build \
+     --platform android \
+     --profile play-internal \
+     --non-interactive
+   ```
+
+   When the build finishes, EAS prints a download URL for the
+   `.aab` and the resolved `versionCode` in the build summary. Save
+   the URL locally; do NOT commit the `.aab`.
+
+5. **Upload to Play Console.** Manual upload to the Internal testing
+   track — follow §3 below. Do NOT click **Send 1 update for
+   review**; the saved (un-rolled-out) release is installable by the
+   listed testers and defers policy review.
+
+### Expected values
+
+- [ ] Package name: `com.dragonfly.app`
+- [ ] Display name on the device: `Dragonfly Internal`
+- [ ] App version: `0.1.0`
+- [ ] Track: Internal testing (NOT Closed, NOT Open, NOT Production)
+- [ ] Tester type: known adult-supervised testers only (1–3
+  households). No classroom rollout. No public release.
+
+### Stop conditions during build
+
+- If `npx tsc --noEmit` fails: fix locally before building the AAB.
+  Do not ship an AAB whose typecheck did not pass.
+- If `npx expo config --type public` shows `android.package` as
+  anything other than `com.dragonfly.app`: STOP. You are in the
+  wrong `APP_ENV`. Re-run with `APP_ENV=play-internal` prefixed.
+- If the EAS build's `versionCode` is not monotonically greater
+  than the last AAB uploaded to Play Console on the `play-internal`
+  track: STOP. Play Console rejects non-monotonic `versionCode` and
+  a bad upload can invalidate later uploads on the same track. (On
+  the very first `play-internal` upload, any value is acceptable.)
+- If risk
+  [`risks/0007-google-play-families-location-policy.md`](risks/0007-google-play-families-location-policy.md)
+  is still Open and no option (A / B / C / D) has been picked: the
+  default-if-no-choice is **Option C** (adult-supervised,
+  known-family, internal-test only with explicit consent + Brian's
+  manual review of every captured location pin). Acknowledge the
+  choice in the risk doc AND record the option label verbatim in
+  the session journal per
+  [`one-week-kid-pilot-checklist.md`](one-week-kid-pilot-checklist.md)
+  Gate 1 before uploading the AAB — silent Option C selection is
+  explicitly called out as a hazard in risk 0007.
+
 ## 3. Upload the AAB to Internal testing
 
 1. Play Console → your Dragonfly app → **Testing → Internal testing**
