@@ -1,0 +1,46 @@
+{
+  "mystery_cues": [
+    {
+      "id": "meadow_cue_buzzing_grass",
+      "zone": "meadow",
+      "text": "Something in the tall grass is waiting to be noticed.",
+      "unlock_hint": "Try logging an insect or a wildflower out in the open."
+    },
+    {
+      "id": "woodland_cue_between_trees",
+      "zone": "woodland",
+      "text": "Shadows shift between the trees, just out of sight.",
+      "unlock_hint": "A tree, a perching bird, or a deer track will fill this in."
+    },
+    {
+      "id": "pond_cue_faint_ripples",
+      "zone": "pond",
+      "text": "Faint ripples cross the still water, but no shape yet.",
+      "unlock_hint": "Look for a frog, a fish, or a heron near the edge."
+    },
+    {
+      "id": "sky_cue_empty_blue",
+      "zone": "sky",
+      "text": "Empty blue overhead, with room for wings to arrive.",
+      "unlock_hint": "A bird in the air will wake this zone."
+    },
+    {
+      "id": "soil_cue_quiet_ground",
+      "zone": "soil",
+      "text": "Quiet ground hides life you cannot see yet.",
+      "unlock_hint": "Mushrooms, worms, or a beetle under a log all count here."
+    },
+    {
+      "id": "urban_cue_sidewalk_life",
+      "zone": "urban",
+      "text": "Sidewalk life waits to be noticed between the buildings.",
+      "unlock_hint": "Edge-living birds, plants in cracks, or small mammals count here."
+    },
+    {
+      "id": "elsewhere_cue_blank_corner",
+      "zone": "elsewhere",
+      "text": "A blank corner is set aside for finds that do not fit elsewhere.",
+      "unlock_hint": "Anything unusual or hard to place lands here."
+    }
+  ]
+}

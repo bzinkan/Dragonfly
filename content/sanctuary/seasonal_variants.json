@@ -1,0 +1,28 @@
+{
+  "seasonal_variants": [
+    {
+      "id": "meadow_plantae_autumn",
+      "element_ref": "meadow_coarse_plantae",
+      "season": "autumn",
+      "description": "The meadow grass goes gold. Seed heads lean over, ready to scatter, and the green slips quietly out of the stems."
+    },
+    {
+      "id": "pond_amphibia_winter",
+      "element_ref": "pond_coarse_amphibia",
+      "season": "winter",
+      "description": "The pond surface frosts over. Frogs sleep below in the soft mud, breathing through their skin until spring."
+    },
+    {
+      "id": "meadow_monarch_spring",
+      "element_ref": "meadow_charismatic_monarch",
+      "season": "spring",
+      "description": "Monarchs return. The first orange wings drift north over the meadow, looking for milkweed to lay their eggs on."
+    },
+    {
+      "id": "sky_aves_summer",
+      "element_ref": "sky_coarse_aves",
+      "season": "summer",
+      "description": "Swallows skim the warm air, turning on a wingtip after insects too small to see from the ground."
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "relationship_moments": [
+    {
+      "id": "meadow_pollination_moment",
+      "zones": ["meadow"],
+      "refs": ["meadow_coarse_plantae", "meadow_charismatic_monarch"],
+      "title": "Flower meets wing",
+      "detail": "A monarch lands on a meadow bloom and stays for a slow sip. The plant gives nectar; the butterfly carries pollen on.",
+      "icon": "sanctuary.meadow.pollination_moment"
+    },
+    {
+      "id": "pond_frog_in_the_water_moment",
+      "zones": ["pond"],
+      "refs": ["pond_coarse_amphibia", "pond_charismatic_bullfrog"],
+      "title": "Frog in the water",
+      "detail": "Still water holds a frog like a quiet bowl. The bullfrog belongs to the pond, and the pond shapes the frog.",
+      "icon": "sanctuary.pond.frog_in_the_water_moment"
+    },
+    {
+      "id": "woodland_hawk_above_the_trees_moment",
+      "zones": ["woodland", "sky"],
+      "refs": ["woodland_coarse_aves", "sky_charismatic_red_tailed_hawk"],
+      "title": "Hawk above the trees",
+      "detail": "The woodland's smaller birds notice the hawk first. They go quiet; the canopy waits. The hawk passes, and the singing returns.",
+      "icon": "sanctuary.woodland.hawk_above_the_trees_moment"
+    },
+    {
+      "id": "soil_fungi_on_the_log_moment",
+      "zones": ["soil"],
+      "refs": ["soil_coarse_fungi", "soil_coarse_annelida"],
+      "title": "Fungi on the log",
+      "detail": "Mushrooms and worms work along an old log, turning wood back into soil. Slow work, quiet work, but always going.",
+      "icon": "sanctuary.soil.fungi_on_the_log_moment"
+    },
+    {
+      "id": "urban_edge_life_moment",
+      "zones": ["urban"],
+      "refs": ["urban_coarse_aves", "urban_charismatic_raccoon"],
+      "title": "Edges of the city",
+      "detail": "Alleys, fences, and quiet corners make room for sparrows by day and a raccoon at night. City edges are habitat too.",
+      "icon": "sanctuary.urban.edge_life_moment"
+    }
+  ]
+}

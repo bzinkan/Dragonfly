@@ -1,0 +1,64 @@
+{
+  "guide_lines": [
+    {
+      "id": "meadow_guide_watch_grass",
+      "zone": "meadow",
+      "text": "Look for movement in the grass. The smallest twitch is usually something alive."
+    },
+    {
+      "id": "woodland_guide_lift_a_leaf",
+      "zone": "woodland",
+      "text": "Lift a leaf, gently, and look underneath. A lot of the forest lives on the shaded side."
+    },
+    {
+      "id": "pond_guide_edge_at_dusk",
+      "zone": "pond",
+      "text": "The pond edge gets busiest near sunset. Sit on the bank and wait a minute before you decide it is empty."
+    },
+    {
+      "id": "sky_guide_stay_still",
+      "zone": "sky",
+      "text": "Birds notice you before you notice them. Stand still and they will come back."
+    },
+    {
+      "id": "soil_guide_after_rain",
+      "zone": "soil",
+      "text": "Mushrooms and worms come up after rain. The soil is loud the day after a storm."
+    },
+    {
+      "id": "urban_guide_curb_and_crack",
+      "zone": "urban",
+      "text": "Cracks in the sidewalk are tiny meadows. A lot of city life starts there."
+    },
+    {
+      "id": "sky_guide_look_up",
+      "zone": "sky",
+      "text": "Look up once in a while. The sky changes more than the ground does."
+    },
+    {
+      "id": "general_guide_no_rush",
+      "zone": null,
+      "text": "Every find is a real observation. There is no rush, and there is no wrong answer."
+    },
+    {
+      "id": "general_guide_unsure_photo",
+      "zone": null,
+      "text": "If you cannot tell what it is, take a clear photo. You can figure it out later."
+    },
+    {
+      "id": "general_guide_quiet_minute",
+      "zone": null,
+      "text": "Try standing still for one quiet minute. The place starts to fill back in around you."
+    },
+    {
+      "id": "general_guide_close_then_far",
+      "zone": null,
+      "text": "Look close, then look far. Most places are layered, and each layer has different neighbors."
+    },
+    {
+      "id": "elsewhere_guide_anywhere_counts",
+      "zone": "elsewhere",
+      "text": "A parking lot, a planter, a hallway window: anywhere can be a place to notice something living."
+    }
+  ]
+}

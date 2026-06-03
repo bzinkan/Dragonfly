@@ -1,0 +1,100 @@
+{
+  "coarse_unlocks": [
+    {
+      "id": "meadow_coarse_plantae",
+      "zone": "meadow",
+      "iconic_taxa": ["Plantae"],
+      "title": "Plants in the meadow",
+      "detail": "Grasses, wildflowers, and seedlings hold the meadow together and feed almost everything that visits.",
+      "icon": "sanctuary.meadow.plantae"
+    },
+    {
+      "id": "meadow_coarse_insecta",
+      "zone": "meadow",
+      "iconic_taxa": ["Insecta"],
+      "title": "Insects in the meadow",
+      "detail": "Bees, beetles, butterflies, and tiny hoppers move between stems and blooms all day long.",
+      "icon": "sanctuary.meadow.insecta"
+    },
+    {
+      "id": "woodland_coarse_mammalia",
+      "zone": "woodland",
+      "iconic_taxa": ["Mammalia"],
+      "title": "Mammals in the woodland",
+      "detail": "Squirrels, deer, foxes, and quieter neighbors leave tracks, chewed nuts, and bedded grass under the trees.",
+      "icon": "sanctuary.woodland.mammalia"
+    },
+    {
+      "id": "woodland_coarse_aves",
+      "zone": "woodland",
+      "iconic_taxa": ["Aves"],
+      "title": "Birds in the woodland",
+      "detail": "Songs drift between the branches as birds search bark and leaves for seeds and small insects.",
+      "icon": "sanctuary.woodland.aves"
+    },
+    {
+      "id": "sky_coarse_aves",
+      "zone": "sky",
+      "iconic_taxa": ["Aves"],
+      "title": "Birds in the sky",
+      "detail": "Some birds rise above the trees, riding wind and sunlight to travel, hunt, or simply look around.",
+      "icon": "sanctuary.sky.aves"
+    },
+    {
+      "id": "pond_coarse_amphibia",
+      "zone": "pond",
+      "iconic_taxa": ["Amphibia"],
+      "title": "Amphibians at the pond",
+      "detail": "Frogs, toads, and salamanders begin life in the water and slip between pond and shore as they grow.",
+      "icon": "sanctuary.pond.amphibia"
+    },
+    {
+      "id": "pond_coarse_actinopterygii",
+      "zone": "pond",
+      "iconic_taxa": ["Actinopterygii"],
+      "title": "Fish in the pond",
+      "detail": "Below the surface, fish glide through cool water, feeding on insects, plants, and even smaller fish.",
+      "icon": "sanctuary.pond.actinopterygii"
+    },
+    {
+      "id": "pond_coarse_mollusca",
+      "zone": "pond",
+      "iconic_taxa": ["Mollusca"],
+      "title": "Snails and mussels at the pond",
+      "detail": "Soft-bodied animals with shells creep across mud and plant stems, filtering and grazing as they go.",
+      "icon": "sanctuary.pond.mollusca"
+    },
+    {
+      "id": "soil_coarse_fungi",
+      "zone": "soil",
+      "iconic_taxa": ["Fungi"],
+      "title": "Fungi in the soil",
+      "detail": "Threads of fungus weave through the ground, breaking down fallen wood and feeding nearby roots.",
+      "icon": "sanctuary.soil.fungi"
+    },
+    {
+      "id": "soil_coarse_annelida",
+      "zone": "soil",
+      "iconic_taxa": ["Annelida"],
+      "title": "Worms in the soil",
+      "detail": "Earthworms and their relatives pull leaves underground and tunnel through the dirt, mixing it as they move.",
+      "icon": "sanctuary.soil.annelida"
+    },
+    {
+      "id": "urban_coarse_aves",
+      "zone": "urban",
+      "iconic_taxa": ["Aves"],
+      "title": "City birds",
+      "detail": "Pigeons, sparrows, gulls, and crows live among buildings, finding food and nest spots in the busy edges of town.",
+      "icon": "sanctuary.urban.aves"
+    },
+    {
+      "id": "elsewhere_coarse_unknown",
+      "zone": "elsewhere",
+      "iconic_taxa": ["unknown"],
+      "title": "Something unexpected",
+      "detail": "Not every find fits a clear group at first. Sometimes the most interesting moment is the one you cannot name yet.",
+      "icon": "sanctuary.elsewhere.unknown"
+    }
+  ]
+}

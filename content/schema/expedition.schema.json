@@ -1,0 +1,441 @@
+{
+  "$defs": {
+    "MatchAllOf": {
+      "properties": {
+        "kind": {
+          "const": "all_of",
+          "title": "Kind",
+          "type": "string"
+        },
+        "matches": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "all_of": "#/$defs/MatchAllOf",
+                "any_of": "#/$defs/MatchAnyOf",
+                "any_organism": "#/$defs/MatchAnyOrganism",
+                "iconic_taxon": "#/$defs/MatchIconicTaxon",
+                "not_in_dex": "#/$defs/MatchNotInDex",
+                "not_within_radius_of_existing": "#/$defs/MatchNotWithinRadius",
+                "taxon_id": "#/$defs/MatchTaxonId"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/MatchIconicTaxon"
+              },
+              {
+                "$ref": "#/$defs/MatchTaxonId"
+              },
+              {
+                "$ref": "#/$defs/MatchAnyOrganism"
+              },
+              {
+                "$ref": "#/$defs/MatchNotInDex"
+              },
+              {
+                "$ref": "#/$defs/MatchNotWithinRadius"
+              },
+              {
+                "$ref": "#/$defs/MatchAllOf"
+              },
+              {
+                "$ref": "#/$defs/MatchAnyOf"
+              }
+            ]
+          },
+          "title": "Matches",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "matches"
+      ],
+      "title": "MatchAllOf",
+      "type": "object"
+    },
+    "MatchAnyOf": {
+      "properties": {
+        "kind": {
+          "const": "any_of",
+          "title": "Kind",
+          "type": "string"
+        },
+        "matches": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "all_of": "#/$defs/MatchAllOf",
+                "any_of": "#/$defs/MatchAnyOf",
+                "any_organism": "#/$defs/MatchAnyOrganism",
+                "iconic_taxon": "#/$defs/MatchIconicTaxon",
+                "not_in_dex": "#/$defs/MatchNotInDex",
+                "not_within_radius_of_existing": "#/$defs/MatchNotWithinRadius",
+                "taxon_id": "#/$defs/MatchTaxonId"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/MatchIconicTaxon"
+              },
+              {
+                "$ref": "#/$defs/MatchTaxonId"
+              },
+              {
+                "$ref": "#/$defs/MatchAnyOrganism"
+              },
+              {
+                "$ref": "#/$defs/MatchNotInDex"
+              },
+              {
+                "$ref": "#/$defs/MatchNotWithinRadius"
+              },
+              {
+                "$ref": "#/$defs/MatchAllOf"
+              },
+              {
+                "$ref": "#/$defs/MatchAnyOf"
+              }
+            ]
+          },
+          "title": "Matches",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "matches"
+      ],
+      "title": "MatchAnyOf",
+      "type": "object"
+    },
+    "MatchAnyOrganism": {
+      "properties": {
+        "kind": {
+          "const": "any_organism",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "MatchAnyOrganism",
+      "type": "object"
+    },
+    "MatchIconicTaxon": {
+      "properties": {
+        "kind": {
+          "const": "iconic_taxon",
+          "title": "Kind",
+          "type": "string"
+        },
+        "value": {
+          "enum": [
+            "Plantae",
+            "Insecta",
+            "Aves",
+            "Mammalia",
+            "Reptilia",
+            "Amphibia",
+            "Actinopterygii",
+            "Mollusca",
+            "Arachnida",
+            "Fungi",
+            "Chromista",
+            "Protozoa",
+            "Animalia"
+          ],
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "title": "MatchIconicTaxon",
+      "type": "object"
+    },
+    "MatchNotInDex": {
+      "properties": {
+        "kind": {
+          "const": "not_in_dex",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "MatchNotInDex",
+      "type": "object"
+    },
+    "MatchNotWithinRadius": {
+      "properties": {
+        "kind": {
+          "const": "not_within_radius_of_existing",
+          "title": "Kind",
+          "type": "string"
+        },
+        "radius_meters": {
+          "maximum": 10000,
+          "minimum": 1,
+          "title": "Radius Meters",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "radius_meters"
+      ],
+      "title": "MatchNotWithinRadius",
+      "type": "object"
+    },
+    "MatchTaxonId": {
+      "properties": {
+        "include_descendants": {
+          "default": true,
+          "title": "Include Descendants",
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "taxon_id",
+          "title": "Kind",
+          "type": "string"
+        },
+        "value": {
+          "minimum": 1,
+          "title": "Value",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "title": "MatchTaxonId",
+      "type": "object"
+    },
+    "PrereqCompleted": {
+      "properties": {
+        "kind": {
+          "const": "completed_expedition",
+          "title": "Kind",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "title": "PrereqCompleted",
+      "type": "object"
+    },
+    "PrereqDexCount": {
+      "properties": {
+        "kind": {
+          "const": "dex_count_at_least",
+          "title": "Kind",
+          "type": "string"
+        },
+        "value": {
+          "minimum": 1,
+          "title": "Value",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "title": "PrereqDexCount",
+      "type": "object"
+    },
+    "Step": {
+      "properties": {
+        "description": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "hint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hint"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "match": {
+          "discriminator": {
+            "mapping": {
+              "all_of": "#/$defs/MatchAllOf",
+              "any_of": "#/$defs/MatchAnyOf",
+              "any_organism": "#/$defs/MatchAnyOrganism",
+              "iconic_taxon": "#/$defs/MatchIconicTaxon",
+              "not_in_dex": "#/$defs/MatchNotInDex",
+              "not_within_radius_of_existing": "#/$defs/MatchNotWithinRadius",
+              "taxon_id": "#/$defs/MatchTaxonId"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/MatchIconicTaxon"
+            },
+            {
+              "$ref": "#/$defs/MatchTaxonId"
+            },
+            {
+              "$ref": "#/$defs/MatchAnyOrganism"
+            },
+            {
+              "$ref": "#/$defs/MatchNotInDex"
+            },
+            {
+              "$ref": "#/$defs/MatchNotWithinRadius"
+            },
+            {
+              "$ref": "#/$defs/MatchAllOf"
+            },
+            {
+              "$ref": "#/$defs/MatchAnyOf"
+            }
+          ],
+          "title": "Match"
+        }
+      },
+      "required": [
+        "id",
+        "description",
+        "match"
+      ],
+      "title": "Step",
+      "type": "object"
+    }
+  },
+  "description": "Top-level expedition. One per JSON file under content/expeditions/.",
+  "properties": {
+    "duration_minutes": {
+      "maximum": 120,
+      "minimum": 5,
+      "title": "Duration Minutes",
+      "type": "integer"
+    },
+    "environments": {
+      "items": {
+        "enum": [
+          "yard",
+          "park",
+          "street",
+          "school",
+          "other"
+        ],
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Environments",
+      "type": "array"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "intro": {
+      "maxLength": 600,
+      "minLength": 1,
+      "title": "Intro",
+      "type": "string"
+    },
+    "outro": {
+      "maxLength": 300,
+      "minLength": 1,
+      "title": "Outro",
+      "type": "string"
+    },
+    "prerequisites": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "completed_expedition": "#/$defs/PrereqCompleted",
+            "dex_count_at_least": "#/$defs/PrereqDexCount"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/PrereqDexCount"
+          },
+          {
+            "$ref": "#/$defs/PrereqCompleted"
+          }
+        ]
+      },
+      "title": "Prerequisites",
+      "type": "array"
+    },
+    "steps": {
+      "items": {
+        "$ref": "#/$defs/Step"
+      },
+      "maxItems": 5,
+      "minItems": 1,
+      "title": "Steps",
+      "type": "array"
+    },
+    "subtitle": {
+      "anyOf": [
+        {
+          "maxLength": 160,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Subtitle"
+    },
+    "tier": {
+      "maximum": 5,
+      "minimum": 1,
+      "title": "Tier",
+      "type": "integer"
+    },
+    "title": {
+      "maxLength": 80,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "title",
+    "tier",
+    "duration_minutes",
+    "environments",
+    "intro",
+    "outro",
+    "steps"
+  ],
+  "title": "Expedition",
+  "type": "object"
+}
