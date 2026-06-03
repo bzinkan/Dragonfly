@@ -1,39 +1,50 @@
 # One-week kid-pilot checklist
 
-Day-by-day checklist for the controlled Google Play Internal testing
-pilot with known adult-supervised kid testers. This is the "what does
-Brian have to do this week" list -- everything that can't be done by
-an agent.
+Strict-gate checklist for the controlled Google Play Internal testing
+pilot with 1–3 known, adult-supervised kid testers. This is the "what
+does Brian have to do before the kids touch the build" list —
+everything that can't be done by an agent, expressed as hard gates
+that must close in order.
 
 Sister docs:
-- [`google-play-internal-testing.md`](google-play-internal-testing.md)
+- [`docs/google-play-internal-testing.md`](google-play-internal-testing.md)
   for the Play Console process.
-- [`risks/0007-google-play-families-location-policy.md`](risks/0007-google-play-families-location-policy.md)
-  for the precise-location decision that gates Day 2.
-- [`app-store-compliance-checklist.md`](app-store-compliance-checklist.md)
+- [`docs/risks/0007-google-play-families-location-policy.md`](risks/0007-google-play-families-location-policy.md)
+  for the precise-location decision that gates the AAB build.
+- [`docs/app-store-compliance-checklist.md`](app-store-compliance-checklist.md)
   for what's blocking moving beyond Internal testing.
-- [`risks/0005-beta-launch-human-action-items.md`](risks/0005-beta-launch-human-action-items.md)
+- [`docs/risks/0005-beta-launch-human-action-items.md`](risks/0005-beta-launch-human-action-items.md)
   for the broader "what does the project need from humans" list.
+- [`docs/android-internal-pilot-test-script.md`](android-internal-pilot-test-script.md)
+  for the end-to-end on-device script Brian runs on his own phone
+  before any kid sees the build.
+- [`docs/android-internal-pilot-stop-plan.md`](android-internal-pilot-stop-plan.md)
+  for the rollback playbook triggered by the hard-stop conditions
+  below.
 
-## Pre-flight (before Day 1)
+## Scope reminder
 
-- [ ] Brian has confirmed the play-internal AAB build path is functional
-  on his EAS account (one trial build, no Play upload).
-- [ ] Risk 0007 has a CHOSEN mitigation option (A, B, C, or D). Default
-  if undecided: Option C (adult-supervised, known-family, internal-test
-  only with explicit consent + Brian's manual review of every captured
-  location pin). Anything other than Option C may require a code change
-  before Day 2.
-- [ ] Pilot families identified (1-3 households, 9-12yo kid with at
-  least one adult per session). Their tester email addresses are in a
-  private spreadsheet, NOT in the repo.
-- [ ] Brian's calendar has at least one 30-min onboarding slot per
-  family in the W1 window.
-- [ ] Backend is on the Azure side per the Phase 0-11 migration. The
-  `api.dragonfly-app.net` and `parents.dragonfly-app.net` URLs both
-  return 200.
+The W1 pilot is a tiny, adult-supervised, Internal-testing-only smoke
+of the kid experience. It exists to prove the round-trip works on a
+real Android device in a real adult's hands with a real kid's eyes —
+nothing more. Anything that looks like growth, marketing, or public
+exposure is out of scope.
 
-## Day 1: Backend smoke + AAB build
+- First kid test is 1–3 known kids only.
+- Parent / guardian must be present.
+- No classroom-wide rollout.
+- No public production release.
+- No real iNaturalist submission unless explicitly configured and
+  approved by Brian.
+- Location policy risk per
+  [`docs/risks/0007-google-play-families-location-policy.md`](risks/0007-google-play-families-location-policy.md)
+  must be acknowledged.
+
+## Gate 1: before AAB upload
+
+Nothing leaves Brian's laptop until every box in this gate is
+checked. If any step fails, fix it and re-run the gate — do not
+proceed.
 
 ### Backend smoke
 
@@ -49,30 +60,59 @@ curl -sS https://api.dragonfly-app.net/.well-known/dragonfly-kid-jwks.json | jq 
 # Phase 4 smoke (parent signup -> group -> kid -> token flow)
 DRAGONFLY_API_BASE_URL=https://api.dragonfly-app.net \
   python scripts/smoke_phase4.py
-# Expect: ALL CHECKS PASSED at the end. If any step 4xx/5xxs, stop
-# and read the response body BEFORE building the AAB.
+# Expect: ALL CHECKS PASSED -- Phase 4 round-trip works end-to-end.
+# If any step 4xx/5xxs, stop and read the response body BEFORE
+# building the AAB.
 ```
 
-The smoke script provisions a throwaway parent (`smoke+<ts>@dragonfly-test.invalid`)
-and exercises the full Phase 4 flow. If anything fails, the AAB build
-should NOT happen the same day.
+- [ ] `/health` returns 200 with the expected JSON body.
+- [ ] `/.well-known/dragonfly-kid-jwks.json` returns a JWKS with kid
+  `k1-2026-06`.
+- [ ] `scripts/smoke_phase4.py` exits 0 with
+  `ALL CHECKS PASSED -- Phase 4 round-trip works end-to-end.`
 
-- [ ] `/health` returns 200.
-- [ ] `/.well-known/dragonfly-kid-jwks.json` returns a JWKS with the
-  expected kid.
-- [ ] `scripts/smoke_phase4.py` exits 0 ("ALL CHECKS PASSED").
-- [ ] At least one /v1/auth/consent POST shows up in the Container App
-  logs from the smoke run.
+### Consent ledger
+
 - [ ] The `parent_consent_records` table exists on prod (verify with
   `\dt parent_consent_records` from `psql`). PR
-  `feat(consent): persist parent consent records` added it; if it's
-  missing, the migration didn't run -- stop and run
+  `feat(consent): persist parent consent records` added it; if it is
+  missing, the migration did not run — stop and run
   `alembic upgrade head` before continuing.
 - [ ] A consent row from the smoke run is visible in the table
   (`select id, parent_email, policy_version, recorded_at from
   parent_consent_records order by recorded_at desc limit 3;`). This
-  is the audit-of-record we'll show a COPPA auditor; if rows aren't
-  landing, the pilot doesn't start.
+  is the audit-of-record we will show a COPPA auditor; if rows are
+  not landing, the pilot does not start.
+- [ ] The smoke run's `auth.consent.recorded` event is visible in
+  Container App logs and its `consent_id` matches the ULID `id` of
+  the row above.
+
+### iNat is off
+
+- [ ] Confirm `DRAGONFLY_INAT_OAUTH_TOKEN` is NOT set on the
+  Container App. Run `az containerapp show` and grep the env list.
+  This guarantees no observation from the pilot leaks to the public
+  iNaturalist project. See
+  [`docs/risks/0002-async-workers-production-unwired.md`](risks/0002-async-workers-production-unwired.md).
+
+### Location policy decided
+
+- [ ] Risk 0007 has a CHOSEN option (A, B, C, or D). Default if
+  undecided is **Option C** (adult-supervised, known-family,
+  internal-test only with explicit consent + Brian's manual review
+  of every captured location pin). Anything other than Option C may
+  require a code change before the AAB is built.
+- [ ] The chosen option label is recorded verbatim in the session
+  journal (private, not in repo), e.g.
+  `"Option B -- coarse / manual location"` or
+  `"Option C -- adult-supervised + known-family + explicit consent (default)"`.
+- [ ] If Option B was chosen,
+  [`docs/risks/0007-google-play-families-location-policy.md`](risks/0007-google-play-families-location-policy.md)
+  is updated to RESOLVED with the choice noted — no silent
+  `ACCESS_COARSE_LOCATION` downgrade.
+- [ ] If Option C was chosen, the session journal records the
+  explicit commitment that promotion past Internal testing re-opens
+  risk 0007 first.
 
 ### AAB build
 
@@ -84,122 +124,106 @@ APP_ENV=play-internal npx eas-cli build \
   --non-interactive
 ```
 
-- [ ] EAS build completes successfully.
-- [ ] AAB downloaded locally; package name is `com.dragonfly.app`
-  (NOT `.dev` / `.staging`).
-- [ ] Display name on a temporary install is "Dragonfly Internal".
-- [ ] Version code is the EAS-incremented value, not 1 (would indicate
-  a fresh EAS project init, which means the version-code monotonicity
-  for Play uploads is broken).
+- [ ] EAS build on the `play-internal` profile completes
+  successfully.
+- [ ] AAB package name is `com.dragonfly.app` (NOT `.dev` /
+  `.staging`).
+- [ ] Display name on a temporary install is `Dragonfly Internal`.
+- [ ] AAB `versionCode` is monotonically greater than the last AAB
+  uploaded to Play Console on the `play-internal` track. Read the
+  resolved value from the EAS build summary URL — `eas.json` sets
+  `appVersionSource: "remote"` + `autoIncrement: true`, so the
+  canonical value lives at EAS, not in `app.config.ts`. On the very
+  first `play-internal` upload, any value is acceptable.
 
-## Day 2: Play Console upload + device smoke
+## Gate 2: before adult dry run
 
-Following [`google-play-internal-testing.md`](google-play-internal-testing.md):
+No testers — not even Brian's own phone via the opt-in URL — get the
+build until this gate closes.
 
-- [ ] Play Console app entry created (or reused if W0 already created
-  it). DO NOT rename it.
-- [ ] AAB uploaded to **Internal testing** track.
-- [ ] Tester email list created and the operator email is on it.
-- [ ] Rollout to Internal testing started.
-- [ ] Opt-in URL captured; saved in the same private spreadsheet as
-  the tester emails.
+- [ ] AAB uploaded to the **Internal testing** track in Play Console
+  per [`docs/google-play-internal-testing.md`](google-play-internal-testing.md).
+- [ ] Opt-in URL captured and stored in the private spreadsheet (NOT
+  in the repo).
+- [ ] Tester email allowlist created in Play Console and Brian's
+  tester email is on it. The allowlist itself stays in the private
+  spreadsheet alongside the opt-in URL — NOT in the repo.
+- [ ] Brian's own Android phone installs the build via the opt-in
+  URL; app icon is the `Dragonfly Internal` icon and the app opens
+  to the first-run UI without crashing.
 
-### Device smoke on Brian's phone
+## Gate 3: before first kid test
 
-Install the build on Brian's own Android phone via the opt-in URL.
+No kid sees the build until Brian has personally walked the entire
+device script on his own phone and the consent-ledger linkage is
+proven on a real account.
 
-- [ ] Install completes; app icon is the "Dragonfly Internal" icon.
-- [ ] App opens to the splash + first run UI without crashing.
-- [ ] Sign-in screen renders. On Android native the Firebase email +
-  password form is what appears (Phase 11a MSAL is web-only).
+- [ ] Brian runs the entirety of
+  [`docs/android-internal-pilot-test-script.md`](android-internal-pilot-test-script.md)
+  on his own phone, end-to-end, with his own throwaway parent
+  account, and every checkbox in that script passes.
+- [ ] After Brian's throwaway parent run, a consent row is visible in
+  `parent_consent_records` for that parent's email (same `select id,
+  parent_email, policy_version, recorded_at ...` query as Gate 1).
+  Note the row's ULID `id` in the session journal — this is the
+  per-account receipt for the dry run.
+- [ ] After the throwaway parent hits `POST /v1/auth/parent-signup`,
+  the matching consent row's `linked_parent_user_id` is populated
+  with the new `users.id`. This proves the parent → consent → users
+  threading works end-to-end on a real device, not just from the
+  smoke script.
+- [ ] Review queue (parent account, on Brian's phone) renders
+  without 500s. Empty state is fine.
+- [ ] At least one pilot family is scheduled with a confirmed 30-min
+  onboarding slot in the W1 window, and their tester email is on the
+  Play Console allowlist.
 
-### Brian's-account end-to-end
+## Gate 4: after first kid test
 
-Run through the full Phase 1 flow with Brian's own (parent) account:
+Run this gate the same evening as the family #1 session, before any
+decision about family #2.
 
-- [ ] Parent signup completes via the in-app form.
-- [ ] Group create flow works; a 6-character join code is shown.
-- [ ] Kid create flow works; the QR handoff modal renders.
-- [ ] Kid login on a SECOND Android device (or a second emulator)
-  succeeds by scanning the QR -- the QR payload is
-  `dragonfly.kid-handoff.v2` per Phase 7.
-- [ ] Kid observation submit completes outdoors. Photo and location
-  populate.
-- [ ] Observation appears in "My Observations" within ~10 seconds.
-- [ ] Review queue (parent account) renders without 500s. Empty state
-  is fine.
+- [ ] Session journal entry filed (private, not in repo) capturing:
+  family #1's `parent_consent_records.id`, the kid's display name,
+  the observation count for the session, the chosen risk 0007 option
+  label, and any bugs observed.
+- [ ] For the family #1 parent, `linked_parent_user_id` is populated
+  on their `parent_consent_records` row (same audit-trail check as
+  Gate 3, but on the real family's account).
+- [ ] Bugs triaged. Anything matching the hard-stop list below
+  triggers [`docs/android-internal-pilot-stop-plan.md`](android-internal-pilot-stop-plan.md)
+  immediately. Anything else is filed in the issue tracker with a
+  `pilot-blocker` or `pilot-nice-to-have` label, scoped to the
+  specific reproduction step.
+- [ ] Decision recorded in the session journal: continue with family
+  #2, or stop per [`docs/android-internal-pilot-stop-plan.md`](android-internal-pilot-stop-plan.md).
+  No family #2 session until any `pilot-blocker` is patched, the
+  AAB is rebuilt, the Gate 1 backend smoke is re-run, and Brian
+  re-runs the device test script on his phone.
+- [ ] Play Console **Internal testing** rollout is still in its
+  un-promoted state (no accidental promotion to Closed, Open, or
+  Production).
 
-## Day 3-4: First pilot family session
+## Hard stop conditions
 
-- [ ] 30-min onboarding session held with family #1, with Brian
-  present.
-- [ ] Parental consent captured via the public `/consent` page BEFORE
-  the kid account is provisioned. Brian confirms (a) the
-  `auth.consent.recorded` event lands in Container App logs AND (b)
-  a `parent_consent_records` row exists for that parent's email.
-  Note the row's ULID `id` in the session journal -- this is the
-  per-family receipt.
-- [ ] After the parent signs in via MSAL and hits
-  `POST /v1/auth/parent-signup`, confirm the matching consent row's
-  `linked_parent_user_id` got populated with the new `users.id`
-  (this proves the parent → consent → users threading works
-  end-to-end and we have a durable join key for the audit trail).
-- [ ] Family creates parent account, group, kid account in real time.
-- [ ] At least one real outdoor observation is submitted from the
-  kid's device.
-- [ ] The observation appears in "My Observations" before the family
-  leaves the session.
-- [ ] If the observation triggered moderation (it should not for
-  clean photos), Brian shows the parent the review queue.
-- [ ] Account-deletion path demonstrated to the parent before they
-  leave.
-- [ ] Feedback notes captured in a session journal (NOT in the repo;
-  store in the same private location as the tester emails).
+If any of the following is observed at any point during the pilot,
+stop and follow
+[`docs/android-internal-pilot-stop-plan.md`](android-internal-pilot-stop-plan.md)
+— do not patch in-place, do not continue to the next family, do not
+"see if it reproduces."
 
-## Day 5: Second family or hardening
+- auth failure exposing wrong user data
+- child can reach public chat or social features
+- photo appears publicly without a moderation decision
+- crash during submit that loses kid data
+- incorrect consent state
+- location / privacy surprise
 
-Pick one based on Day 3-4 outcome:
-
-### If Day 3-4 went smoothly:
-
-- [ ] Repeat the Day 3-4 flow with pilot family #2 (and #3 if
-  applicable).
-
-### If Day 3-4 surfaced bugs:
-
-- [ ] File bugs in the issue tracker, scoped to the specific
-  reproduction step. Mark each with `pilot-blocker` or `pilot-nice-
-  to-have`.
-- [ ] Patch the highest-severity blockers, rebuild the AAB, push to
-  Play Internal testing (same opt-in URL; testers get the update
-  automatically), and re-smoke before the next family.
-- [ ] No family-two session until the blockers are patched.
-
-## Day 6: Review-queue + non-iNat sanity
-
-Confirm the non-happy-path surface for the pilot:
-
-- [ ] One deliberately moderation-triggering photo submitted (e.g.
-  blurry indoor photo of something that's not an organism). Confirm
-  it lands in the parent's review queue and the parent can
-  Reject it cleanly.
-- [ ] Confirm `DRAGONFLY_INAT_OAUTH_TOKEN` is NOT set on the Container
-  App. This guarantees no observation from the pilot leaks to the
-  public iNaturalist project. Run `az containerapp show` and grep
-  the env list.
-- [ ] Confirm the Play Console **Internal testing** rollout is still
-  in its un-promoted state (i.e. no accidental promotion to Closed
-  or Production).
-
-## Day 7: Reflect + handoff
-
-- [ ] Pilot families thanked.
-- [ ] Bugs filed during the week summarized in a single internal
-  note. Mark which are blockers for moving to Closed testing.
-- [ ] Decide the W2 disposition: continue Internal testing with the
-  same families, expand the tester list (still Internal), or pause
-  for the Data Safety + Closed testing prep cycle described in
-  [`app-store-compliance-checklist.md`](app-store-compliance-checklist.md).
+The response playbook (rollback, revision pin, env-var disable,
+comms to families) lives in
+[`docs/android-internal-pilot-stop-plan.md`](android-internal-pilot-stop-plan.md).
+This checklist only lists the triggers; the wording above is
+identical to the trigger list there so the two docs cannot drift.
 
 ## What is NOT in this pilot
 
@@ -207,7 +231,7 @@ These are explicit non-goals for the W1 pilot:
 
 - **No public iNat submissions.** `DRAGONFLY_INAT_OAUTH_TOKEN`
   unset; the iNat client refuses to call. See
-  [`risks/0002-async-workers-production-unwired.md`](risks/0002-async-workers-production-unwired.md).
+  [`docs/risks/0002-async-workers-production-unwired.md`](risks/0002-async-workers-production-unwired.md).
 - **No public Play release.** Internal testing only; no rollout to
   Closed, Open, or Production.
 - **No App Store / TestFlight.** iOS path is separate work.
@@ -217,4 +241,4 @@ These are explicit non-goals for the W1 pilot:
   ships with Sentry only; nothing more for the pilot.
 - **No iNat OAuth token application.** That's a precondition for
   Closed testing per
-  [`risks/0001-inat-cv-correctness-target-unverified.md`](risks/0001-inat-cv-correctness-target-unverified.md).
+  [`docs/risks/0001-inat-cv-correctness-target-unverified.md`](risks/0001-inat-cv-correctness-target-unverified.md).
