@@ -34,6 +34,7 @@ from app.models.sanctuary import (  # noqa: E402
     CharismaticUnlock,
     CoarseUnlock,
     GuideLine,
+    IdentityReflection,
     MysteryCue,
     RelationshipMoment,
     SanctuaryConfig,
@@ -55,6 +56,7 @@ _SANCTUARY_ITEM_MODELS: dict[str, type[BaseModel]] = {
     "mystery_cues": MysteryCue,
     "tiny_surprises": TinySurprise,
     "seasonal_variants": SeasonalVariant,
+    "identity_reflections": IdentityReflection,
 }
 
 

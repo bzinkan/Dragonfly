@@ -183,6 +183,94 @@
       "title": "GuideLine",
       "type": "object"
     },
+    "IdentityReflection": {
+      "description": "A descriptive line about the kid's developing Sanctuary identity.\n\nSelection rules are evaluated server-side at GET /v1/sanctuary/me time:\nthe route walks ``config.identity_reflections`` in content order and\nreturns the FIRST entry whose rules ALL match the kid's snapshot.\nContent order is therefore the deterministic tie-break -- author\nmore-specific entries earlier and the universal fallback last.\n\nRule semantics:\n\n- ``dominant_zone``: matches when that zone has the strict maximum\n  ``observation_count`` across all unlocked zones (no ties).\n- ``min_total_observations``: matches when the sum of zone counts is\n  at least this value.\n- ``min_element_count``: matches when the user has unlocked at least\n  this many ``sanctuary_elements`` rows.\n- ``max_zones_unlocked``: matches when fewer than (strict <) this\n  many zones are unlocked.\n- Any rule that is ``None`` is ignored (acts as \"no constraint\").\n\n``text`` is rendered verbatim on the client. Copy must be\nDESCRIPTIVE (no leaderboard / comparison / streak language); the\ncopy-policy validator enforces the absence of forbidden tokens.",
+      "properties": {
+        "dominant_zone": {
+          "anyOf": [
+            {
+              "enum": [
+                "meadow",
+                "woodland",
+                "pond",
+                "sky",
+                "soil",
+                "urban",
+                "elsewhere"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dominant Zone"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "max_zones_unlocked": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Zones Unlocked"
+        },
+        "min_element_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Element Count"
+        },
+        "min_total_observations": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Total Observations"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
+        "text": {
+          "maxLength": 140,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ],
+      "title": "IdentityReflection",
+      "type": "object"
+    },
     "MysteryCue": {
       "description": "Ambient zone cue with a soft hint about what iconic_taxon would unlock here.",
       "properties": {
@@ -428,6 +516,13 @@
         "$ref": "#/$defs/GuideLine"
       },
       "title": "Guide Lines",
+      "type": "array"
+    },
+    "identity_reflections": {
+      "items": {
+        "$ref": "#/$defs/IdentityReflection"
+      },
+      "title": "Identity Reflections",
       "type": "array"
     },
     "mystery_cues": {

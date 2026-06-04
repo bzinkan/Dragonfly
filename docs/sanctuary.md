@@ -794,9 +794,73 @@ This endpoint never writes. The dispatcher's `WorldHandler` is the
 only writer to the four `sanctuary_*` tables; the read API is a
 materialized view over what the handler already committed.
 
+#### Delight layer (PR adding identity reflection + projections)
+
+The response also includes three derived/projected fields built from
+authored content (`content/sanctuary/`) + the per-user state already
+loaded:
+
+- `identity_reflection: IdentityReflectionDTO | null` — a single
+  descriptive line about the kid's developing Sanctuary identity,
+  selected via a deterministic rule ladder authored in
+  `content/sanctuary/identity_reflections.json`. The route walks
+  `content.identity_reflections` in content order and returns the
+  FIRST entry whose rules ALL match the kid's snapshot. Returns
+  `null` only when no entries are authored. Rule fields per entry:
+  `dominant_zone` (zone with strict-max `observation_count`),
+  `min_total_observations`, `min_element_count`, `max_zones_unlocked`
+  (strict `<` test). Copy must be DESCRIPTIVE — the Pydantic
+  copy-policy validator from PR #96 was extended to reject
+  leaderboard / streak / "better than" / "more than other" /
+  "in a row" / "do not miss" / `streak` / `rank` / `score` /
+  `compete` / `winner` tokens. Identity reflection text is rendered
+  verbatim on the client.
+- `relationship_moments: list[RelationshipMomentDTO]` — a slim
+  projection of `sanctuary_elements` rows where
+  `element_type == "relationship"`. Each entry carries
+  `element_id`, `zone_id`, `title`, `detail`, `icon`, `unlocked_at`.
+  Authored title / detail / icon from
+  `content/sanctuary/relationship_moments.json` win; snapshot
+  payload + safe fallback are the same chain as the main `elements`
+  list.
+- `tiny_surprises: list[TinySurpriseDTO]` — same projection for
+  `element_type == "surprise"`. `title` is the only client-visible
+  string composed at the route layer ("A small detail in the
+  {zone_title}"); `detail` is the authored
+  `TinySurprise.description` verbatim; `threshold` is the authored
+  per-zone threshold (3 / 5 / 10) or `null` when missing.
+
+These three fields exist on top of the existing `elements` list —
+the full `sanctuary_elements` rows are still returned via
+`elements` for callers that want them; the projections are mobile
+ergonomics, not a new data source.
+
 ---
 
 ## 10. Mobile UX
+
+### Delight panels (PR adding delight layer)
+
+Three new panels were added to the Sanctuary screen on top of the MVP
+diorama:
+
+- **IdentityReflectionPanel** — sits between the Dragonfly guide bar
+  and the diorama. Renders `data.identity_reflection.text` verbatim
+  in a soft italic style. Hidden when the server returns `null`.
+- **RelationshipMomentsPanel** — sits after the diorama. Renders one
+  green-tinted chip per relationship moment; tap opens the existing
+  `ElementInspectModal` via a small adapter
+  (`_momentToElement`) that synthesizes a `SanctuaryElementDto`
+  from the slim moment DTO.
+- **TinySurprisesPanel** — sits after the relationship panel.
+  Renders one row per tiny surprise with the title + detail; tap
+  opens the same inspect modal via `_surpriseToElement`.
+
+All copy comes from the API response (which in turn comes from
+authored `content/sanctuary/` JSON). No client-fabricated
+motivational copy beyond panel headers ("Relationships", "Tiny
+surprises", "Quiet corners", "Journal"). No social buttons, no
+share, no location, no streak / FOMO language.
 
 ### MVP tab shipped (placeholder art)
 

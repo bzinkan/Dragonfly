@@ -534,3 +534,170 @@ def test_mystery_cues_returned_in_authored_zone_order(
     # All 7 zones are locked; cues come from the first 3 in zone order:
     # meadow, woodland, pond.
     assert [c["zone_id"] for c in cues] == ["meadow", "woodland", "pond"]
+
+
+# ---------------------------------------------------------------------------
+# Group F: delight layer (identity reflection, relationship moments,
+# tiny surprises).
+# ---------------------------------------------------------------------------
+
+
+_FORBIDDEN_LEADERBOARD_PHRASES = (
+    "best",
+    "better than",
+    "rank",
+    "leaderboard",
+    "score",
+    "win",
+    "compete",
+    "streak",
+    "in a row",
+)
+
+
+def test_identity_reflection_present_for_empty_state(
+    monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
+) -> None:
+    """Empty-state kid still gets a descriptive reflection (the
+    `first_steps_outside` content entry matches when max_zones_unlocked=2
+    and zero zones are unlocked)."""
+    _stub_token_verifier(monkeypatch)
+    _wire_session(fake_session, user=_user())
+    for client in _build_client(fake_session):
+        response = client.get("/v1/sanctuary/me", headers={"Authorization": "Bearer fake"})
+    body = response.json()
+    reflection = body["identity_reflection"]
+    assert reflection is not None
+    assert reflection["text"]
+    assert reflection["id"]
+
+
+def test_identity_reflection_selects_dominant_zone(
+    monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
+) -> None:
+    """meadow has strict-max observation_count; the `meadow_watcher`
+    entry (dominant_zone=meadow + min_total_observations=3) matches
+    before any general fallback."""
+    _stub_token_verifier(monkeypatch)
+    _wire_session(
+        fake_session,
+        user=_user(),
+        zone_states=[
+            _zone_state("meadow", observation_count=5, depth_tier=5),
+            _zone_state("pond", observation_count=1, depth_tier=1),
+        ],
+    )
+    for client in _build_client(fake_session):
+        response = client.get("/v1/sanctuary/me", headers={"Authorization": "Bearer fake"})
+    body = response.json()
+    reflection = body["identity_reflection"]
+    assert reflection is not None
+    assert reflection["id"] == "meadow_watcher"
+    assert "meadow" in reflection["text"].lower()
+
+
+def test_identity_reflection_copy_has_no_leaderboard_terms(
+    monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    _wire_session(
+        fake_session,
+        user=_user(),
+        zone_states=[_zone_state("meadow", observation_count=5, depth_tier=5)],
+    )
+    for client in _build_client(fake_session):
+        response = client.get("/v1/sanctuary/me", headers={"Authorization": "Bearer fake"})
+    body = response.json()
+    text = (body.get("identity_reflection") or {}).get("text", "").lower()
+    for phrase in _FORBIDDEN_LEADERBOARD_PHRASES:
+        assert phrase not in text, (
+            f"identity_reflection.text must not contain leaderboard / streak "
+            f"phrase {phrase!r}; got {text!r}"
+        )
+
+
+def test_relationship_moments_filtered_from_elements(
+    monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    _wire_session(
+        fake_session,
+        user=_user(),
+        elements=[
+            _element(
+                element_id="meadow_pollination_moment",
+                zone_id="meadow",
+                element_type="relationship",
+                payload={},
+            )
+        ],
+    )
+    for client in _build_client(fake_session):
+        response = client.get("/v1/sanctuary/me", headers={"Authorization": "Bearer fake"})
+    body = response.json()
+    moments = body["relationship_moments"]
+    assert len(moments) == 1
+    assert moments[0]["element_id"] == "meadow_pollination_moment"
+    assert moments[0]["zone_id"] == "meadow"
+    # Authored title from PR #96 content/sanctuary/relationship_moments.json.
+    assert moments[0]["title"]
+    assert moments[0]["detail"]
+
+
+def test_tiny_surprises_filtered_from_elements(
+    monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    _wire_session(
+        fake_session,
+        user=_user(),
+        elements=[
+            _element(
+                element_id="meadow_surprise_drifting_petal",
+                zone_id="meadow",
+                element_type="surprise",
+                payload={},
+            )
+        ],
+    )
+    for client in _build_client(fake_session):
+        response = client.get("/v1/sanctuary/me", headers={"Authorization": "Bearer fake"})
+    body = response.json()
+    surprises = body["tiny_surprises"]
+    assert len(surprises) == 1
+    assert surprises[0]["element_id"] == "meadow_surprise_drifting_petal"
+    assert surprises[0]["zone_id"] == "meadow"
+    # Title is composed from the zone title at the route layer.
+    assert "meadow" in surprises[0]["title"].lower()
+    # Detail comes from the authored TinySurprise.description.
+    assert surprises[0]["detail"]
+    # Threshold is pulled from the authored content (3 for the drifting
+    # petal per PR #96).
+    assert surprises[0]["threshold"] == 3
+
+
+def test_non_delight_element_types_excluded_from_views(
+    monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
+) -> None:
+    """A coarse element row must NOT appear in relationship_moments or
+    tiny_surprises -- the filters look at element_type only."""
+    _stub_token_verifier(monkeypatch)
+    _wire_session(
+        fake_session,
+        user=_user(),
+        elements=[
+            _element(
+                element_id="meadow_coarse_plantae",
+                zone_id="meadow",
+                element_type="coarse",
+                payload={},
+            )
+        ],
+    )
+    for client in _build_client(fake_session):
+        response = client.get("/v1/sanctuary/me", headers={"Authorization": "Bearer fake"})
+    body = response.json()
+    assert body["relationship_moments"] == []
+    assert body["tiny_surprises"] == []
+    # The coarse element is still in the full elements list.
+    assert any(e["element_id"] == "meadow_coarse_plantae" for e in body["elements"])
