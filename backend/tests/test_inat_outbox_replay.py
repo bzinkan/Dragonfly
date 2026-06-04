@@ -122,9 +122,10 @@ async def test_replay_handles_mixed_success_and_failure(
     ]
     _wire_select(fake_session, rows=rows)
 
-    # B fails; A and C succeed.
+    # B fails; A and C succeed. Match the `_B_` separator so "B" inside
+    # the literal "OBS" doesn't false-positive on every row.
     async def fake_enqueue(observation_id: str, *, settings: Settings) -> InatEnqueueResult:
-        if "B" in observation_id:
+        if "_B_" in observation_id:
             return InatEnqueueResult(success=False, reason="send_failed")
         return InatEnqueueResult(success=True)
 
