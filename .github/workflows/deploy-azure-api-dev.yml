@@ -1,13 +1,9 @@
 name: Deploy Azure API dev
 
+# Manual until the Azure federated-identity secrets are configured in GitHub.
+# Once AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID exist, this
+# can be safely re-enabled on push to main.
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "backend/**"
-      - "scripts/smoke_azure_parent_kid.py"
-      - ".github/workflows/deploy-azure-api-dev.yml"
   workflow_dispatch:
 
 concurrency:
