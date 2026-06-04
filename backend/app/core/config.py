@@ -128,6 +128,28 @@ class Settings(BaseSettings):
     internal_oidc_audience: str = ""
     internal_oidc_allowed_service_accounts: list[str] = Field(default_factory=list)
 
+    # Azure Service Bus for the iNat-submit transactional outbox (Risk
+    # 0002 closure). Namespace is the FQDN
+    # (e.g. `dragonfly-sb-dev.servicebus.windows.net`); empty namespace
+    # means "Service Bus not provisioned yet" -- the enqueue helper
+    # returns success=False with `not_configured`, the outbox row stays
+    # `pending`, and the 15-min replay job picks it up once provisioning
+    # lands. Production auth is the Container App managed identity via
+    # DefaultAzureCredential (no connection string).
+    service_bus_namespace: str = ""
+    service_bus_inat_queue: str = "inat-submit"
+    service_bus_request_timeout_seconds: float = 8.0
+
+    @property
+    def service_bus_enabled(self) -> bool:
+        """True when the producer can attempt to enqueue Service Bus messages.
+
+        Empty namespace is the explicit "not provisioned yet" signal --
+        producers gracefully no-op and leave outbox rows in `pending`
+        for the replay job to retry once infra catches up.
+        """
+        return bool(self.service_bus_namespace)
+
     @property
     def require_internal_oidc(self) -> bool:
         """True when internal routes must enforce Google OIDC.

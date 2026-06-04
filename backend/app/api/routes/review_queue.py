@@ -25,6 +25,7 @@ from app.core.config import Settings, get_request_settings
 from app.core.storage import SignedUrlGeneratorDep
 from app.db import models
 from app.db.session import DbSessionDep
+from app.inat.enqueue import enqueue_inat_submit
 
 router = APIRouter(prefix="/v1/review-queue", tags=["review_queue"])
 
@@ -221,13 +222,57 @@ async def approve_review(
     review.reviewer_user_id = user.id
     review.resolved_at = datetime.now(UTC)
 
+    # Risk 0002 transactional outbox: when this approval has a linked
+    # observation, flip its moderation_status to `clean` and insert an
+    # `inat_submit_outbox` row in the SAME commit. Post-commit we
+    # attempt the Service Bus enqueue; on failure the row stays
+    # `pending` for the 15-min replay job to retry.
+    observation_id_for_enqueue: str | None = None
+    if review.observation_id is not None:
+        observation = (
+            await session.execute(
+                select(models.Observation).where(models.Observation.id == review.observation_id)
+            )
+        ).scalar_one_or_none()
+        if observation is not None:
+            observation.moderation_status = "clean"
+            session.add(
+                models.InatSubmitOutbox(
+                    observation_id=observation.id,
+                    status="pending",
+                )
+            )
+            observation_id_for_enqueue = observation.id
+
     await session.commit()
+
+    if observation_id_for_enqueue is not None:
+        enq = await enqueue_inat_submit(observation_id_for_enqueue, settings=settings)
+        now = datetime.now(UTC)
+        if enq.success:
+            await session.execute(
+                update(models.InatSubmitOutbox)
+                .where(models.InatSubmitOutbox.observation_id == observation_id_for_enqueue)
+                .values(status="enqueued", last_attempt_at=now)
+            )
+        else:
+            await session.execute(
+                update(models.InatSubmitOutbox)
+                .where(models.InatSubmitOutbox.observation_id == observation_id_for_enqueue)
+                .values(
+                    last_attempt_at=now,
+                    retry_count=models.InatSubmitOutbox.retry_count + 1,
+                    last_error=enq.reason or "unknown",
+                )
+            )
+        await session.commit()
 
     log.info(
         "review_queue.approved",
         review_id=review_id,
         photo_id=photo.id,
         reviewer=user.id,
+        outbox_observation=observation_id_for_enqueue,
     )
     return ResolveResponse(id=review.id, status="approved", photo_status="clean")
 
@@ -266,6 +311,9 @@ async def reject_review(
             )
         ).scalar_one_or_none()
         if observation is not None:
+            # Mark the observation rejected so the iNat submit consumer
+            # never picks it up even if a stale outbox row exists.
+            observation.moderation_status = "rejected"
             await session.execute(
                 update(models.Membership)
                 .where(

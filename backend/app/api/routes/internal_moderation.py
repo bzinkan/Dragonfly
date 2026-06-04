@@ -77,6 +77,7 @@ async def moderation_process(
             moderator,
             bucket=payload.bucket,
             object_name=payload.object_name,
+            settings=settings,
         )
     except PhotoNotFound as exc:
         # Race with presign commit. 404 lets Eventarc retry.

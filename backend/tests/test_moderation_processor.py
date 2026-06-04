@@ -253,6 +253,164 @@ async def test_flagged_with_no_observation_skips_review_row(
     fake_session.add.assert_not_called()
 
 
+# ---------------------------------------------------------------------------
+# Risk 0002 transactional outbox tests
+# ---------------------------------------------------------------------------
+
+
+def _wire_session_with_outbox_update(
+    fake_session: AsyncMock,
+    *,
+    photo: models.Photo | None,
+    observation: models.Observation | None,
+) -> None:
+    """Like ``_wire_session`` but adds a 3rd side_effect for the outbox
+    UPDATE that fires after the post-commit enqueue attempt."""
+    photo_result = MagicMock()
+    photo_result.scalar_one_or_none = MagicMock(return_value=photo)
+
+    obs_result = MagicMock()
+    obs_result.scalar_one_or_none = MagicMock(return_value=observation)
+
+    update_result = MagicMock()  # session.execute(update(...)) returns
+
+    fake_session.execute = AsyncMock(side_effect=[photo_result, obs_result, update_result])
+    fake_session.add = MagicMock()
+    fake_session.commit = AsyncMock()
+
+
+async def test_clean_with_observation_writes_outbox_row_no_settings(
+    fake_session: AsyncMock,
+) -> None:
+    """Clean path with a matching observation writes the outbox row even
+    when settings=None; status stays `pending` until the replay job runs."""
+    photo = _photo_row()
+    obs = _obs_row()
+    _wire_session(fake_session, photo=photo, observation=obs)
+    storage = _StubStorage()
+    moderator = _StubModerator(ModerationResult(decision="clean"))
+
+    result = await process_pending_photo(
+        fake_session,
+        storage,
+        moderator,
+        bucket=_BUCKET,
+        object_name=_OBJECT_NAME,
+        settings=None,
+    )
+    assert result.decision == "clean"
+    assert result.observation_id == _OBS_ID
+    assert result.outbox_status == "pending"
+    # Observation flipped to clean in the SAME transaction.
+    assert obs.moderation_status == "clean"
+    # Exactly one session.add for the outbox row (no review queue insert).
+    assert fake_session.add.call_count == 1
+    added = fake_session.add.call_args.args[0]
+    assert isinstance(added, models.InatSubmitOutbox)
+    assert added.observation_id == _OBS_ID
+    assert added.status == "pending"
+
+
+async def test_clean_with_observation_and_disabled_settings_attempts_enqueue(
+    fake_session: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Settings provided but service_bus_namespace empty -> enqueue helper
+    is called, returns not_configured, outbox row gets retry_count bump."""
+    from app.core.config import Settings
+    from app.inat.enqueue import InatEnqueueResult
+
+    photo = _photo_row()
+    obs = _obs_row()
+    _wire_session_with_outbox_update(fake_session, photo=photo, observation=obs)
+    storage = _StubStorage()
+    moderator = _StubModerator(ModerationResult(decision="clean"))
+
+    enqueue_calls: list[str] = []
+
+    async def fake_enqueue(observation_id: str, *, settings: Settings) -> InatEnqueueResult:
+        enqueue_calls.append(observation_id)
+        return InatEnqueueResult(success=False, reason="not_configured")
+
+    monkeypatch.setattr("app.moderation.processor.enqueue_inat_submit", fake_enqueue)
+
+    settings = Settings(env="local", service_bus_namespace="")
+
+    result = await process_pending_photo(
+        fake_session,
+        storage,
+        moderator,
+        bucket=_BUCKET,
+        object_name=_OBJECT_NAME,
+        settings=settings,
+    )
+    assert result.decision == "clean"
+    assert result.outbox_status == "pending"
+    assert enqueue_calls == [_OBS_ID]
+    # Two commits: the in-transaction outbox commit + the post-enqueue
+    # outbox-status update commit.
+    assert fake_session.commit.await_count == 2
+
+
+async def test_clean_with_observation_and_successful_enqueue_flips_outbox(
+    fake_session: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Settings provided, enqueue helper returns success -> outbox row
+    is updated to status=enqueued."""
+    from app.core.config import Settings
+    from app.inat.enqueue import InatEnqueueResult
+
+    photo = _photo_row()
+    obs = _obs_row()
+    _wire_session_with_outbox_update(fake_session, photo=photo, observation=obs)
+    storage = _StubStorage()
+    moderator = _StubModerator(ModerationResult(decision="clean"))
+
+    async def fake_enqueue(observation_id: str, *, settings: Settings) -> InatEnqueueResult:
+        return InatEnqueueResult(success=True)
+
+    monkeypatch.setattr("app.moderation.processor.enqueue_inat_submit", fake_enqueue)
+
+    settings = Settings(
+        env="local", service_bus_namespace="dragonfly-sb-test.servicebus.windows.net"
+    )
+
+    result = await process_pending_photo(
+        fake_session,
+        storage,
+        moderator,
+        bucket=_BUCKET,
+        object_name=_OBJECT_NAME,
+        settings=settings,
+    )
+    assert result.decision == "clean"
+    assert result.outbox_status == "enqueued"
+
+
+async def test_flagged_path_sets_moderation_status_quarantine(
+    fake_session: AsyncMock,
+) -> None:
+    """Flagged decisions also flip observation.moderation_status; no outbox."""
+    photo = _photo_row()
+    obs = _obs_row()
+    _wire_session(fake_session, photo=photo, observation=obs)
+    storage = _StubStorage()
+    moderator = _StubModerator(ModerationResult(decision="flagged", labels={"adult": "LIKELY"}))
+
+    result = await process_pending_photo(
+        fake_session,
+        storage,
+        moderator,
+        bucket=_BUCKET,
+        object_name=_OBJECT_NAME,
+    )
+    assert result.decision == "flagged"
+    assert result.outbox_status is None
+    assert obs.moderation_status == "quarantine"
+    assert obs.moderation_labels == {"adult": "LIKELY"}
+
+
 async def test_unavailable_bubbles_up_unchanged(fake_session: AsyncMock) -> None:
     _wire_session(fake_session, photo=_photo_row())
     storage = _StubStorage()
