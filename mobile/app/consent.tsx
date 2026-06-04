@@ -17,9 +17,9 @@ type Phase =
  * is the parent-facing surface; this is the page a parent visits first
  * to record COPPA consent before signing up.
  *
- * The actual sign-up flow (Firebase email/password) lands in a follow-up
- * slice; until then the success state just tells the parent "consent
- * recorded" and points them at the (currently dev-only) sign-in process.
+ * The actual adult account flow lives in the parents web app through
+ * Microsoft Entra External Identities. Native kid sign-in uses the QR
+ * handoff route after an adult creates the kid account.
  */
 export default function ConsentScreen() {
   const [email, setEmail] = useState("");
@@ -134,9 +134,8 @@ export default function ConsentScreen() {
               policy version {phase.policyVersion}.
             </Text>
             <Text style={styles.muted}>
-              Next step: install the Dragonfly app on your phone and sign up
-              with this same email. Real Firebase sign-in flow lands in the
-              next slice.
+              Next step: open the parents web app with this same email, create
+              a kid account, then scan the kid QR code in the native app.
             </Text>
           </View>
         )}

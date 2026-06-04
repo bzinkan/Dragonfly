@@ -11,10 +11,8 @@ write path is this script. Per docs/expedition-authoring.md:
   (idempotent; re-running with no changes is a no-op)
 - Never deletes -- tombstoning is manual per the doc
 
-Run from a controlled deploy job or one-off admin machine with the
-same DRAGONFLY_DATABASE_* env as the target Cloud Run service. Same
-deployment pattern as `admin/cleanup_smoke_users.py` and the migrate
-job.
+Run from a controlled deploy job or one-off admin machine with the same
+DRAGONFLY_DATABASE_* env as the target Azure Container App.
 
 Usage:
     python scripts/sync_expeditions.py

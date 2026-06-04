@@ -8,6 +8,8 @@ as a celebration sequence.
 
 from __future__ import annotations
 
+from time import perf_counter
+
 import structlog
 
 from app.dispatcher.types import Context, Handler, HandlerResult, Reward
@@ -17,6 +19,7 @@ log = structlog.get_logger()
 
 async def dispatch(ctx: Context, handlers: list[Handler]) -> list[Reward]:
     """Run every handler in order, collect rewards, sort by weight desc."""
+    started = perf_counter()
     all_rewards: list[Reward] = []
     for handler in handlers:
         try:
@@ -43,5 +46,6 @@ async def dispatch(ctx: Context, handlers: list[Handler]) -> list[Reward]:
         observation_id=ctx.observation.id,
         reward_count=len(all_rewards),
         reward_types=[r.type for r in all_rewards],
+        duration_ms=round((perf_counter() - started) * 1000, 2),
     )
     return all_rewards

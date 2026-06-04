@@ -6,9 +6,8 @@ in `pending/`. It is the second leg of the kid's submission flow:
 1. Mobile calls `POST /v1/photos/presign` -> gets `photo_id` + signed URL
 2. Mobile PUTs the photo bytes to the signed URL (lands in `pending/`)
 3. Mobile calls `POST /v1/observations` with `photo_id` + lat/lng + taxon
-4. The Eventarc-triggered moderation worker (Phase 8) runs out of band on
-   the `pending/` finalize event and moves the photo to `observations/`
-   or `quarantine/`
+4. The async moderation worker runs out of band on `pending/` photos and
+   moves them to `observations/` or `quarantine/`
 
 The kid sees the celebration on the create 201, BEFORE moderation. That's
 the documented trade-off in `docs/moderation.md` -- we never block the
@@ -33,7 +32,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select, update
 from ulid import ULID
 
-from app.core.auth import CurrentUserDep
+from app.core.auth import CurrentUserDep, resolve_current_user_row
 from app.core.config import Settings, get_request_settings
 from app.core.storage import SignedUrlGeneratorDep
 from app.db import models
@@ -130,16 +129,7 @@ async def create_observation(
     session: DbSessionDep,
     settings: Annotated[Settings, Depends(get_request_settings)],
 ) -> ObservationResponse:
-    user_row = (
-        await session.execute(
-            select(models.User).where(models.User.firebase_uid == current_user.uid)
-        )
-    ).scalar_one_or_none()
-    if user_row is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No Postgres user for this Firebase identity",
-        )
+    user_row = await resolve_current_user_row(session, current_user)
 
     if not current_user.group_id:
         raise HTTPException(
@@ -300,16 +290,7 @@ async def list_my_observations(
     limit: Annotated[int, Query(ge=1, le=_MAX_LIMIT)] = _DEFAULT_LIMIT,
     before: Annotated[str | None, Query(min_length=26, max_length=26)] = None,
 ) -> ObservationListResponse:
-    user_row = (
-        await session.execute(
-            select(models.User).where(models.User.firebase_uid == current_user.uid)
-        )
-    ).scalar_one_or_none()
-    if user_row is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No Postgres user for this Firebase identity",
-        )
+    user_row = await resolve_current_user_row(session, current_user)
 
     # ULIDs are lex-sortable AND time-sortable, so DESC on id gives newest
     # first without a separate created_at index. Cursor is just the last id
@@ -388,16 +369,7 @@ async def identify_observation(
     storage: SignedUrlGeneratorDep,
     settings: Annotated[Settings, Depends(get_request_settings)],
 ) -> IdentifyResponse:
-    user_row = (
-        await session.execute(
-            select(models.User).where(models.User.firebase_uid == current_user.uid)
-        )
-    ).scalar_one_or_none()
-    if user_row is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No Postgres user for this Firebase identity",
-        )
+    user_row = await resolve_current_user_row(session, current_user)
 
     # Owner check is in the WHERE clause -- wrong owner returns 404 like
     # missing, no enumeration leak.
@@ -497,16 +469,7 @@ async def patch_observation(
             detail="At least one field must be provided",
         )
 
-    user_row = (
-        await session.execute(
-            select(models.User).where(models.User.firebase_uid == current_user.uid)
-        )
-    ).scalar_one_or_none()
-    if user_row is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No Postgres user for this Firebase identity",
-        )
+    user_row = await resolve_current_user_row(session, current_user)
 
     obs = (
         await session.execute(

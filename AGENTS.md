@@ -16,19 +16,18 @@ Start with these files, in this order:
 6. `docs/dispatcher.md` for reward handling.
 7. `docs/mobile.md` for Expo/mobile constraints.
 8. `docs/adr/` for decisions that must not be casually reversed. Most active:
-   - [ADR 0005](docs/adr/0005-gcp-target-architecture.md) — GCP target architecture (Firebase Auth, Cloud SQL Postgres, Cloud Storage, Eventarc + Cloud Tasks + Cloud Scheduler, Secret Manager, Cloud Logging). Supersedes ADR 0001.
+   - [ADR 0010](docs/adr/0010-azure-target-architecture.md) — Azure target architecture (Entra External Identities, Dragonfly-signed kid JWTs, Azure Postgres, Blob Storage, Container Apps, Key Vault, Azure AI Content Safety, Azure Monitor). Supersedes ADR 0005, 0008, and 0009.
    - [ADR 0006](docs/adr/0006-ingest-pipelines.md) — Ingest pipelines are explicit, replayable, and audited via `ingest_runs`.
    - [ADR 0007](docs/adr/0007-internal-ai-agent-tooling.md) — Multi-agent AI is internal/adult-only; never on a kid-facing request path.
-   - [ADR 0008](docs/adr/0008-public-cloud-run-with-firebase-enforcement.md) — Override `iam.allowedPolicyMemberDomains` on dev project so `allUsers` can invoke Cloud Run; Firebase ID token verification becomes the only auth boundary.
-   - [ADR 0009](docs/adr/0009-moderation-provider-cloud-vision-safesearch.md) — Cloud Vision SafeSearch is the kid-photo moderation gate; per-label thresholds; LLM-vision is not the safety boundary.
+   - [ADR 0002](docs/adr/0002-no-runtime-llm.md) — Kid-facing runtime LLM calls remain forbidden.
 
 If code and docs disagree, stop and reconcile them in the same PR. Do not let architecture drift silently.
 
 ## Current Direction
 
-The original docs describe an AWS serverless stack: API Gateway, Lambda, Cognito, DynamoDB, S3, SQS, and CDK.
+The original docs describe an AWS serverless stack; the next wave of docs described a GCP/Cloud Run runtime. Both are now historical for new implementation work.
 
-The active migration direction is GCP/Cloud Run for the API runtime. The GCP target architecture is documented in [ADR 0005](docs/adr/0005-gcp-target-architecture.md) — Firebase Auth, Cloud SQL Postgres (supersedes ADR 0001), Cloud Storage, Eventarc + Cloud Tasks + Cloud Scheduler for async work, Secret Manager, Cloud Logging/Error Reporting/Monitoring. Keep product and data invariants from the AWS-era docs, but avoid adding new AWS-only implementation unless the task explicitly requires it.
+The active direction is Azure, documented in [ADR 0010](docs/adr/0010-azure-target-architecture.md): Microsoft Entra External Identities for adults, Dragonfly-signed RS256 JWTs for kids, Azure Database for PostgreSQL Flexible Server, Azure Blob Storage, Azure Container Apps, Azure Key Vault, Azure AI Content Safety, and Azure Monitor/Application Insights/Log Analytics. Keep product and data invariants from the AWS/GCP-era docs, but do not add new AWS-only or GCP-only implementation unless a new ADR explicitly reopens the platform decision.
 
 When migrating platform pieces, prefer compatibility layers and small reversible changes:
 
@@ -36,6 +35,7 @@ When migrating platform pieces, prefer compatibility layers and small reversible
 - Keep the `Mangum` handler until the AWS path is intentionally removed.
 - Keep environment-driven settings under the `DRAGONFLY_` prefix unless a migration ADR says otherwise.
 - Do not rewrite product logic just to move infrastructure.
+- Production API auth should not accept Firebase ID tokens. Firebase remains only where ADR 0010 explicitly says residual hosting/auth rollback is retained.
 
 ## Non-Negotiable Invariants
 
@@ -66,24 +66,38 @@ Preserve these through every phase:
 
 ## Repository Reality Check
 
-Some directories in `README.md` are planned and may not exist yet. Do not assume `mobile/`, `lambdas/`, `content/`, or `scripts/` exist until you see them locally.
+`mobile/`, `content/`, and `scripts/` exist. Old notes that list them as planned are stale and should be corrected when touched.
 
 Current backend baseline:
 
 - FastAPI app in `backend/app/main.py`.
 - `/health` endpoint is the first deployment smoke test.
 - `Mangum` handler remains for AWS compatibility.
-- Cloud Run runtime should use uvicorn against `app.main:app`.
+- Azure Container Apps runtime should use uvicorn against `app.main:app`.
 - Postgres foundation lives under `backend/app/db/` with Alembic migrations.
 - Ingest contracts live under `backend/app/ingest/`.
 
 Migration scaffolding present:
 
-- `infra/` — legacy AWS CDK stacks. To be removed after Cloud Run is in prod (per ADR 0005).
-- `infra-gcp/` — Terraform root for Cloud Run, Cloud SQL, GCS, Artifact Registry, IAM, Workload Identity Federation, monitoring, and DNS.
-- `infra-gcp/dns/main.tf` — Terraform stub for the Cloud DNS zone `dragonfly-app-zone`. Import path documented in the file.
+- `infra-azure/` — Azure setup/decommission scripts and the current manifest.
+- `infra-gcp/` — legacy GCP Terraform and residual DNS/Firebase reference only.
+- `infra/` — legacy AWS CDK stacks, reference only.
+
+## Immediate Risk Closure Priority
+
+As of 2026-06-04, code is closed-beta-complete but pilot/beta risk closure is active:
+
+1. Keep Azure as the source of truth; disable stale Cloud Run deploy paths.
+2. Keep native Android parent setup web-first through Entra/MSAL and use the kid QR handoff flow for kids.
+3. Use coarse-only location for the `play-internal` Android build.
+4. Keep iNat submission and real moderation off for W1 Internal Testing; wire Azure Content Safety + async queues before closed beta.
+5. Close legal/human blockers before any public or closed-store release: reviewed privacy/terms, support/privacy email, account deletion follow-up, iNat OAuth/project account, and first-family onboarding.
 
 ## End-to-End Plan
+
+The dated phase notes below are a historical execution log. Use the current
+direction, repository reality check, and immediate risk closure priority above
+for active implementation choices.
 
 ### 0. Repo Integrity
 

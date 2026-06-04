@@ -1,7 +1,7 @@
 """Dragonfly API entry point.
 
-FastAPI app for Cloud Run, with the Mangum handler retained for the legacy AWS
-path until that compatibility layer is intentionally removed.
+FastAPI app for Azure Container Apps, with the Mangum handler retained for the
+legacy AWS path until that compatibility layer is intentionally removed.
 """
 
 from __future__ import annotations

@@ -56,9 +56,9 @@ Internal testing track. No classroom rollout. No public release.
   # Expect: {"status":"ok","env":"prod","version":"0.1.0"}
   ```
 
-- [ ] Sign in or create the parent account. On Android native the
-  sign-in screen renders the Firebase email + password form (Phase
-  11a MSAL is web-only) — use that, not the desktop MSAL flow.
+- [ ] Create or sign in to the parent account from the parents web app
+  at `https://parents.dragonfly-app.net`. The native `play-internal`
+  build does not use Firebase parent sign-in.
 - [ ] Record consent. Open the public `/consent` page (the
   parents-facing web host — verify the host returns 200 first via
   `curl -I` if the URL has changed since
@@ -71,10 +71,10 @@ Internal testing track. No classroom rollout. No public release.
   - `recorded_at` — server timestamp.
   - `policy_version` — must match the policy version currently
     served at `/consent`.
-- [ ] Create the group from the parent account inside the app. The
+- [ ] Create the group from the parent account in the parents web app. The
   parent-account group-create flow returns a 6-character join code
-  (same flow exercised by `scripts/smoke_phase4.py`).
-- [ ] Create the kid account from the parent account inside the app.
+  (same flow exercised by `scripts/smoke_azure_parent_kid.py`).
+- [ ] Create the kid account from the parent account in the parents web app.
   The kid-create flow renders a QR handoff modal whose payload is
   `dragonfly.kid-handoff.v2` per Phase 7. Have the kid's device ready
   to scan.
@@ -84,8 +84,8 @@ Internal testing track. No classroom rollout. No public release.
 The adult stays in the room and watches every screen. The kid does
 the tapping.
 
-- [ ] Kid signs in. On a second Android device, the kid scans the QR
-  from the parent's device to complete the handoff.
+- [ ] Kid signs in. On the Android device, open **Sign in** -> **Scan kid QR**
+  and scan the QR from the adult screen to complete the handoff.
 - [ ] Kid sees the welcome / onboarding screen without crashing or
   showing a blank state.
 - [ ] Kid grants only the **expected** permissions when prompted:
@@ -97,10 +97,8 @@ the tapping.
     [`docs/risks/0007-google-play-families-location-policy.md`](risks/0007-google-play-families-location-policy.md)
     for this build:
     - Option A → no precise-location prompt; manual location picker.
-    - Option B → coarse-only prompt (`ACCESS_COARSE_LOCATION`).
-    - Option C (default if no choice was made) → precise-location
-      prompt; Brian must manually review every captured pin in logs
-      before promoting any build past Internal testing.
+    - Option B → coarse-only prompt (`ACCESS_COARSE_LOCATION`). This is the
+      chosen `play-internal` path.
     - Option D → pilot deferred; this script should not be running.
   - **Nothing else.** No microphone, no contacts, no SMS, no
     calendar. If any of those prompt, stop immediately.

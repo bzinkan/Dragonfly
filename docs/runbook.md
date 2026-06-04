@@ -1,439 +1,188 @@
-# Dragonfly GCP Runbook
+# Dragonfly Azure Runbook
 
-This runbook covers the closed-beta GCP path. The AWS CDK path in `infra/` is
-legacy reference only.
+ADR 0010 makes Azure the active runtime. GCP Cloud Run/Cloud SQL/Cloud Tasks
+instructions are historical unless explicitly called out as residual DNS or
+Firebase Hosting work.
 
-## Smoke Test Cloud Run
-
-The canonical URL for dev is the Cloud DNS-mapped custom domain. Hit the
-three platform probes from any shell — no auth header required, since
-[ADR 0008](adr/0008-public-cloud-run-with-firebase-enforcement.md) made
-dev `/health`, `/ready`, and `/v1/meta` publicly invokable:
+## Public Smoke
 
 ```bash
 curl -fsS https://api.dragonfly-app.net/health
 curl -fsS https://api.dragonfly-app.net/ready
-curl -fsS https://api.dragonfly-app.net/v1/meta
+curl -fsS https://api.dragonfly-app.net/.well-known/dragonfly-kid-jwks.json
 ```
 
-Each should return a JSON body with HTTP 200. If any returns 403, ADR 0008's
-Terraform was never applied (or the org policy override regressed); re-run
-the targeted `terraform apply` for `google_org_policy_policy.domain_restricted_sharing`
-and `google_cloud_run_v2_service_iam_member.api_invokers`.
+Expected:
 
-The Cloud Run-assigned URL (`https://dragonfly-api-<hash>-uc.a.run.app`) is
-also valid but is an implementation detail. Discover it via
-`gcloud run services describe dragonfly-api --region us-central1
---format='value(status.url)'` if needed.
+- `/health` returns `{"status":"ok", ...}`.
+- `/ready` returns 200 when required dependencies are configured.
+- JWKS returns at least kid `k1-2026-06` until the first key rotation.
 
-Once Phase 4 lands (parent signup, group create, kid provisioning), every
-endpoint other than the three platform probes will require a Firebase ID
-token in `Authorization: Bearer ...`. Auth is enforced at the application
-layer; the IAM gate stays open for `allUsers` so mobile clients can reach
-the service without a Google identity.
+## Authenticated Parent/Kid Smoke
 
-## Phase 4 End-to-End Smoke (Postman Equivalent)
-
-`scripts/smoke_phase4.py` runs the full Phase 4 round-trip end-to-end:
-
-1. Firebase signUp creates a parent (Firebase REST, public Web API key).
-2. `POST /v1/auth/parent-signup` materializes the `users` row + sets the
-   Firebase custom claim `role=parent`.
-3. Force-refresh the parent's ID token so the new claim takes effect.
-4. `POST /v1/groups` creates the family group, returns a 6-char join code.
-5. `POST /v1/groups/{group_id}/kids` admin-creates a kid via the Firebase
-   Admin SDK on the server side, returns a Firebase custom token.
-6. `signInWithCustomToken` exchanges the kid's custom token for an ID token.
-7. `GET /v1/me` as the kid asserts the kid's identity context.
-
-Run:
+The Azure smoke does not automate Entra interactive sign-in. Supply an Entra
+access token for a test parent via env var:
 
 ```bash
-python scripts/smoke_phase4.py
+DRAGONFLY_API_BASE_URL=https://api.dragonfly-app.net \
+DRAGONFLY_SMOKE_ENTRA_BEARER="<access-token>" \
+python scripts/smoke_azure_parent_kid.py
 ```
 
-Stdlib only -- no third-party deps. Defaults target the dev Cloud Run service
-(`api.dragonfly-app.net`) and the dev Firebase Web API key. Override via env
-vars (`DRAGONFLY_API_BASE_URL`, `DRAGONFLY_FIREBASE_API_KEY`,
-`DRAGONFLY_SMOKE_EMAIL`, `DRAGONFLY_SMOKE_PASSWORD`).
+Flow:
 
-**Preconditions for a green run:**
+1. `POST /v1/auth/consent`
+2. `POST /v1/auth/parent-signup`
+3. `POST /v1/groups`
+4. `POST /v1/groups/{group_id}/kids`
+5. `POST /v1/auth/kid-exchange`
+6. `GET /v1/me` as the kid
 
-- Firebase Auth is configured on `dragonflyapp-495423` with Email/Password
-  sign-in enabled (see `docs/auth.md` once written, or `dragonfly.md` in
-  agent memory).
-- ADR 0008 Terraform has been applied so `/v1/auth/parent-signup` is publicly
-  reachable (the script does not pass a Google identity token).
-- **Cloud SQL is provisioned and connected.** Steps 2/4/5 write to Postgres
-  and will 500 if the API service has no DB. As of 2026-05-08 the dev
-  Cloud SQL instance is not yet provisioned (the `db-g1-small` tier is
-  rejected by ENTERPRISE_PLUS edition; needs a `db-perf-optimized-N-*`
-  tier in `infra-gcp/environments/dev.tfvars`).
+The legacy `scripts/smoke_phase4.py` is Firebase-era only. Do not use it as a
+deploy gate for the Azure runtime.
 
-**Test data left behind:** every run creates a parent + a kid in Firebase
-Auth and the corresponding rows in Postgres. They accumulate. Periodic
-cleanup is a follow-up. The test email pattern is `smoke+<ts>@dragonfly-test.invalid`
-so leakage is grep-friendly.
+## Deploy API Dev
 
-## Deploy Dev
-
-Dev deploys are handled by `.github/workflows/deploy-cloud-run-dev.yml` after
-Terraform has created the Cloud Run service, Artifact Registry repo, and GitHub
-Workload Identity Federation.
+GitHub Actions workflow: `.github/workflows/deploy-azure-api-dev.yml`.
 
 Required GitHub secrets:
 
-- `GCP_WORKLOAD_IDENTITY_PROVIDER`
-- `GCP_SERVICE_ACCOUNT`
+- `AZURE_CLIENT_ID`
+- `AZURE_TENANT_ID`
+- `AZURE_SUBSCRIPTION_ID`
+- optional `DRAGONFLY_SMOKE_ENTRA_BEARER`
 
-Use Terraform outputs from `infra-gcp` for both values.
+Workflow shape:
 
-Manual dev deploy from PowerShell:
+1. Authenticate with Azure federated identity.
+2. Build backend image in ACR `dragonflyacrdev`.
+3. Update Container App `dragonfly-api` in resource group `dragonfly-dev-rg`.
+4. Run `alembic upgrade head`.
+5. Smoke public probes.
+6. Run authenticated smoke when the token secret is configured.
 
-```powershell
-cd C:\GitHub\Dragonfly\backend
-gcloud run deploy dragonfly-api `
-  --source . `
-  --region us-central1 `
-  --project dragonflyapp-495423 `
-  --set-env-vars="DRAGONFLY_ENV=dev,DRAGONFLY_READINESS_DATABASE_REQUIRED=false"
-```
-
-Keep `--set-env-vars="..."` quoted in PowerShell. Without quotes, Cloud Run may
-receive one malformed environment value.
-
-## Roll Back Cloud Run
+The old Cloud Run workflow is a manual no-op. If a Cloud Run service was
+accidentally recreated, delete it only after the no-op workflow has landed.
 
 ```bash
-gcloud run revisions list --service dragonfly-api --region us-central1
-gcloud run services update-traffic dragonfly-api \
-  --region us-central1 \
-  --to-revisions REVISION_NAME=100
+gcloud run services delete dragonfly-api \
+  --project dragonflyapp-495423 \
+  --region us-central1
 ```
 
-After rollback, run the smoke probes and check Cloud Logging for
-`api.startup`, `api.shutdown`, and any `api.unhandled_exception` entries.
-
-## Apply Database Migrations
-
-For local development:
+## Local Database And Migrations
 
 ```bash
 make dev-db
 make db-migrate
 ```
 
-For Cloud Run environments, run migrations from a controlled deploy job or
-one-off admin machine with the same `DRAGONFLY_DATABASE_*` settings as the
-target service. Do not run migrations from app startup.
+Deployed migrations should run from the controlled Azure deploy workflow or a
+one-off operator shell using the same `DRAGONFLY_DATABASE_*` settings as the
+Container App. Do not add app-startup migrations.
 
-The `dragonfly-migrate` Cloud Run Job already exists and runs `alembic
-upgrade head` against `dragonfly-postgres-dev` using the runtime SA's
-Cloud SQL connection. Re-execute it after any new migration:
+## Mobile Internal Pilot Gate
 
-```bash
-TOKEN=$(gcloud auth application-default print-access-token)
-curl -X POST -H "Authorization: Bearer $TOKEN" \
-  -H "X-Goog-User-Project: dragonflyapp-495423" \
-  "https://run.googleapis.com/v2/projects/dragonflyapp-495423/locations/us-central1/jobs/dragonfly-migrate:run" \
-  -d '{}'
-```
-
-## Cleanup Smoke Test Users
-
-`scripts/smoke_phase4.py` runs after every dev deploy (per the workflow's
-`Phase 4 end-to-end smoke` step) and creates a parent + a kid in Firebase
-Auth and the corresponding rows in Postgres. Email pattern:
-`smoke+<ts>@dragonfly-test.invalid`.
-
-`backend/admin/cleanup_smoke_users.py` deletes the accumulated users from
-both Firebase and Postgres in the right FK order. Run as a Cloud Run Job
-using the same image as `dragonfly-api`. Create the job once (or per
-re-image), then re-execute as needed.
-
-Create the job (one-time, or after any change to the cleanup script):
+Before uploading an AAB to Google Play Internal Testing:
 
 ```bash
-PROJECT=dragonflyapp-495423
-SA=dragonfly-api-dev@$PROJECT.iam.gserviceaccount.com
-INSTANCE=$PROJECT:us-central1:dragonfly-postgres-dev
-IMAGE=us-central1-docker.pkg.dev/$PROJECT/dragonfly/dragonfly-api:latest
-TOKEN=$(gcloud auth application-default print-access-token)
-
-# Replace the job spec; PUT-style upsert by re-creating after delete if it
-# already exists, or use --jobId to a new name.
-curl -X POST \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -H "X-Goog-User-Project: $PROJECT" \
-  "https://run.googleapis.com/v2/projects/$PROJECT/locations/us-central1/jobs?jobId=dragonfly-cleanup-smoke" \
-  -d "{
-    \"labels\": {\"purpose\": \"cleanup-smoke\"},
-    \"template\": {\"template\": {
-      \"serviceAccount\": \"$SA\",
-      \"maxRetries\": 0,
-      \"timeout\": \"600s\",
-      \"volumes\": [{\"name\": \"cloudsql\", \"cloudSqlInstance\": {\"instances\": [\"$INSTANCE\"]}}],
-      \"containers\": [{
-        \"image\": \"$IMAGE\",
-        \"command\": [\"python\", \"-m\", \"admin.cleanup_smoke_users\"],
-        \"env\": [
-          {\"name\": \"DRAGONFLY_ENV\", \"value\": \"dev\"},
-          {\"name\": \"DRAGONFLY_DATABASE_HOST\", \"value\": \"/cloudsql/$INSTANCE\"},
-          {\"name\": \"DRAGONFLY_DATABASE_NAME\", \"value\": \"dragonfly\"},
-          {\"name\": \"DRAGONFLY_DATABASE_USER\", \"value\": \"dragonfly\"},
-          {\"name\": \"DRAGONFLY_CLOUD_SQL_INSTANCE\", \"value\": \"$INSTANCE\"},
-          {\"name\": \"DRAGONFLY_DATABASE_PASSWORD\", \"valueSource\": {\"secretKeyRef\": {\"secret\": \"dragonfly-dev-database-password\", \"version\": \"latest\"}}}
-        ],
-        \"volumeMounts\": [{\"name\": \"cloudsql\", \"mountPath\": \"/cloudsql\"}]
-      }]
-    }}
-  }"
+cd mobile
+npm ci
+npm run typecheck
+APP_ENV=play-internal npm run config:play-internal
 ```
 
-Run the job (idempotent; safe to call repeatedly):
+The config check must verify:
+
+- package `com.dragonfly.app`
+- display name `Dragonfly Internal`
+- update channel `play-internal`
+- `ACCESS_FINE_LOCATION` blocked
+- `ACCESS_COARSE_LOCATION` explicitly requested
+
+Then run the physical-device script in
+[`android-internal-pilot-test-script.md`](android-internal-pilot-test-script.md).
+For `play-internal` and production, native adult setup is web-first through
+`https://parents.dragonfly-app.net`; kids sign in through the native QR handoff
+screen.
+
+## Moderation
+
+W1 Internal Testing may run with `DRAGONFLY_MODERATION_PROVIDER=noop` and iNat
+submission disabled. Closed beta must wire Azure async moderation first.
+
+Target closed-beta shape:
+
+- Blob `pending/` event or explicit queue message starts moderation.
+- Worker calls Azure AI Content Safety.
+- Clean photos move to `observations/`.
+- Flagged photos move to `quarantine/` and create a `review_queue` row.
+- Provider outage holds/retries pending and does not default-allow.
+
+Adult review actions:
+
+- `approve`: move/copy to `observations/`, resolve review, allow downstream iNat submit.
+- `reject`: mark photo deleted, resolve review, decrement observation counter.
+
+## iNaturalist Submit
+
+iNat submission stays off until risk 0001 is closed: project account/OAuth token
+obtained and the 50-photo CV benchmark is run.
+
+Closed-beta target:
+
+- clean moderation path enqueues iNat submit
+- idempotency key = Dragonfly observation id
+- retries with DLQ/dead-letter visibility
+- terminal failures alert but never affect the kid submission response
+
+## Dispatcher Replay And p95
+
+Dispatcher logs `dispatcher.complete` with `duration_ms`. Use Log Analytics to
+measure p95 once at least 50 real observations exist.
+
+Replay crashed/un-dispatched observations through:
 
 ```bash
-curl -X POST -H "Authorization: Bearer $TOKEN" \
-  -H "X-Goog-User-Project: $PROJECT" \
-  "https://run.googleapis.com/v2/projects/$PROJECT/locations/us-central1/jobs/dragonfly-cleanup-smoke:run" \
-  -d '{}'
+cd backend
+uv run python -m admin.dispatcher_replay
 ```
 
-Job logs (Cloud Logging) will show the `cleanup_smoke.*` structured
-events: `discovered`, `parent_pg_ids`, `kid_pg_ids`, the four delete
-counts, and `deleted_firebase_users`.
+Scheduled Azure jobs should eventually run:
 
-A Cloud Scheduler cron (`dragonfly-cleanup-smoke-nightly`, codified in
-`infra-gcp/main.tf`, dev only) fires the job nightly at 09:00 UTC
-(04:00 America/Chicago CDT). The schedule and the
-`dragonfly-scheduler-dev` service account that invokes it are managed
-by Terraform; the job spec itself is still out-of-band (importing it is
-a follow-up). Manual `:run` calls remain safe to interleave with the
-nightly cron — the script is idempotent.
+- `python -m admin.rarity_refresh`
+- `python -m admin.sweep_stale_reviews`
+- `python -m admin.dispatcher_replay`
 
-## Restore Cloud SQL
+## Account Deletion
 
-1. Identify the target restore time.
-2. Create a point-in-time restored instance in Cloud SQL.
-3. Run read-only verification queries against the restored instance.
-4. Promote by updating Terraform or Cloud Run database settings only after the
-   restored instance is verified.
-5. Run `/ready` and a read-only API smoke test.
+The app-visible endpoint is:
 
-## Replay Failed Ingest
-
-Failed ingest jobs are discoverable in Postgres:
-
-```sql
-select id, source, source_run_id, cursor, retry_count, last_error
-from ingest_runs
-where status = 'failed'
-order by updated_at desc;
+```bash
+curl -X DELETE \
+  -H "Authorization: Bearer <token>" \
+  https://api.dragonfly-app.net/v1/me
 ```
 
-Replay scripts must accept `source` plus `source_run_id` or cursor range, then
-write a new or updated `ingest_runs` row. Replays must be idempotent.
+Immediate effect: sets `users.disabled_at`, busts the auth cache, and returns
+`{"status":"deletion_requested", ...}`. Full erasure of linked child data,
+photos, and any iNaturalist project-account contribution remains an operator
+follow-up until the legal policy is finalized.
 
-## iNaturalist Submit DLQ
+## Incident Triggers
 
-Signal: Cloud Tasks queue depth for the iNaturalist DLQ is above zero.
+Hard stop the pilot and follow `android-internal-pilot-stop-plan.md` if any of
+these appear:
 
-Triage:
-
-1. Classify failures from worker logs by observation ID.
-2. If iNaturalist is down, pause redrive and wait.
-3. If credentials expired, rotate the Secret Manager secret and redeploy the
-   worker.
-4. If a photo was quarantined, mark the observation as abandoned for iNat
-   submission and do not retry.
-5. Redrive only after the root cause is fixed.
-
-## Moderation Review
-
-Clean photos move from `pending/` to `observations/`. Flagged photos move to
-`quarantine/` and create `review_queue` rows.
-
-Teacher/adult actions:
-
-- `approved`: move or copy the photo to `observations/`, resolve the review row,
-  and enqueue iNaturalist submission if appropriate.
-- `rejected`: keep the photo hidden, resolve the review row, and mark the
-  observation as rejected or abandoned.
-
-## Monitoring Signals
-
-Alert on:
-
-- Cloud Run API 5xx responses
-- Cloud Run latency regression
-- Cloud SQL connection pressure
-- iNaturalist DLQ depth
-- moderation DLQ or failed Eventarc handling
-- ingest failures
-- rarity job duration
-- observations without Dex rows older than one hour
-- budget threshold crossings
-
-Dashboard, but do not page on:
-
-- observations per day
-- Cloud Run startup count
-- cache hit rates
-- expedition completion rates
-- iNaturalist CV confidence distribution
+- auth failure exposing wrong user data
+- child can reach public chat or social features
+- photo appears publicly without a moderation decision
+- submit crash loses kid data
+- incorrect consent state
+- location/privacy surprise
 
 ## Runtime AI Violation
 
-Any live LLM or agent call from the kid-facing API path violates ADR 0002 and
-ADR 0007.
-
-Immediate response:
-
-1. Identify the route or worker from logs.
-2. Roll back the revision.
-3. Add or fix a test that prevents the import/call path.
-4. File an ADR variance only if the product direction is intentionally changing.
-
-## Internal OIDC auth on `/internal/*` routes
-
-The `/internal/*` endpoints (currently `/internal/moderation/process`
-and `/internal/inat/submit`) are called only by Google platform
-infrastructure -- Eventarc, Cloud Tasks, Cloud Scheduler. Each is
-configured to attach a Google-signed OIDC ID token; the backend
-verifies it via `app/core/internal_auth.py` and rejects anything
-unauthenticated.
-
-### Env vars
-
-| Variable | Type | Default | Meaning |
-|---|---|---|---|
-| `DRAGONFLY_INTERNAL_OIDC_REQUIRED` | `bool` (or unset) | unset | Unset = "required iff env != local". Explicit `true` / `false` overrides in either direction. |
-| `DRAGONFLY_INTERNAL_OIDC_AUDIENCE` | `str` | `""` | Audience the verifier pins. Use the Cloud Run service URI (e.g. `https://api.dragonfly-app.net` or the run.app URL). |
-| `DRAGONFLY_INTERNAL_OIDC_ALLOWED_SERVICE_ACCOUNTS` | JSON array of strings | `[]` | Service-account emails allowed to call `/internal/*`. |
-
-When OIDC is required but `INTERNAL_OIDC_AUDIENCE` or
-`INTERNAL_OIDC_ALLOWED_SERVICE_ACCOUNTS` is empty, every
-`/internal/*` request returns **503 internal_oidc_misconfigured**.
-That is on purpose -- the system fails closed rather than letting
-unauthenticated traffic through during operator config drift.
-
-### Configuring the callers
-
-Each Google service that fires `/internal/*` needs to attach a token
-with `audience = DRAGONFLY_INTERNAL_OIDC_AUDIENCE` and a service-account
-identity that appears in the allowlist.
-
-**Eventarc** (GCS `pending/` finalize -> moderation):
-
-```hcl
-resource "google_eventarc_trigger" "moderation_pending" {
-  # ... matching_criteria as in risk 0002 ...
-  destination {
-    cloud_run_service {
-      service = google_cloud_run_v2_service.api.name
-      path    = "/internal/moderation/process"
-      region  = var.region
-    }
-  }
-  service_account = google_service_account.eventarc_invoker.email
-  # Eventarc automatically signs the request with this SA's OIDC
-  # identity; the audience is the Cloud Run service URL. Add
-  # eventarc_invoker.email to the allowlist env var.
-}
-```
-
-**Cloud Tasks** (moderation clean -> iNat submit):
-
-```python
-# Inside the producer (currently the moderation worker on success)
-from google.cloud import tasks_v2
-
-queue.create_task(
-    parent=queue_path,
-    task={
-        "http_request": {
-            "http_method": tasks_v2.HttpMethod.POST,
-            "url": f"{settings.api_base_url}/internal/inat/submit",
-            "body": json.dumps({"observation_id": obs_id}).encode(),
-            "headers": {"Content-Type": "application/json"},
-            "oidc_token": {
-                "service_account_email": settings.cloud_tasks_invoker_sa,
-                "audience": settings.internal_oidc_audience,
-            },
-        }
-    },
-)
-```
-
-**Cloud Scheduler** (cron -> admin jobs / endpoints; for the rarity
-refresh Cloud Run Job path the OIDC happens on the Run Job invocation,
-not on the API endpoint -- but if a Scheduler ever hits `/internal/*`
-directly, the same OIDC token shape applies):
-
-```hcl
-resource "google_cloud_scheduler_job" "example_internal_call" {
-  name     = "dragonfly-example-internal-call"
-  schedule = "0 3 * * *"
-  http_target {
-    http_method = "POST"
-    uri         = "${google_cloud_run_v2_service.api.uri}/internal/whatever"
-    oidc_token {
-      service_account_email = google_service_account.scheduler_invoker.email
-      audience              = google_cloud_run_v2_service.api.uri
-    }
-  }
-}
-```
-
-### Manual dev testing
-
-To call an internal route from a developer machine using your own
-Google identity (instead of a service account):
-
-```sh
-# Token mints under YOUR human Google identity. The token's `email`
-# claim is your user email; add that email to the allowlist env var
-# for the deployed Cloud Run revision before testing.
-ID_TOKEN="$(gcloud auth print-identity-token \
-  --audiences=https://api.dragonfly-app.net)"
-
-curl -X POST \
-  -H "Authorization: Bearer ${ID_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{"bucket":"dragonfly-photos-dev","object_name":"pending/abc.jpg"}' \
-  https://api.dragonfly-app.net/internal/moderation/process
-```
-
-Cleanup: when manual testing is done, remove your user email from the
-allowlist env var so the next legitimate deploy doesn't keep it
-around.
-
-### Local development
-
-`DRAGONFLY_INTERNAL_OIDC_REQUIRED=false` (the local default) skips
-OIDC entirely, so smoke scripts (`scripts/smoke_phase4.py`,
-`scripts/smoke_phase8.py` if it ever lands, etc.) and the moderation
-processor unit tests don't need a Google token. Deployed envs MUST
-NOT set this to `false` -- if `env != local` the require flag should
-either be unset (defaults to required) or explicitly `true`.
-
-### Verification on a deployed revision
-
-After rolling a new revision with the OIDC env vars set:
-
-1. Call `/internal/moderation/process` without an Authorization header.
-   Expect **401 missing_bearer_token**.
-2. Call it with an obviously-wrong token. Expect **401
-   invalid_internal_oidc_token**.
-3. Mint a token for an email NOT on the allowlist (any non-allowlisted
-   gcloud-authed user works). Expect **403
-   internal_oidc_principal_forbidden**.
-4. Mint a token for an allowlisted email and call it. Expect the
-   normal route response (404 for a missing photo row is the
-   "happy" path here -- it proves the auth dependency let the call
-   reach the route).
-
-If you see **503 internal_oidc_misconfigured** on any of those calls,
-`DRAGONFLY_INTERNAL_OIDC_AUDIENCE` or
-`DRAGONFLY_INTERNAL_OIDC_ALLOWED_SERVICE_ACCOUNTS` is empty on the
-revision -- fix the env var, redeploy.
+Any live LLM or multi-agent call from a kid-facing request path violates ADR
+0002/0007. Roll back, identify the import/call path, add a regression test, and
+only reopen with a new ADR.

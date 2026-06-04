@@ -1,101 +1,129 @@
 # Architecture
 
-## System at a glance
+## System At A Glance
 
-Dragonfly is a managed-services app on GCP, built around one synchronous request path (observation submission), explicit replayable ingest pipelines, and asynchronous workers for photo moderation, iNaturalist submission, and rarity cache refresh. Everything else — Dex, leaderboard, expeditions — is derived data computed at submission time and cached.
+Dragonfly is an Azure-hosted field app with one kid-facing hot path:
+observation submission. Everything slow or failure-prone, including photo
+moderation, iNaturalist submission, rarity refresh, ingest, and admin replay,
+must run outside that hot path.
 
-Platform choices are documented in [ADR 0005](adr/0005-gcp-target-architecture.md). ADR 0001 (single-table DynamoDB) is superseded by Cloud SQL for PostgreSQL.
+Platform choices are documented in
+[ADR 0010](adr/0010-azure-target-architecture.md). ADR 0010 supersedes the
+earlier GCP ADRs 0005, 0008, and 0009.
 
-```
-┌─────────────────┐
-│  Expo client    │  iOS / Android / web
-│  (React Native) │
-└────────┬────────┘
-         │ HTTPS (Firebase ID token)
-         ▼
-┌──────────────────┐     ┌──────────────────┐
-│  Cloud Run       │────▶│ Firebase Auth    │  (JWKS verify)
-│  FastAPI         │     └──────────────────┘
-│  (uvicorn)       │
-└────────┬─────────┘
-         │
-         ├──────────────▶  Cloud SQL (Postgres: dragonfly)
-         ├──────────────▶  Cloud Storage (photos, V4 signed URLs)
-         ├──────────────▶  iNaturalist API (CV + project submit)
-         ├──────────────▶  Cloud Tasks (iNat submit queue, with DLQ)
-         └──────────────▶  Eventarc (GCS object-finalized → moderation)
-                              │
-                              ▼
-                 ┌────────────────────────────────┐
-                 │  Cloud Run workers             │
-                 │  ─ moderation (Eventarc-triggered)
-                 │  ─ inat_submit (Cloud Tasks consumer)
-                 │  ─ rarity_refresh (Cloud Run job, Cloud Scheduler cron)
-                 └────────────────────────────────┘
+```text
+Expo mobile / parents web
+        |
+        | HTTPS
+        v
+Azure Container Apps: FastAPI / uvicorn
+        |
+        +--> Entra External Identities (adult access tokens)
+        +--> Dragonfly RS256 kid JWTs (handoff/session)
+        +--> Azure Database for PostgreSQL Flexible Server
+        +--> Azure Blob Storage (photos, SAS URLs)
+        +--> iNaturalist API (CV + eventual project submit)
+        +--> Azure AI Content Safety (async moderation provider)
+        +--> Azure Monitor / Log Analytics
 ```
 
-## The one important request path
+Current W1 Internal Testing posture: iNat public submission is off, moderation
+provider defaults to noop unless explicitly configured, and parent setup is
+web-first through the parents app. Kids sign in by scanning the QR handoff that
+the adult generates from Classroom.
 
-An observation submission is the hot path. Everything that matters — first-find celebration, expedition progress, leaderboard updates, rarity tier — is computed here, in this order:
+## Observation Hot Path
 
-1. Client uploads photo to the `pending/` prefix in the photos bucket via a V4 signed URL.
-2. Client calls `POST /observations` with `{ photo_key, lat, lng, taxon_id, ... }`.
-3. Cloud Run validates and writes the observation row to Postgres in a single transaction (observation insert + membership-counter update + Dex `INSERT ... ON CONFLICT DO NOTHING` for the first-find detection).
-4. **Dispatcher runs.** The `Context` object (db, user, group, observation, location) is passed through every handler in `HANDLERS`. Each returns zero or more `Reward`s.
-5. Rewards are returned to the client, sorted by weight desc. The client renders the celebration sequence from that list.
-6. A Cloud Tasks task is enqueued for `inat_submit` to push to iNaturalist out of band.
-7. Moderation runs independently via Eventarc on GCS object-finalized — if a photo is flagged post-submission, the observation is moved to quarantine and the teacher review queue picks it up.
+1. Kid captures or chooses a photo.
+2. Client calls `POST /v1/photos/presign` and uploads JPEG bytes to
+   `pending/<photo_id>.jpg` in the private photos container.
+3. Client calls `POST /v1/observations` with the stable observation shape.
+4. API validates ownership, inserts the observation, and atomically bumps the
+   membership observation counter.
+5. Dispatcher runs after the observation is committed. It invokes Dex,
+   Rarity, Expedition, and World/Sanctuary handlers with exception isolation.
+6. Rewards return to the client for the celebration sequence. Failure in any
+   handler does not fail submission; replay can recover missing rewards.
+7. Async moderation/iNat work may run later. The kid already saw success.
 
-The client never knows or cares which handler produced which reward. Adding Territory in Phase 2, Seasons in Phase 3, Missions in Phase 4 is purely additive on the server.
+The submission endpoint shape is intentionally stable. Add handlers and workers;
+do not keep expanding the endpoint with feature-specific branches.
 
-## Component responsibilities
+## Auth Model
 
-**API service (Cloud Run, FastAPI on uvicorn).** All synchronous HTTP. Owns the dispatcher. Aim for p95 < 500ms. No blocking iNat calls on the hot path; that's what Cloud Tasks is for. Mangum handler remains in `app.main` per AGENTS.md compatibility rule until the AWS path is intentionally removed.
+Adults authenticate with Microsoft Entra External Identities. Verified Entra
+tokens are resolved to local `users` rows by `users.entra_oid`.
 
-**Moderation worker (Cloud Run service, Eventarc-triggered).** Triggered by GCS `google.cloud.storage.object.v1.finalized` on the `pending/` prefix. Calls Cloud Vision SafeSearch per [ADR 0009](adr/0009-moderation-provider-cloud-vision-safesearch.md). Clean photos are copied to `observations/`; flagged photos go to `quarantine/` and write a `REVIEW#` row. See `moderation.md`.
+Kids never enter email/password. A parent/teacher provisions a kid, the backend
+mints a 15-minute single-use Dragonfly handoff JWT, and the kid app exchanges
+that at `POST /v1/auth/kid-exchange` for a 30-day Dragonfly session JWT.
+Dragonfly kid JWTs are RS256 and are verified against
+`/.well-known/dragonfly-kid-jwks.json`.
 
-**iNat submit worker (Cloud Run service, Cloud Tasks consumer).** Handles retries (Cloud Tasks-managed exponential backoff), dedup via idempotency key (observation id), and writes the returned iNat observation id back onto the observation row. On terminal failure (e.g. iNat down for > 24h), the task is routed to the DLQ queue and an alert fires.
+The backend augments request identity from Postgres on every real token path:
+`CurrentUser.uid` is the canonical local `users.id`. Route code should resolve
+the row through `resolve_current_user_row(...)`, not by directly querying
+`firebase_uid`.
 
-**Rarity refresh (Cloud Run job, Cloud Scheduler cron).** Cron at 03:00 UTC posts to a Cloud Run job. Self-continues via a `JOB#rarity` cursor row if it runs out of time. Never parallelizes — iNat rate limits matter more than throughput. See `rarity-pipeline.md`.
+## Component Responsibilities
 
-**Ingest runs (Postgres audit rows + typed commands).** Content sync, taxa cache refresh, geocoding cache fills, moderation events, rarity snapshots, and telemetry-derived jobs record `ingest_runs` rows with source, source run ID, cursor, checksum, retry count, and status. See `ingest.md`.
+**API service.** FastAPI on Azure Container Apps. Owns synchronous HTTP,
+dispatcher execution, signed URL issuance, Entra/Dragonfly auth verification,
+and source-of-truth writes to Postgres.
 
-## External dependencies and failure modes
+**Photo storage.** Azure Blob Storage private container. `pending/`,
+`observations/`, and `quarantine/` prefixes remain the lifecycle vocabulary.
+Signed PUT/GET URLs are SAS URLs behind the existing storage protocol.
 
-| Dependency | Used for | Failure mode |
+**Moderation worker.** Async worker code classifies pending photos through the
+`Moderator` protocol. Azure AI Content Safety is the production provider; noop
+is allowed only for local/dev/W1 Internal Testing. Provider outage must retry or
+hold pending; never default-allow on safety outage.
+
+**iNaturalist submit worker.** Async, retryable, and idempotent by Dragonfly
+observation id. It is disabled until the iNat OAuth/project account risk is
+closed and moderation clean-path wiring exists.
+
+**Rarity refresh and admin jobs.** Container Apps jobs or equivalent scheduled
+Azure jobs run rarity refresh, stale-review sweep, and dispatcher replay. They
+must be idempotent and auditable.
+
+**Content sync.** Expedition and Sanctuary JSON in `content/` is the source of
+truth. Postgres tables are materialized views synced by scripts/CI.
+
+## External Dependencies
+
+| Dependency | Used For | Failure Mode |
 |---|---|---|
-| iNaturalist CV | Species ID on upload | Fallback: let kid free-text select; log `cv_unavailable` flag on the observation |
-| iNaturalist submit | Scientific contribution | Queue retries; kid sees success regardless (we own the project account) |
-| Cloud Vision SafeSearch (per [ADR 0009](adr/0009-moderation-provider-cloud-vision-safesearch.md)) | Photo moderation | If API errors, hold in `pending/` and retry with exponential backoff; do not default-allow |
-| USA-NPN (Phase 3) | Phenology windows | Weekly sync to local cache; offline-first |
+| iNaturalist CV | Species suggestions | Return `cv_unavailable=true`; kid can choose manually |
+| iNaturalist submit | Science contribution | Queue/retry later; kid submission already succeeded |
+| Azure AI Content Safety | Photo moderation | Hold/retry pending; do not default-allow |
+| Reverse geocoding | Place names | No-op/cache miss is acceptable |
+| USA-NPN (future) | Phenology | Weekly cache, never hot-path required |
 
-The app must degrade gracefully on all of these. The kid experience cannot depend on iNat or NPN being reachable at the moment of submission.
+## Deployment And Observability
 
-## Auth model
+Active API deploys use `.github/workflows/deploy-azure-api-dev.yml`: build in
+ACR, update Azure Container Apps, run Alembic, smoke public probes, and
+optionally run `scripts/smoke_azure_parent_kid.py` with an operator-provided
+Entra bearer token.
 
-Firebase Authentication with custom claims `role` (`parent` | `teacher` | `kid`) and `group_id` set on join. The Firebase ID token is verified on every API request via the `core/auth.py` dependency, which validates against the Firebase JWKS and reads the custom claims. Kids under 13 have no email — they authenticate via a group join code exchanged for a Firebase user provisioned by the parent/teacher at join time.
+The legacy `.github/workflows/deploy-cloud-run-dev.yml` is intentionally
+manual/no-op. It must not deploy or recreate Cloud Run after ADR 0010.
 
-One iNaturalist account is owned by the app (the "project account"). All observations are submitted as that account, tagged with our project. Kids do not have iNat accounts until they turn 13 and opt into the claim flow (Phase 3).
+Structured logs go to Azure Log Analytics. Key operational events should
+include `observation_id`, `user_id`, `group_id`, reward types, and
+`duration_ms` for dispatcher completion. Azure Monitor alerts should cover API
+5xx/latency, Postgres pressure, async queue/DLQ depth, iNat failures,
+moderation failures, dispatcher replay backlog, and budget anomalies.
 
-## Deployment
+## Invariants
 
-Cloud Run services per environment in GCP project `dragonflyapp-495423`. Environments: `dev` (scale-to-zero), `staging` (one shared), `prod` (`min_instances=1` to keep the Postgres pool warm). GitHub Actions deploys on merge to `main` for `dev`; `staging` and `prod` are manual-approve workflows. Build via Cloud Build; image artifacts in Artifact Registry.
-
-Secrets live in **Secret Manager**, loaded at Cloud Run cold start via `pydantic-settings`. The Cloud Run service account is granted `roles/secretmanager.secretAccessor` on specific secrets only, never at project scope. `DRAGONFLY_*` env vars on the service hold *secret names*, not secret values. Never commit secrets.
-
-## Observability
-
-Structured JSON logs from every Cloud Run service, ingested by **Cloud Logging** as native JSON payloads (no parsing config required). One log line per observation submission that includes: `observation_id`, `user_id`, `group_id`, `handler_rewards` (list), `dispatcher_duration_ms`, `taxon_id`. That single line is enough to debug 80% of "why didn't I get a celebration" complaints.
-
-**Error Reporting** auto-aggregates exceptions from the structured JSON. **Cloud Monitoring** holds the alerting policies: API 5xx rate > 1% (Cloud Run request-count metric), moderation DLQ depth > 0 (Cloud Tasks queue-depth metric), rarity job duration > 12 min (Cloud Run job execution-duration metric), iNat submit DLQ depth > 0 (Cloud Tasks queue-depth metric). Everything else is a dashboard, not an alert.
-
-## Key invariants (things to preserve through all four phases)
-
-These are deliberately platform-agnostic — they survive AWS, GCP, and any future migration.
-
-1. **The submission endpoint never changes shape.** Handlers are added; the endpoint is not modified.
-2. **Expedition JSON is the source of truth.** The operational datastore is a materialized view of `content/expeditions/`. A deploy is the only write path.
-3. **Atomic conditional writes are how first-find is detected.** Don't add a read-then-write pattern; it introduces a race. (On Postgres: `INSERT ... ON CONFLICT DO NOTHING`. On DynamoDB it was `PutItem` with `ConditionExpression`.)
-4. **Moderation happens out of band, not in the API request path.** The API must not block on the moderation provider.
-5. **Ingest is idempotent and replayable.** Any job that moves repo-authored or third-party data into Postgres must record audit state and tolerate duplicate events.
-5. **Denormalized counters on membership rows are the leaderboard.** Don't aggregate at read time.
+1. Observation submission shape stays stable.
+2. First-find detection uses atomic conditional writes.
+3. Kid-facing runtime LLM calls are forbidden.
+4. Moderation and iNat submission are asynchronous.
+5. Expedition/Sanctuary JSON is source of truth.
+6. Leaderboard counters live on membership rows.
+7. Ingest/admin jobs are idempotent, replayable, and auditable.
+8. No ads, marketing pushes, public chat, DMs, or kid-to-kid free text in Phase 1.

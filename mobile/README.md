@@ -13,7 +13,7 @@ the current UTC date, Northern-Hemisphere calendar -- limitation
 documented in `docs/sanctuary.md`) and a text-only "Sounds" placeholder
 panel that lists future ambient sounds without playing audio,
 requesting microphone permission, or adding analytics. Settings holds
-the dev "paste a Firebase ID token" auth shortcut + build info + the
+the dev bearer-token shortcut + build info + the
 Adult tools section (review queue link).
 
 **Web build is the adult-console surface only** (per `docs/mobile.md`):
@@ -77,7 +77,7 @@ holds non-route code (API clients, state stores, hooks).
 | `production`  | `https://api.dragonfly-app.net` (TBD prod URL) | `com.dragonfly.app`        | `production`   |
 
 Staging and production API URLs are placeholders until those environments
-exist (per `infra-gcp/README.md`).
+exist (per `infra-azure/README.md`).
 
 ## What's NOT in here yet
 

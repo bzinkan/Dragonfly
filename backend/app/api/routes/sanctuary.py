@@ -24,11 +24,11 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
 
-from app.core.auth import CurrentUserDep
+from app.core.auth import CurrentUserDep, resolve_current_user_row
 from app.db import models
 from app.db.session import DbSessionDep
 from app.models.sanctuary import Season, SoundKind
@@ -295,19 +295,10 @@ async def get_my_sanctuary(
     The endpoint takes NO query parameters -- a caller cannot pass
     ``?user_id=...`` to retrieve someone else's Sanctuary. The
     ``current_user`` is resolved from the bearer token by the auth
-    dependency; the Postgres user row is then looked up by Firebase /
-    Dragonfly uid (mirroring the observations endpoint's pattern).
+    dependency; the Postgres user row is then resolved to the canonical
+    local ``users.id``.
     """
-    user_row = (
-        await session.execute(
-            select(models.User).where(models.User.firebase_uid == current_user.uid)
-        )
-    ).scalar_one_or_none()
-    if user_row is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No Postgres user for this identity",
-        )
+    user_row = await resolve_current_user_row(session, current_user)
 
     content = get_sanctuary_content()
 

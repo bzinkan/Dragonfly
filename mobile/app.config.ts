@@ -90,6 +90,7 @@ const ENV: Record<AppEnv, EnvConfig> = {
 };
 
 const env = ENV[APP_ENV];
+const isPlayInternal = APP_ENV === "play-internal";
 
 function displayName(appEnv: AppEnv): string {
   switch (appEnv) {
@@ -122,6 +123,12 @@ const config: ExpoConfig = {
   },
   android: {
     package: `com.dragonfly.app${env.bundleIdSuffix}`,
+    permissions: isPlayInternal
+      ? ["android.permission.ACCESS_COARSE_LOCATION"]
+      : undefined,
+    blockedPermissions: isPlayInternal
+      ? ["android.permission.ACCESS_FINE_LOCATION"]
+      : undefined,
     adaptiveIcon: {
       foregroundImage: "./assets/images/adaptive-icon.png",
       backgroundColor: "#ffffff",

@@ -35,7 +35,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt.exceptions import InvalidTokenError, PyJWKClientError
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_request_settings
@@ -530,6 +530,44 @@ async def _resolve_dragonfly(
 
 
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
+
+
+async def resolve_current_user_row(
+    session: AsyncSession,
+    current_user: CurrentUser,
+    *,
+    allowed_roles: set[str] | frozenset[str] | None = None,
+    missing_user_status: int = status.HTTP_403_FORBIDDEN,
+) -> models.User:
+    """Return the canonical ``users`` row for an authenticated request.
+
+    Real Entra and Dragonfly tokens resolve ``CurrentUser.uid`` to the local
+    ``users.id``. Legacy tests and rollback paths may still present a Firebase
+    uid or raw Entra oid, so this helper keeps those fallbacks in one place
+    while preferring the local id path.
+    """
+    clauses = [
+        models.User.id == current_user.uid,
+        models.User.firebase_uid == current_user.uid,
+        models.User.entra_oid == current_user.uid,
+    ]
+    if current_user.entra_oid:
+        clauses.append(models.User.entra_oid == current_user.entra_oid)
+
+    user = (await session.execute(select(models.User).where(or_(*clauses)))).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=missing_user_status,
+            detail="Authenticated user has no users row; complete parent-signup or kid exchange first.",
+        )
+    if user.disabled_at is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User disabled.")
+    if allowed_roles is not None and user.role not in allowed_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Role '{user.role}' is not allowed for this route.",
+        )
+    return user
 
 
 # ---------------------------------------------------------------------------

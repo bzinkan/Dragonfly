@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from ulid import ULID
 
-from app.core.auth import CurrentUserDep
+from app.core.auth import CurrentUserDep, resolve_current_user_row
 from app.core.config import Settings, get_request_settings
 from app.core.storage import SignedUrlGeneratorDep
 from app.db import models
@@ -61,16 +61,7 @@ async def presign_photo(
     signer: SignedUrlGeneratorDep,
     settings: Annotated[Settings, Depends(get_request_settings)],
 ) -> PhotoPresignResponse:
-    user_row = (
-        await session.execute(
-            select(models.User).where(models.User.firebase_uid == current_user.uid)
-        )
-    ).scalar_one_or_none()
-    if user_row is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No Postgres user for this Firebase identity",
-        )
+    user_row = await resolve_current_user_row(session, current_user)
 
     photo_id = str(ULID())
     object_name = f"pending/{photo_id}.jpg"
@@ -159,16 +150,7 @@ async def photo_get_url(
     signer: SignedUrlGeneratorDep,
     settings: Annotated[Settings, Depends(get_request_settings)],
 ) -> PhotoUrlResponse:
-    user_row = (
-        await session.execute(
-            select(models.User).where(models.User.firebase_uid == current_user.uid)
-        )
-    ).scalar_one_or_none()
-    if user_row is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No Postgres user for this Firebase identity",
-        )
+    user_row = await resolve_current_user_row(session, current_user)
 
     photo = (
         await session.execute(select(models.Photo).where(models.Photo.id == photo_id))

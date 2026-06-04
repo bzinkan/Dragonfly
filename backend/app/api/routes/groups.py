@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from ulid import ULID
 
-from app.core.auth import CurrentUserDep
+from app.core.auth import CurrentUserDep, resolve_current_user_row
 from app.core.config import Settings, get_request_settings
 from app.core.kid_jwt import mint_handoff_token
 from app.db import models
@@ -74,9 +74,8 @@ async def create_group(
     """Create a group owned by the calling parent or teacher.
 
     Authorization is gated on the canonical `users.role` from Postgres rather
-    than the Firebase ID-token claim, so a parent who just signed up doesn't
-    have to refresh their token before creating a group. The custom claim is
-    a convenience cache of the same fact.
+    than a cached token claim, so a parent who just signed up can create a
+    group without waiting for a token refresh.
 
     Returns the new group with its 6-char join code. The code uses Crockford
     base32 (no I/L/O/U) so it's unambiguous when read aloud or typed by hand.
@@ -87,22 +86,11 @@ async def create_group(
     twice creates two groups. Phase 1's family flow creates exactly one group
     per parent, so the client should gate the call.
     """
-    user_result = await session.execute(
-        select(models.User).where(
-            (models.User.id == current_user.uid)
-            | (models.User.firebase_uid == current_user.uid)
-            | (models.User.entra_oid == current_user.uid)
-        )
+    user = await resolve_current_user_row(
+        session,
+        current_user,
+        missing_user_status=status.HTTP_404_NOT_FOUND,
     )
-    user = user_result.scalar_one_or_none()
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                "Calling Firebase user has no `users` row. "
-                "Sign up via /v1/auth/parent-signup or the teacher equivalent first."
-            ),
-        )
 
     if user.role not in _GROUP_OWNER_ROLES:
         raise HTTPException(
@@ -177,22 +165,11 @@ async def list_groups(
 
     Order is newest-group-first so a freshly-created group is at the top.
     """
-    user_result = await session.execute(
-        select(models.User).where(
-            (models.User.id == current_user.uid)
-            | (models.User.firebase_uid == current_user.uid)
-            | (models.User.entra_oid == current_user.uid)
-        )
+    user = await resolve_current_user_row(
+        session,
+        current_user,
+        missing_user_status=status.HTTP_404_NOT_FOUND,
     )
-    user = user_result.scalar_one_or_none()
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                "Calling Firebase user has no `users` row. "
-                "Sign up via /v1/auth/parent-signup or the teacher equivalent first."
-            ),
-        )
 
     result = await session.execute(
         select(models.Group)
@@ -250,22 +227,11 @@ async def list_group_members(
     Order: adults first (parents, teachers), then kids alphabetically by
     display name. Stable so the UI doesn't shuffle on refresh.
     """
-    user_result = await session.execute(
-        select(models.User).where(
-            (models.User.id == current_user.uid)
-            | (models.User.firebase_uid == current_user.uid)
-            | (models.User.entra_oid == current_user.uid)
-        )
+    caller = await resolve_current_user_row(
+        session,
+        current_user,
+        missing_user_status=status.HTTP_404_NOT_FOUND,
     )
-    caller = user_result.scalar_one_or_none()
-    if caller is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                "Calling Firebase user has no `users` row. "
-                "Sign up via /v1/auth/parent-signup or the teacher equivalent first."
-            ),
-        )
 
     group_result = await session.execute(select(models.Group).where(models.Group.id == group_id))
     group = group_result.scalar_one_or_none()
@@ -380,27 +346,11 @@ async def create_kid(
     Single-use is enforced by an atomic INSERT into `kid_handoff_jti` at
     redemption time -- no orphan-cleanup logic needed here.
     """
-    # NOTE: The OR-clause shim below is a Phase 6a back-compat bridge --
-    # CurrentUser.uid carries the local users.id for resolved Entra
-    # tokens but may carry a Firebase uid for legacy stub-token test
-    # paths. Phase 10 removes the firebase_uid / entra_oid branches.
-    # TODO(phase-10): drop firebase_uid and entra_oid fallbacks.
-    user_result = await session.execute(
-        select(models.User).where(
-            (models.User.id == current_user.uid)
-            | (models.User.firebase_uid == current_user.uid)
-            | (models.User.entra_oid == current_user.uid)
-        )
+    caller = await resolve_current_user_row(
+        session,
+        current_user,
+        missing_user_status=status.HTTP_404_NOT_FOUND,
     )
-    caller = user_result.scalar_one_or_none()
-    if caller is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                "Calling user has no `users` row. "
-                "Sign up via /v1/auth/parent-signup or the teacher equivalent first."
-            ),
-        )
     if caller.role not in _KID_PROVISIONER_ROLES:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -529,22 +479,11 @@ async def join_group(
     `uq_memberships_group_user` unique constraint is the durable backstop
     against duplicates.
     """
-    user_result = await session.execute(
-        select(models.User).where(
-            (models.User.id == current_user.uid)
-            | (models.User.firebase_uid == current_user.uid)
-            | (models.User.entra_oid == current_user.uid)
-        )
+    user = await resolve_current_user_row(
+        session,
+        current_user,
+        missing_user_status=status.HTTP_404_NOT_FOUND,
     )
-    user = user_result.scalar_one_or_none()
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                "Calling Firebase user has no `users` row. "
-                "Sign up via /v1/auth/parent-signup or the teacher equivalent first."
-            ),
-        )
 
     # Normalize to upper-case so a parent typing the code by hand isn't
     # tripped up by lowercase input.

@@ -16,6 +16,8 @@ from ulid import ULID
 from app.core.auth import (
     CurrentUser,
     CurrentUserDep,
+    bust_user_cache,
+    resolve_current_user_row,
 )
 from app.core.config import Settings, get_request_settings
 from app.core.kid_jwt import (
@@ -64,9 +66,50 @@ class UserResponse(BaseModel):
         )
 
 
+class AccountDeletionResponse(BaseModel):
+    status: str
+    user_id: str
+    requested_at: datetime
+
+
 @router.get("/me", response_model=CurrentUser)
 def me(current_user: CurrentUserDep) -> CurrentUser:
     return current_user
+
+
+@router.delete("/me", response_model=AccountDeletionResponse)
+async def request_account_deletion(
+    current_user: CurrentUserDep,
+    session: DbSessionDep,
+) -> AccountDeletionResponse:
+    """Disable the authenticated account and record the deletion request.
+
+    This is the app-store-visible one-tap path. The immediate effect is
+    fail-closed auth on the next request via ``users.disabled_at``; full data
+    erasure for linked kid accounts/photos/iNat contributions remains the
+    documented human follow-up for beta operations.
+    """
+    requested_at = datetime.now(UTC)
+    user = await resolve_current_user_row(session, current_user)
+    user.disabled_at = requested_at
+    await session.commit()
+    bust_user_cache(
+        user.id,
+        entra_oid=getattr(user, "entra_oid", None),
+        dragonfly_sub=user.id if user.role == "kid" else None,
+        legacy_uid=user.firebase_uid,
+    )
+    log.info(
+        "auth.account_deletion_requested",
+        user_id=user.id,
+        role=user.role,
+        requested_at=requested_at.isoformat(),
+    )
+    return AccountDeletionResponse(
+        status="deletion_requested",
+        user_id=user.id,
+        requested_at=requested_at,
+    )
 
 
 @router.post(

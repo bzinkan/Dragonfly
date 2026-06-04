@@ -3,8 +3,7 @@ import { apiRequest } from "@/src/api/client";
 export type UserResponse = {
   id: string;
   /**
-   * Entra External Identities object id for adult accounts, replaces
-   * the Phase 5 `firebase_uid` field after the Phase 6a auth swap.
+   * Entra External Identities object id for adult accounts.
    * Null for kid accounts (kids have no Entra identity).
    */
   entra_oid: string | null;
@@ -28,6 +27,16 @@ export function parentSignup(displayName: string): Promise<UserResponse> {
 
 export function getMe(): Promise<CurrentUser> {
   return apiRequest<CurrentUser>("/v1/me");
+}
+
+export type AccountDeletionResponse = {
+  status: "deletion_requested";
+  user_id: string;
+  requested_at: string;
+};
+
+export function requestAccountDeletion(): Promise<AccountDeletionResponse> {
+  return apiRequest<AccountDeletionResponse>("/v1/me", { method: "DELETE" });
 }
 
 export type KidExchangeResponse = {
