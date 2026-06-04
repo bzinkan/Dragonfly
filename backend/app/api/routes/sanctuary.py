@@ -118,6 +118,58 @@ class SanctuaryJournalEntryDTO(BaseModel):
     created_at: datetime
 
 
+class SanctuaryIdentityReflectionDTO(BaseModel):
+    """A descriptive line about the kid's developing Sanctuary identity.
+
+    Selected server-side from authored content via the deterministic
+    rule-ladder in ``_select_identity_reflection``. Client renders
+    ``text`` verbatim; the ``id`` is included so the client can
+    deduplicate / track which line was shown without a string compare.
+    """
+
+    id: str
+    text: str
+
+
+class SanctuaryRelationshipMomentDTO(BaseModel):
+    """A relationship-moment ``sanctuary_elements`` row, projected for the UI.
+
+    Slim shape on purpose: the screen renders title + detail + icon, and
+    the client uses ``element_id`` to deduplicate. The full element row
+    (with ``element_type="relationship"`` and ``payload``) is still
+    available via ``SanctuarySnapshotResponse.elements`` for callers that
+    want it.
+    """
+
+    element_id: str
+    zone_id: ZoneId
+    title: str
+    detail: str
+    icon: str
+    unlocked_at: datetime
+
+
+class SanctuaryTinySurpriseDTO(BaseModel):
+    """A tiny-surprise ``sanctuary_elements`` row, projected for the UI.
+
+    ``threshold`` is the per-zone count at which this surprise fired
+    (pulled from the authored ``TinySurprise.threshold``); the client
+    uses it as a small "since you crossed N" caption. ``title`` is a
+    short caption composed at the route layer from the zone title
+    ("A small detail in the Meadow") -- the only client-visible
+    string composed by the route; ``detail`` is the authored
+    description verbatim.
+    """
+
+    element_id: str
+    zone_id: ZoneId
+    threshold: int | None
+    title: str
+    detail: str
+    icon: str
+    unlocked_at: datetime
+
+
 class SanctuarySnapshotResponse(BaseModel):
     zones: list[SanctuaryZoneDTO]
     elements: list[SanctuaryElementDTO]
@@ -125,6 +177,9 @@ class SanctuarySnapshotResponse(BaseModel):
     guide_message: SanctuaryGuideMessageDTO
     mystery_cues: list[SanctuaryMysteryCueDTO]
     journal: list[SanctuaryJournalEntryDTO]
+    identity_reflection: SanctuaryIdentityReflectionDTO | None = None
+    relationship_moments: list[SanctuaryRelationshipMomentDTO] = Field(default_factory=list)
+    tiny_surprises: list[SanctuaryTinySurpriseDTO] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +263,9 @@ async def get_my_sanctuary(
     journal = [_build_journal_entry(row) for row in reversed(recent_event_rows)]
     guide_message = _select_guide(content, zones, recent_event_rows)
     mystery_cues = _select_mystery_cues(content, zones)
+    identity_reflection = _select_identity_reflection(content, zones, element_rows)
+    relationship_moments = _relationship_moments_from_elements(element_rows, content)
+    tiny_surprises_view = _tiny_surprises_from_elements(element_rows, content)
 
     return SanctuarySnapshotResponse(
         zones=zones,
@@ -216,6 +274,9 @@ async def get_my_sanctuary(
         guide_message=guide_message,
         mystery_cues=mystery_cues,
         journal=journal,
+        identity_reflection=identity_reflection,
+        relationship_moments=relationship_moments,
+        tiny_surprises=tiny_surprises_view,
     )
 
 
@@ -467,3 +528,151 @@ def _select_mystery_cues(
 
 def _string_or_none(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _select_identity_reflection(
+    content: SanctuaryContent,
+    zones: list[SanctuaryZoneDTO],
+    element_rows: Sequence[models.SanctuaryElement],
+) -> SanctuaryIdentityReflectionDTO | None:
+    """Pick a descriptive identity-reflection line via author-time rules.
+
+    Walks ``content.identity_reflections`` in content order and returns the
+    FIRST entry whose rules ALL match the kid's snapshot. Content order is
+    the deterministic tie-break -- author more-specific entries earlier
+    and the universal fallback last.
+
+    Returns ``None`` only when no entries are authored (early-content
+    state).
+    """
+    if not content.identity_reflections:
+        return None
+
+    unlocked = [z for z in zones if z.unlocked]
+    total_observations = sum(z.observation_count for z in unlocked)
+    element_count = len(element_rows)
+    zones_unlocked = len(unlocked)
+
+    # Dominant zone = strict maximum; ties produce no dominant zone.
+    dominant_zone: ZoneId | None = None
+    if unlocked:
+        by_count = sorted(unlocked, key=lambda z: z.observation_count, reverse=True)
+        if len(by_count) == 1 or by_count[0].observation_count > by_count[1].observation_count:
+            dominant_zone = by_count[0].zone_id
+
+    for reflection in content.identity_reflections:
+        if reflection.dominant_zone is not None and reflection.dominant_zone != dominant_zone:
+            continue
+        if (
+            reflection.min_total_observations is not None
+            and total_observations < reflection.min_total_observations
+        ):
+            continue
+        if (
+            reflection.min_element_count is not None
+            and element_count < reflection.min_element_count
+        ):
+            continue
+        if (
+            reflection.max_zones_unlocked is not None
+            and zones_unlocked >= reflection.max_zones_unlocked
+        ):
+            continue
+        return SanctuaryIdentityReflectionDTO(id=reflection.id, text=reflection.text)
+
+    return None
+
+
+def _relationship_moments_from_elements(
+    element_rows: Sequence[models.SanctuaryElement],
+    content: SanctuaryContent,
+) -> list[SanctuaryRelationshipMomentDTO]:
+    """Project relationship ``sanctuary_elements`` rows into the slim DTO.
+
+    Authored ``RelationshipMoment.title`` / ``detail`` / ``icon`` win;
+    snapshot payload + safe fallback follow the same chain as
+    ``_build_element``.
+    """
+    moments_by_id = {r.id: r for r in content.relationships}
+    out: list[SanctuaryRelationshipMomentDTO] = []
+    for row in element_rows:
+        if row.element_type != "relationship":
+            continue
+        payload: dict[str, Any] = dict(row.payload) if isinstance(row.payload, dict) else {}
+        authored = moments_by_id.get(row.element_id)
+        title = (
+            (authored.title if authored is not None else None)
+            or _string_or_none(payload.get("title"))
+            or _FALLBACK_ELEMENT_TITLE
+        )
+        detail = (
+            (authored.detail if authored is not None else None)
+            or _string_or_none(payload.get("detail"))
+            or _FALLBACK_ELEMENT_DETAIL
+        )
+        icon = (
+            (authored.icon if authored is not None else None)
+            or _string_or_none(payload.get("icon"))
+            or _FALLBACK_ELEMENT_ICON
+        )
+        out.append(
+            SanctuaryRelationshipMomentDTO(
+                element_id=row.element_id,
+                zone_id=row.zone_id,
+                title=title,
+                detail=detail,
+                icon=icon,
+                unlocked_at=row.unlocked_at,
+            )
+        )
+    return out
+
+
+def _tiny_surprises_from_elements(
+    element_rows: Sequence[models.SanctuaryElement],
+    content: SanctuaryContent,
+) -> list[SanctuaryTinySurpriseDTO]:
+    """Project surprise ``sanctuary_elements`` rows into the slim DTO.
+
+    The authored ``TinySurprise`` model has only ``description`` (no
+    title); the route synthesizes a calm caption from the zone title --
+    e.g. "A small detail in the Meadow" -- which is the only string
+    composed at the route layer. ``detail`` is the authored description
+    verbatim.
+    """
+    surprises_by_id = {t.id: t for t in content.tiny_surprises}
+    out: list[SanctuaryTinySurpriseDTO] = []
+    for row in element_rows:
+        if row.element_type != "surprise":
+            continue
+        payload: dict[str, Any] = dict(row.payload) if isinstance(row.payload, dict) else {}
+        authored = surprises_by_id.get(row.element_id)
+        zone_id: ZoneId = row.zone_id  # type: ignore[assignment]
+        zone = content.zone_by_id.get(zone_id)
+        zone_title = zone.title if zone is not None else zone_id
+        title = f"A small detail in the {zone_title}"
+        detail = (
+            (authored.description if authored is not None else None)
+            or _string_or_none(payload.get("detail"))
+            or _string_or_none(payload.get("description"))
+            or _FALLBACK_ELEMENT_DETAIL
+        )
+        icon = _string_or_none(payload.get("icon")) or f"sanctuary.{row.zone_id}.surprise"
+        threshold_raw = payload.get("threshold")
+        threshold: int | None = (
+            authored.threshold
+            if authored is not None
+            else (threshold_raw if isinstance(threshold_raw, int) else None)
+        )
+        out.append(
+            SanctuaryTinySurpriseDTO(
+                element_id=row.element_id,
+                zone_id=row.zone_id,
+                threshold=threshold,
+                title=title,
+                detail=detail,
+                icon=icon,
+                unlocked_at=row.unlocked_at,
+            )
+        )
+    return out

@@ -30,8 +30,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import {
   type SanctuaryElementDto,
   type SanctuaryEventDto,
+  type SanctuaryIdentityReflectionDto,
   type SanctuaryJournalEntryDto,
   type SanctuaryMysteryCueDto,
+  type SanctuaryRelationshipMomentDto,
+  type SanctuaryTinySurpriseDto,
   type SanctuaryZoneDto,
   type SanctuaryZoneId,
   SANCTUARY_ZONE_ORDER,
@@ -112,6 +115,9 @@ export default function SanctuaryScreen() {
       >
         <Header />
         <GuideBar text={data.guide_message.text} />
+        {data.identity_reflection ? (
+          <IdentityReflectionPanel reflection={data.identity_reflection} />
+        ) : null}
         {isEmptyState ? (
           <EmptyStateHint />
         ) : null}
@@ -120,6 +126,18 @@ export default function SanctuaryScreen() {
           elements={data.elements}
           onInspect={setInspectedElement}
         />
+        {data.relationship_moments.length > 0 ? (
+          <RelationshipMomentsPanel
+            moments={data.relationship_moments}
+            onInspect={(m) => setInspectedElement(_momentToElement(m))}
+          />
+        ) : null}
+        {data.tiny_surprises.length > 0 ? (
+          <TinySurprisesPanel
+            surprises={data.tiny_surprises}
+            onInspect={(s) => setInspectedElement(_surpriseToElement(s))}
+          />
+        ) : null}
         {data.mystery_cues.length > 0 ? (
           <MysteryCuesPanel cues={data.mystery_cues} />
         ) : null}
@@ -302,6 +320,122 @@ function ZoneBand({
       ) : null}
     </View>
   );
+}
+
+function IdentityReflectionPanel({
+  reflection,
+}: {
+  reflection: SanctuaryIdentityReflectionDto;
+}) {
+  return (
+    <View style={styles.identityPanel}>
+      <Text style={styles.identityText}>{reflection.text}</Text>
+    </View>
+  );
+}
+
+function RelationshipMomentsPanel({
+  moments,
+  onInspect,
+}: {
+  moments: SanctuaryRelationshipMomentDto[];
+  onInspect: (moment: SanctuaryRelationshipMomentDto) => void;
+}) {
+  return (
+    <View style={styles.panel}>
+      <Text style={styles.panelTitle}>Relationships</Text>
+      <View style={styles.chipRow}>
+        {moments.map((moment) => (
+          <Pressable
+            key={moment.element_id}
+            accessibilityRole="button"
+            accessibilityLabel={moment.title}
+            hitSlop={8}
+            style={({ pressed }) => [
+              styles.chip,
+              styles.relationshipChip,
+              pressed ? styles.chipPressed : null,
+            ]}
+            onPress={() => onInspect(moment)}
+          >
+            <Text style={styles.relationshipChipText}>{moment.title}</Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function TinySurprisesPanel({
+  surprises,
+  onInspect,
+}: {
+  surprises: SanctuaryTinySurpriseDto[];
+  onInspect: (surprise: SanctuaryTinySurpriseDto) => void;
+}) {
+  return (
+    <View style={styles.panel}>
+      <Text style={styles.panelTitle}>Tiny surprises</Text>
+      {surprises.map((surprise) => (
+        <Pressable
+          key={surprise.element_id}
+          accessibilityRole="button"
+          accessibilityLabel={surprise.title}
+          hitSlop={4}
+          style={({ pressed }) => [
+            styles.surpriseRow,
+            pressed ? styles.chipPressed : null,
+          ]}
+          onPress={() => onInspect(surprise)}
+        >
+          <Text style={styles.surpriseTitle}>{surprise.title}</Text>
+          <Text style={styles.surpriseDetail} numberOfLines={2}>
+            {surprise.detail}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Adapters: project the slim delight DTOs into the existing
+// SanctuaryElementDto shape so the ElementInspectModal renders them
+// without a second modal component.
+// ---------------------------------------------------------------------------
+
+function _momentToElement(
+  moment: SanctuaryRelationshipMomentDto,
+): SanctuaryElementDto {
+  return {
+    element_id: moment.element_id,
+    zone_id: moment.zone_id,
+    element_type: "relationship",
+    title: moment.title,
+    detail: moment.detail,
+    icon: moment.icon,
+    taxon_id: null,
+    source_observation_id: null,
+    unlocked_at: moment.unlocked_at,
+    payload: {},
+  };
+}
+
+function _surpriseToElement(
+  surprise: SanctuaryTinySurpriseDto,
+): SanctuaryElementDto {
+  return {
+    element_id: surprise.element_id,
+    zone_id: surprise.zone_id,
+    element_type: "surprise",
+    title: surprise.title,
+    detail: surprise.detail,
+    icon: surprise.icon,
+    taxon_id: null,
+    source_observation_id: null,
+    unlocked_at: surprise.unlocked_at,
+    payload: surprise.threshold !== null ? { threshold: surprise.threshold } : {},
+  };
 }
 
 function MysteryCuesPanel({ cues }: { cues: SanctuaryMysteryCueDto[] }) {
@@ -596,4 +730,34 @@ const styles = StyleSheet.create({
     backgroundColor: "#3F6B40",
   },
   modalCloseButtonText: { color: "#FFFFFF", fontSize: 14, fontWeight: "500" },
+  identityPanel: {
+    backgroundColor: "#FAF8F1",
+    borderLeftWidth: 3,
+    borderLeftColor: "#B89B6E",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  identityText: {
+    fontSize: 14,
+    color: "#3A3A3A",
+    lineHeight: 20,
+    fontStyle: "italic",
+  },
+  relationshipChip: {
+    borderColor: "#7BA45A",
+    backgroundColor: "#F4F7EE",
+  },
+  relationshipChipText: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: "#5C8A2A",
+  },
+  surpriseRow: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#E5E0D6",
+    paddingTop: 8,
+  },
+  surpriseTitle: { fontSize: 14, color: "#2A2A2A", fontWeight: "500" },
+  surpriseDetail: { fontSize: 13, color: "#666", marginTop: 2, lineHeight: 18 },
 });

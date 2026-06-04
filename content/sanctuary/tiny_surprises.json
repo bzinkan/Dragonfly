@@ -49,10 +49,10 @@
       "description": "A small flock crosses the corner of the scene in a loose, easy line."
     },
     {
-      "id": "sky_surprise_high_cloud_streak",
+      "id": "sky_surprise_high_cloud_line",
       "zone": "sky",
       "threshold": 3,
-      "description": "A single high cloud streak stretches thin across the upper sky."
+      "description": "A single high cloud stretches thin across the upper sky."
     },
     {
       "id": "soil_surprise_pebble_uncovered",

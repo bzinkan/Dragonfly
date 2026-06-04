@@ -25,6 +25,7 @@ from app.models.sanctuary import (
     CharismaticUnlock,
     CoarseUnlock,
     GuideLine,
+    IdentityReflection,
     MysteryCue,
     RelationshipMoment,
     SanctuaryConfig,
@@ -55,6 +56,7 @@ _ITEM_MODELS: dict[str, type[BaseModel]] = {
     "mystery_cues": MysteryCue,
     "tiny_surprises": TinySurprise,
     "seasonal_variants": SeasonalVariant,
+    "identity_reflections": IdentityReflection,
 }
 
 
@@ -80,6 +82,7 @@ class SanctuaryContent:
     seasonal_variants: tuple[SeasonalVariant, ...]
     coarse_by_id: dict[str, CoarseUnlock]
     charismatic_by_id: dict[str, CharismaticUnlock]
+    identity_reflections: tuple[IdentityReflection, ...]
 
 
 _CACHE_LOCK = threading.Lock()
@@ -174,4 +177,5 @@ def _load() -> SanctuaryContent:
         seasonal_variants=tuple(config.seasonal_variants),
         coarse_by_id=coarse_by_id,
         charismatic_by_id=charismatic_by_id,
+        identity_reflections=tuple(config.identity_reflections),
     )

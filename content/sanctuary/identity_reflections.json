@@ -1,0 +1,148 @@
+{
+  "identity_reflections": [
+    {
+      "id": "meadow_watcher",
+      "text": "You're becoming a meadow watcher. The open grass is starting to know you.",
+      "dominant_zone": "meadow",
+      "min_total_observations": 3,
+      "min_element_count": null,
+      "max_zones_unlocked": null,
+      "tags": ["zone_focused"]
+    },
+    {
+      "id": "woodland_walker",
+      "text": "You're becoming a woodland walker. Quiet trees and leaf litter are your kind of place.",
+      "dominant_zone": "woodland",
+      "min_total_observations": 3,
+      "min_element_count": null,
+      "max_zones_unlocked": null,
+      "tags": ["zone_focused"]
+    },
+    {
+      "id": "pond_listener",
+      "text": "You're becoming a pond listener. Still water and soft edges hold your attention.",
+      "dominant_zone": "pond",
+      "min_total_observations": 3,
+      "min_element_count": null,
+      "max_zones_unlocked": null,
+      "tags": ["zone_focused"]
+    },
+    {
+      "id": "sky_looker",
+      "text": "You're becoming a sky looker. You notice the wings and weather passing through.",
+      "dominant_zone": "sky",
+      "min_total_observations": 3,
+      "min_element_count": null,
+      "max_zones_unlocked": null,
+      "tags": ["zone_focused"]
+    },
+    {
+      "id": "soil_curious",
+      "text": "You're getting curious about soil. The quiet layer underfoot is where you keep looking.",
+      "dominant_zone": "soil",
+      "min_total_observations": 3,
+      "min_element_count": null,
+      "max_zones_unlocked": null,
+      "tags": ["zone_focused"]
+    },
+    {
+      "id": "urban_noticer",
+      "text": "You're a city noticer. Sidewalks and walls have life, and you can see it.",
+      "dominant_zone": "urban",
+      "min_total_observations": 3,
+      "min_element_count": null,
+      "max_zones_unlocked": null,
+      "tags": ["zone_focused"]
+    },
+    {
+      "id": "elsewhere_wanderer",
+      "text": "You wander past the edges. Anywhere can be a place to notice something living.",
+      "dominant_zone": "elsewhere",
+      "min_total_observations": 3,
+      "min_element_count": null,
+      "max_zones_unlocked": null,
+      "tags": ["zone_focused"]
+    },
+    {
+      "id": "deep_noticer",
+      "text": "You notice tiny things. Your Sanctuary is full of small, careful finds.",
+      "dominant_zone": null,
+      "min_total_observations": null,
+      "min_element_count": 12,
+      "max_zones_unlocked": null,
+      "tags": ["depth"]
+    },
+    {
+      "id": "wide_wanderer",
+      "text": "Your Sanctuary spans a lot of places. You let yourself look around.",
+      "dominant_zone": null,
+      "min_total_observations": 8,
+      "min_element_count": null,
+      "max_zones_unlocked": null,
+      "tags": ["multi_zone", "breadth"]
+    },
+    {
+      "id": "green_life_steward",
+      "text": "Your Sanctuary has lots of green life. Plants and trees keep showing up in what you notice.",
+      "dominant_zone": null,
+      "min_total_observations": 6,
+      "min_element_count": null,
+      "max_zones_unlocked": null,
+      "tags": ["multi_zone", "meadow", "woodland"]
+    },
+    {
+      "id": "water_and_air_watcher",
+      "text": "Water and sky are showing up together in your Sanctuary. You notice things that move.",
+      "dominant_zone": null,
+      "min_total_observations": 6,
+      "min_element_count": null,
+      "max_zones_unlocked": null,
+      "tags": ["multi_zone", "pond", "sky"]
+    },
+    {
+      "id": "quiet_layers_keeper",
+      "text": "You keep finding the quiet layers. Soil and woodland are slow places, and you sit with them.",
+      "dominant_zone": null,
+      "min_total_observations": 6,
+      "min_element_count": null,
+      "max_zones_unlocked": null,
+      "tags": ["multi_zone", "soil", "woodland"]
+    },
+    {
+      "id": "first_steps_outside",
+      "text": "Your Sanctuary is just beginning. Every observation will help it fill in.",
+      "dominant_zone": null,
+      "min_total_observations": null,
+      "min_element_count": null,
+      "max_zones_unlocked": 2,
+      "tags": ["early_state"]
+    },
+    {
+      "id": "starting_to_notice",
+      "text": "You're starting to notice. The shape of your Sanctuary is showing up.",
+      "dominant_zone": null,
+      "min_total_observations": 2,
+      "min_element_count": null,
+      "max_zones_unlocked": 3,
+      "tags": ["early_state"]
+    },
+    {
+      "id": "settling_in",
+      "text": "Your Sanctuary is settling in. A few quiet zones are starting to feel familiar.",
+      "dominant_zone": null,
+      "min_total_observations": 4,
+      "min_element_count": null,
+      "max_zones_unlocked": 4,
+      "tags": ["early_state"]
+    },
+    {
+      "id": "general_filling_in",
+      "text": "Your Sanctuary is starting to fill in. Keep noticing what is already around you.",
+      "dominant_zone": null,
+      "min_total_observations": null,
+      "min_element_count": null,
+      "max_zones_unlocked": null,
+      "tags": ["general", "fallback"]
+    }
+  ]
+}

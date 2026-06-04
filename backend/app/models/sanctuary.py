@@ -126,6 +126,29 @@ _FORBIDDEN_SOCIAL_TOKENS: tuple[str, ...] = (
     "send to",
 )
 
+# Leaderboard / competitive / streak vocabulary the delight layer must not
+# introduce -- identity reflection copy especially has to stay descriptive,
+# never comparative or pressure-inducing (per docs/sanctuary.md section 3).
+# Matched as lowercase substrings; same authoring discipline as the social
+# tokens: rewrite, do not work around.
+_FORBIDDEN_LEADERBOARD_TOKENS: tuple[str, ...] = (
+    "best",
+    "better than",
+    "more than other",
+    "leaderboard",
+    " rank",
+    " score",
+    "compete",
+    "winner",
+    " win ",
+    "streak",
+    "in a row",
+    "do not miss",
+    "don't miss",
+    "consecutive day",
+    "days in a row",
+)
+
 
 def _enforce_copy_policy(value: str, field_name: str) -> str:
     """Reject precise-location templates and Phase-1 social-surface copy.
@@ -146,6 +169,12 @@ def _enforce_copy_policy(value: str, field_name: str) -> str:
             raise ValueError(
                 f"{field_name} must not contain social-surface token "
                 f"{token!r} (Phase 1 has no public social copy)"
+            )
+    for token in _FORBIDDEN_LEADERBOARD_TOKENS:
+        if token in lowered:
+            raise ValueError(
+                f"{field_name} must not contain leaderboard / streak token "
+                f"{token!r} (descriptive copy only -- no comparison or pressure)"
             )
     return value
 
@@ -384,6 +413,51 @@ class SeasonalVariant(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class IdentityReflection(BaseModel):
+    """A descriptive line about the kid's developing Sanctuary identity.
+
+    Selection rules are evaluated server-side at GET /v1/sanctuary/me time:
+    the route walks ``config.identity_reflections`` in content order and
+    returns the FIRST entry whose rules ALL match the kid's snapshot.
+    Content order is therefore the deterministic tie-break -- author
+    more-specific entries earlier and the universal fallback last.
+
+    Rule semantics:
+
+    - ``dominant_zone``: matches when that zone has the strict maximum
+      ``observation_count`` across all unlocked zones (no ties).
+    - ``min_total_observations``: matches when the sum of zone counts is
+      at least this value.
+    - ``min_element_count``: matches when the user has unlocked at least
+      this many ``sanctuary_elements`` rows.
+    - ``max_zones_unlocked``: matches when fewer than (strict <) this
+      many zones are unlocked.
+    - Any rule that is ``None`` is ignored (acts as "no constraint").
+
+    ``text`` is rendered verbatim on the client. Copy must be
+    DESCRIPTIVE (no leaderboard / comparison / streak language); the
+    copy-policy validator enforces the absence of forbidden tokens.
+    """
+
+    id: str
+    text: Annotated[str, Field(min_length=1, max_length=140)]
+    dominant_zone: ZoneId | None = None
+    min_total_observations: Annotated[int, Field(ge=0)] | None = None
+    min_element_count: Annotated[int, Field(ge=0)] | None = None
+    max_zones_unlocked: Annotated[int, Field(ge=1)] | None = None
+    tags: list[str] = Field(default_factory=list)
+
+    @field_validator("id")
+    @classmethod
+    def id_is_snake_case(cls, v: str) -> str:
+        return _enforce_snake_case(v, "identity reflection")
+
+    @field_validator("text")
+    @classmethod
+    def copy_policy(cls, v: str) -> str:
+        return _enforce_copy_policy(v, "identity reflection text")
+
+
 class SanctuaryConfig(BaseModel):
     """The whole sanctuary content tree, assembled for cross-reference checks.
 
@@ -407,6 +481,7 @@ class SanctuaryConfig(BaseModel):
     mystery_cues: list[MysteryCue] = Field(default_factory=list)
     tiny_surprises: list[TinySurprise] = Field(default_factory=list)
     seasonal_variants: list[SeasonalVariant] = Field(default_factory=list)
+    identity_reflections: list[IdentityReflection] = Field(default_factory=list)
 
     @field_validator("zones")
     @classmethod
@@ -496,6 +571,18 @@ class SanctuaryConfig(BaseModel):
                 raise ValueError(
                     f"seasonal variant {sv.id!r} references unknown element "
                     f"{sv.element_ref!r} (must be a coarse or charismatic id)"
+                )
+
+        # Identity reflections: ids unique; dominant_zone (when set) must
+        # name a real zone.
+        ident_seen: set[str] = set()
+        for ir in self.identity_reflections:
+            if ir.id in ident_seen:
+                raise ValueError(f"duplicate identity reflection id: {ir.id}")
+            ident_seen.add(ir.id)
+            if ir.dominant_zone is not None and ir.dominant_zone not in zone_ids:
+                raise ValueError(
+                    f"identity reflection {ir.id!r} references unknown zone {ir.dominant_zone!r}"
                 )
 
         return self

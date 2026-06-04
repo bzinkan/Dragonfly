@@ -105,6 +105,30 @@ export type SanctuaryJournalEntryDto = {
   created_at: string;
 };
 
+export type SanctuaryIdentityReflectionDto = {
+  id: string;
+  text: string;
+};
+
+export type SanctuaryRelationshipMomentDto = {
+  element_id: string;
+  zone_id: SanctuaryZoneId;
+  title: string;
+  detail: string;
+  icon: string;
+  unlocked_at: string;
+};
+
+export type SanctuaryTinySurpriseDto = {
+  element_id: string;
+  zone_id: SanctuaryZoneId;
+  threshold: number | null;
+  title: string;
+  detail: string;
+  icon: string;
+  unlocked_at: string;
+};
+
 export type SanctuarySnapshotDto = {
   zones: SanctuaryZoneDto[];
   elements: SanctuaryElementDto[];
@@ -112,6 +136,9 @@ export type SanctuarySnapshotDto = {
   guide_message: SanctuaryGuideMessageDto;
   mystery_cues: SanctuaryMysteryCueDto[];
   journal: SanctuaryJournalEntryDto[];
+  identity_reflection: SanctuaryIdentityReflectionDto | null;
+  relationship_moments: SanctuaryRelationshipMomentDto[];
+  tiny_surprises: SanctuaryTinySurpriseDto[];
 };
 
 // ---------------------------------------------------------------------------
