@@ -107,6 +107,36 @@ def test_parent_signup_requires_bearer_token(client: TestClient) -> None:
     assert response.headers["www-authenticate"] == "Bearer"
 
 
+def test_delete_me_disables_authenticated_user(
+    parent_signup_client: TestClient,
+    fake_session: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stub_token_verifier(monkeypatch, uid=_FIREBASE_UID, role="parent")
+    user = models.User(
+        id="01J0DELETEUSER000000000000",
+        firebase_uid=_FIREBASE_UID,
+        role="parent",
+        display_name="Brian",
+    )
+    result = MagicMock()
+    result.scalar_one_or_none = MagicMock(return_value=user)
+    fake_session.execute = AsyncMock(return_value=result)
+    fake_session.commit = AsyncMock()
+
+    response = parent_signup_client.delete(
+        "/v1/me",
+        headers={"Authorization": "Bearer valid"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "deletion_requested"
+    assert body["user_id"] == user.id
+    assert user.disabled_at is not None
+    fake_session.commit.assert_awaited_once()
+
+
 def test_parent_signup_validates_display_name(
     parent_signup_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

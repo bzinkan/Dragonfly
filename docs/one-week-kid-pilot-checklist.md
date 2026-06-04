@@ -57,10 +57,11 @@ curl -sS https://api.dragonfly-app.net/health
 curl -sS https://api.dragonfly-app.net/.well-known/dragonfly-kid-jwks.json | jq .
 # Expect: {"keys":[{"kty":"RSA","kid":"k1-2026-06",...}]}
 
-# Phase 4 smoke (parent signup -> group -> kid -> token flow)
+# Azure parent/kid smoke (parent signup -> group -> kid -> handoff flow)
 DRAGONFLY_API_BASE_URL=https://api.dragonfly-app.net \
-  python scripts/smoke_phase4.py
-# Expect: ALL CHECKS PASSED -- Phase 4 round-trip works end-to-end.
+DRAGONFLY_SMOKE_ENTRA_BEARER="<access-token>" \
+  python scripts/smoke_azure_parent_kid.py
+# Expect: ALL CHECKS PASSED -- Azure parent/kid handoff flow works end-to-end.
 # If any step 4xx/5xxs, stop and read the response body BEFORE
 # building the AAB.
 ```
@@ -68,8 +69,8 @@ DRAGONFLY_API_BASE_URL=https://api.dragonfly-app.net \
 - [ ] `/health` returns 200 with the expected JSON body.
 - [ ] `/.well-known/dragonfly-kid-jwks.json` returns a JWKS with kid
   `k1-2026-06`.
-- [ ] `scripts/smoke_phase4.py` exits 0 with
-  `ALL CHECKS PASSED -- Phase 4 round-trip works end-to-end.`
+- [ ] `scripts/smoke_azure_parent_kid.py` exits 0 with
+  `ALL CHECKS PASSED -- Azure parent/kid handoff flow works end-to-end.`
 
 ### Consent ledger
 
@@ -97,22 +98,10 @@ DRAGONFLY_API_BASE_URL=https://api.dragonfly-app.net \
 
 ### Location policy decided
 
-- [ ] Risk 0007 has a CHOSEN option (A, B, C, or D). Default if
-  undecided is **Option C** (adult-supervised, known-family,
-  internal-test only with explicit consent + Brian's manual review
-  of every captured location pin). Anything other than Option C may
-  require a code change before the AAB is built.
-- [ ] The chosen option label is recorded verbatim in the session
-  journal (private, not in repo), e.g.
-  `"Option B -- coarse / manual location"` or
-  `"Option C -- adult-supervised + known-family + explicit consent (default)"`.
-- [ ] If Option B was chosen,
-  [`docs/risks/0007-google-play-families-location-policy.md`](risks/0007-google-play-families-location-policy.md)
-  is updated to RESOLVED with the choice noted — no silent
-  `ACCESS_COARSE_LOCATION` downgrade.
-- [ ] If Option C was chosen, the session journal records the
-  explicit commitment that promotion past Internal testing re-opens
-  risk 0007 first.
+- [ ] Risk 0007 records Option B for `play-internal`.
+- [ ] `APP_ENV=play-internal npm run config:play-internal` passes.
+- [ ] The generated AAB manifest has no `ACCESS_FINE_LOCATION`.
+- [ ] The device prompt matches approximate/coarse location behavior.
 
 ### AAB build
 

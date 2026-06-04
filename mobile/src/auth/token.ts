@@ -1,10 +1,9 @@
 /**
  * Bearer-token storage for the API client.
  *
- * Phase 6 dev: the token is pasted manually into the Settings tab.
- * Phase 7+ replaces this with the real Firebase Web SDK
- * (signInWithEmailAndPassword for parents, signInWithCustomToken for kids)
- * which writes the same key on token refresh.
+ * Development/preview can paste a bearer token into Settings. Production
+ * writes the same key from either MSAL on the parents web surface or the
+ * Dragonfly kid handoff exchange on native.
  *
  * Web build: SecureStore is no-op on web. Falls back to localStorage so the
  * web preview still works during development.

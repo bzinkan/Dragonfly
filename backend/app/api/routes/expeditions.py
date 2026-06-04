@@ -27,7 +27,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from ulid import ULID
 
-from app.core.auth import CurrentUserDep
+from app.core.auth import CurrentUserDep, resolve_current_user_row
 from app.core.config import Settings, get_request_settings
 from app.db import models
 from app.db.session import DbSessionDep
@@ -84,20 +84,6 @@ class StartResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-async def _resolve_user(session: AsyncSession, current_user_uid: str) -> models.User:
-    user = (
-        await session.execute(
-            select(models.User).where(models.User.firebase_uid == current_user_uid)
-        )
-    ).scalar_one_or_none()
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No Postgres user for this Firebase identity",
-        )
-    return user
-
-
 async def _user_dex_count(session: AsyncSession, user_id: str) -> int:
     """Sum dex_count across the user's memberships (one in Phase 1)."""
     rows = (
@@ -152,7 +138,7 @@ async def list_available(
     session: DbSessionDep,
     settings: Annotated[Settings, Depends(get_request_settings)],
 ) -> AvailableListResponse:
-    user = await _resolve_user(session, current_user.uid)
+    user = await resolve_current_user_row(session, current_user)
     dex_count = await _user_dex_count(session, user.id)
     completed_ids = await _completed_expedition_ids(session, user.id)
     any_progress_ids = await _any_progress_expedition_ids(session, user.id)
@@ -207,7 +193,7 @@ async def list_my_progress(
     session: DbSessionDep,
     settings: Annotated[Settings, Depends(get_request_settings)],
 ) -> MyProgressResponse:
-    user = await _resolve_user(session, current_user.uid)
+    user = await resolve_current_user_row(session, current_user)
 
     rows = (
         await session.execute(
@@ -262,7 +248,7 @@ async def start_expedition(
     session: DbSessionDep,
     settings: Annotated[Settings, Depends(get_request_settings)],
 ) -> StartResponse:
-    user = await _resolve_user(session, current_user.uid)
+    user = await resolve_current_user_row(session, current_user)
     if not current_user.group_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

@@ -2,12 +2,10 @@
  * Microsoft Entra External Identities (MSAL.js) bootstrap + auth-state
  * plumbing for the parents web surface.
  *
- * Phase 7 of the GCP -> Azure migration. The mobile native apps still
- * use Firebase via `firebase.ts` because `@azure/msal-browser` is
- * web-only; native parent sign-in moves to `react-native-msal` in a
- * follow-up PR. Kid sign-in does NOT use MSAL on any platform -- the
- * Phase 6a `/v1/auth/kid-exchange` flow issues a Dragonfly-signed
- * session JWT directly.
+ * Native parent setup is web-first for the W1 pilot because
+ * `@azure/msal-browser` is web-only. Kid sign-in does NOT use MSAL on any
+ * platform: `/v1/auth/kid-exchange` issues a Dragonfly-signed session JWT
+ * directly after the QR handoff.
  *
  * Usage shape mirrors `firebase.ts`:
  *   - `ensureTokenSync()` is called once at app boot; on every MSAL

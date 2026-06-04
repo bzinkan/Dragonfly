@@ -157,7 +157,7 @@ class Settings(BaseSettings):
 
     @property
     def sqlalchemy_database_url(self) -> str:
-        """Build an async SQLAlchemy URL for local Postgres or Cloud SQL sockets."""
+        """Build an async SQLAlchemy URL for local or managed Postgres."""
         user = quote_plus(self.database_user)
         password = quote_plus(self.database_password)
         database = quote_plus(self.database_name)

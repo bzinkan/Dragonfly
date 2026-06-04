@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import desc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import CurrentUserDep
+from app.core.auth import CurrentUser, CurrentUserDep, resolve_current_user_row
 from app.core.config import Settings, get_request_settings
 from app.core.storage import SignedUrlGeneratorDep
 from app.db import models
@@ -61,17 +61,8 @@ class ReviewQueueListResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-async def _resolve_adult_user(session: AsyncSession, current_user_uid: str) -> models.User:
-    user = (
-        await session.execute(
-            select(models.User).where(models.User.firebase_uid == current_user_uid)
-        )
-    ).scalar_one_or_none()
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No Postgres user for this Firebase identity",
-        )
+async def _resolve_adult_user(session: AsyncSession, current_user: CurrentUser) -> models.User:
+    user = await resolve_current_user_row(session, current_user)
     if user.role not in _ADULT_ROLES:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -107,7 +98,7 @@ async def list_pending(
         Literal["pending", "approved", "rejected"], Query(alias="status")
     ] = "pending",
 ) -> ReviewQueueListResponse:
-    user = await _resolve_adult_user(session, current_user.uid)
+    user = await _resolve_adult_user(session, current_user)
     group_ids = await _adult_groups(session, user.id)
     if not group_ids:
         return ReviewQueueListResponse(items=[], next_cursor=None)
@@ -202,7 +193,7 @@ async def approve_review(
     storage: SignedUrlGeneratorDep,
     settings: Annotated[Settings, Depends(get_request_settings)],
 ) -> ResolveResponse:
-    user = await _resolve_adult_user(session, current_user.uid)
+    user = await _resolve_adult_user(session, current_user)
     review = await _load_review_for_resolution(session, user, review_id)
 
     photo = (
@@ -253,7 +244,7 @@ async def reject_review(
     session: DbSessionDep,
     settings: Annotated[Settings, Depends(get_request_settings)],
 ) -> ResolveResponse:
-    user = await _resolve_adult_user(session, current_user.uid)
+    user = await _resolve_adult_user(session, current_user)
     review = await _load_review_for_resolution(session, user, review_id)
 
     photo = (

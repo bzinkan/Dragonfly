@@ -1,117 +1,18 @@
-name: Deploy Cloud Run dev
+name: Deprecated Cloud Run dev deploy
+
+# ADR 0010 moved the API runtime from GCP Cloud Run to Azure Container Apps.
+# This workflow is intentionally manual/no-op so pushes to main cannot recreate
+# the deleted Cloud Run service or run the stale Firebase smoke path.
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "backend/**"
-      - ".github/workflows/deploy-cloud-run-dev.yml"
   workflow_dispatch:
 
-concurrency:
-  group: deploy-cloud-run-dev
-  cancel-in-progress: false
-
-env:
-  PROJECT_ID: dragonflyapp-495423
-  REGION: us-central1
-  ARTIFACT_REPOSITORY: dragonfly
-  SERVICE: dragonfly-api
-  RUNTIME_SERVICE_ACCOUNT: dragonfly-api-dev@dragonflyapp-495423.iam.gserviceaccount.com
-  DEPLOY_SERVICE_ACCOUNT: github-deploy-dev@dragonflyapp-495423.iam.gserviceaccount.com
-  CLOUDBUILD_SOURCE_BUCKET: dragonfly-build-source-dev-dragonflyapp-495423
-
 jobs:
-  deploy:
-    name: Build, deploy, smoke
+  disabled:
+    name: Cloud Run deploy disabled by ADR 0010
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-
-      - uses: google-github-actions/setup-gcloud@v2
-
-      - name: Build image
+      - name: Explain
         run: |
-          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}/dragonfly-api:${GITHUB_SHA}"
-          echo "IMAGE=${IMAGE}" >> "${GITHUB_ENV}"
-          BUILD_ID="$(gcloud builds submit backend \
-            --tag "${IMAGE}" \
-            --gcs-source-staging-dir "gs://${CLOUDBUILD_SOURCE_BUCKET}/source" \
-            --suppress-logs \
-            --async \
-            --format='value(id)' \
-            --project "${PROJECT_ID}")"
-          echo "Cloud Build ${BUILD_ID}"
-          for attempt in {1..120}; do
-            STATUS="$(gcloud builds describe "${BUILD_ID}" \
-              --project "${PROJECT_ID}" \
-              --format='value(status)')"
-            case "${STATUS}" in
-              SUCCESS)
-                exit 0
-                ;;
-              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
-                echo "Cloud Build ${BUILD_ID} ended with ${STATUS}"
-                exit 1
-                ;;
-            esac
-            sleep 5
-          done
-          echo "Cloud Build ${BUILD_ID} did not finish before timeout"
-          exit 1
-
-      - name: Deploy Cloud Run
-        run: |
-          gcloud run deploy "${SERVICE}" \
-            --image "${IMAGE}" \
-            --service-account "${RUNTIME_SERVICE_ACCOUNT}" \
-            --region "${REGION}" \
-            --project "${PROJECT_ID}" \
-            --quiet
-          gcloud run services add-iam-policy-binding "${SERVICE}" \
-            --member "serviceAccount:${DEPLOY_SERVICE_ACCOUNT}" \
-            --role roles/run.invoker \
-            --region "${REGION}" \
-            --project "${PROJECT_ID}" \
-            --quiet
-
-      - name: Tag image as :latest
-        # Keeps the floating :latest tag pointed at the most recent successful
-        # deploy so Terraform's api_image="...:latest" reference always resolves
-        # to a real image. The SHA-tagged image is the immutable truth; :latest
-        # is a convenience pointer for dev. Prod should pin a SHA in tfvars.
-        run: |
-          gcloud artifacts docker tags add \
-            "${IMAGE}" \
-            "${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}/dragonfly-api:latest" \
-            --quiet --project "${PROJECT_ID}"
-
-      - name: Smoke probes
-        run: |
-          URL="$(gcloud run services describe "${SERVICE}" \
-            --region "${REGION}" \
-            --project "${PROJECT_ID}" \
-            --format='value(status.url)')"
-          TOKEN="$(gcloud auth print-identity-token \
-            --impersonate-service-account="${DEPLOY_SERVICE_ACCOUNT}" \
-            --audiences="${URL}")"
-          curl --fail --silent --show-error -H "Authorization: Bearer ${TOKEN}" "${URL}/health"
-          curl --fail --silent --show-error -H "Authorization: Bearer ${TOKEN}" "${URL}/ready"
-          curl --fail --silent --show-error -H "Authorization: Bearer ${TOKEN}" "${URL}/v1/meta"
-
-      - name: Phase 4 end-to-end smoke
-        # Runs the full Firebase signUp -> parent-signup -> groups -> kids ->
-        # /v1/me round-trip via scripts/smoke_phase4.py. Stdlib-only Python,
-        # no extra deps to install. Hits api.dragonfly-app.net by default.
-        # Test users (smoke+<ts>@dragonfly-test.invalid) accumulate in Firebase
-        # + Postgres on every run; periodic cleanup is a follow-up.
-        run: python scripts/smoke_phase4.py
+          echo "Cloud Run deployment is deprecated."
+          echo "Use deploy-azure-api-dev.yml for the active API runtime."

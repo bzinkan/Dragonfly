@@ -6,7 +6,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, TextInput } from "react-nativ
 
 import DesktopContainer from "@/components/DesktopContainer";
 import { Text, View } from "@/components/Themed";
-import { getMe } from "@/src/api/auth";
+import { getMe, requestAccountDeletion } from "@/src/api/auth";
 import { ApiError } from "@/src/api/client";
 import { getFirebaseAuth } from "@/src/auth/firebase";
 import {
@@ -20,6 +20,8 @@ export default function SettingsScreen() {
   const [tokenSaved, setTokenSaved] = useState<boolean | null>(null);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const devTokenShortcutEnabled =
+    env.appEnv === "development" || env.appEnv === "preview";
 
   const me = useQuery({
     queryKey: ["me"],
@@ -39,8 +41,9 @@ export default function SettingsScreen() {
   async function handleSignOut() {
     setBusy(true);
     try {
-      await signOut(getFirebaseAuth());
-      // onIdTokenChanged listener clears the bearer token; mirror locally.
+      if (devTokenShortcutEnabled) {
+        await signOut(getFirebaseAuth());
+      }
       await clearBearerToken();
       setTokenSaved(false);
       void me.refetch();
@@ -77,6 +80,41 @@ export default function SettingsScreen() {
     }
   }
 
+  function handleRequestDeletion() {
+    Alert.alert(
+      "Request account deletion",
+      "This signs this account out and flags it for deletion follow-up.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Request deletion",
+          style: "destructive",
+          onPress: () => {
+            void submitDeletionRequest();
+          },
+        },
+      ],
+    );
+  }
+
+  async function submitDeletionRequest() {
+    setBusy(true);
+    try {
+      await requestAccountDeletion();
+      await clearBearerToken();
+      setTokenSaved(false);
+      void me.refetch();
+      Alert.alert("Deletion requested", "This account has been signed out.");
+    } catch (err: unknown) {
+      Alert.alert(
+        "Deletion request failed",
+        err instanceof Error ? err.message : String(err),
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const signedIn = me.data != null;
 
   return (
@@ -102,6 +140,13 @@ export default function SettingsScreen() {
               disabled={busy}
             >
               <Text style={styles.buttonText}>Sign out</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.button, styles.buttonDanger, busy && styles.buttonDisabled]}
+              onPress={handleRequestDeletion}
+              disabled={busy}
+            >
+              <Text style={styles.buttonText}>Request account deletion</Text>
             </Pressable>
           </>
         ) : (
@@ -157,46 +202,57 @@ export default function SettingsScreen() {
           darkColor="rgba(255,255,255,0.1)"
         />
 
-        <Text style={styles.label}>Auth (dev shortcut)</Text>
-        <Text style={styles.help}>
-          Paste a Firebase ID token to skip the sign-in flow. Useful for
-          smoke-testing with seeded users -- regular users should use the
-          sign-in screen above.
-        </Text>
-        <Text style={styles.value}>
-          status:{" "}
-          {tokenSaved === null
-            ? "loading…"
-            : tokenSaved
-              ? "● token present"
-              : "○ no token"}
-        </Text>
-        <TextInput
-          style={styles.input}
-          value={draft}
-          onChangeText={setDraft}
-          placeholder="paste ID token here"
-          placeholderTextColor="#999"
-          autoCapitalize="none"
-          autoCorrect={false}
-          multiline
-        />
-        <View style={styles.row}>
-          <Pressable
-            style={[styles.button, styles.buttonPrimary, busy && styles.buttonDisabled]}
-            onPress={handleSaveDevToken}
-            disabled={busy || draft.trim().length === 0}
-          >
-            <Text style={styles.buttonText}>Save token</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.button, styles.buttonGhost, busy && styles.buttonDisabled]}
-            onPress={handleClearDevToken}
-            disabled={busy || tokenSaved !== true}
-          >
-            <Text style={styles.buttonText}>Clear</Text>
-          </Pressable>
-        </View>
+        {devTokenShortcutEnabled && (
+          <>
+            <Text style={styles.label}>Auth (dev shortcut)</Text>
+            <Text style={styles.help}>
+              Paste a development bearer token to skip the sign-in flow.
+              Regular users should use the sign-in screen above.
+            </Text>
+            <Text style={styles.value}>
+              status:{" "}
+              {tokenSaved === null
+                ? "loading…"
+                : tokenSaved
+                  ? "● token present"
+                  : "○ no token"}
+            </Text>
+            <TextInput
+              style={styles.input}
+              value={draft}
+              onChangeText={setDraft}
+              placeholder="paste bearer token here"
+              placeholderTextColor="#999"
+              autoCapitalize="none"
+              autoCorrect={false}
+              multiline
+            />
+            <View style={styles.row}>
+              <Pressable
+                style={[
+                  styles.button,
+                  styles.buttonPrimary,
+                  busy && styles.buttonDisabled,
+                ]}
+                onPress={handleSaveDevToken}
+                disabled={busy || draft.trim().length === 0}
+              >
+                <Text style={styles.buttonText}>Save token</Text>
+              </Pressable>
+              <Pressable
+                style={[
+                  styles.button,
+                  styles.buttonGhost,
+                  busy && styles.buttonDisabled,
+                ]}
+                onPress={handleClearDevToken}
+                disabled={busy || tokenSaved !== true}
+              >
+                <Text style={styles.buttonText}>Clear</Text>
+              </Pressable>
+            </View>
+          </>
+        )}
       </ScrollView>
     </DesktopContainer>
   );
@@ -263,6 +319,9 @@ const styles = StyleSheet.create({
   buttonGhost: {
     borderColor: "#888",
     borderWidth: StyleSheet.hairlineWidth,
+  },
+  buttonDanger: {
+    backgroundColor: "#991b1b",
   },
   buttonDisabled: {
     opacity: 0.4,

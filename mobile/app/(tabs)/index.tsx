@@ -43,7 +43,7 @@ export default function HomeScreen() {
           </Text>
           <Text style={styles.body}>
             {isUnauthed
-              ? "Open Settings and paste a Firebase ID token, then come back."
+              ? "Open Settings and sign in, then come back."
               : err.message}
           </Text>
           <Pressable style={[styles.button, styles.buttonGhost]} onPress={onRefresh}>

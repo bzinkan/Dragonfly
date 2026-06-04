@@ -6,7 +6,9 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "config:play-internal": "node ./scripts/verify-play-internal-config.mjs"
   },
   "dependencies": {
     "@azure/msal-browser": "^5.11.0",

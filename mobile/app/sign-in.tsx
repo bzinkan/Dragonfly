@@ -5,16 +5,26 @@ import {
   signInWithEmailAndPassword,
 } from "firebase/auth";
 import { useState } from "react";
-import { ActivityIndicator, Platform, Pressable, StyleSheet, TextInput } from "react-native";
+import {
+  ActivityIndicator,
+  Linking,
+  Platform,
+  Pressable,
+  StyleSheet,
+  TextInput,
+} from "react-native";
 
 import DesktopContainer from "@/components/DesktopContainer";
 import { Text, View } from "@/components/Themed";
 import { parentSignup } from "@/src/api/auth";
 import { getFirebaseAuth } from "@/src/auth/firebase";
 import { signIn as msalSignIn } from "@/src/auth/msal";
+import { env } from "@/src/config/env";
 
 type Mode = "sign-in" | "sign-up";
 const IS_WEB = Platform.OS === "web";
+const NATIVE_FIREBASE_PARENT_ENABLED =
+  !IS_WEB && (env.appEnv === "development" || env.appEnv === "preview");
 
 export default function SignInScreen() {
   const [mode, setMode] = useState<Mode>("sign-in");
@@ -97,6 +107,39 @@ export default function SignInScreen() {
     );
   }
 
+  if (!NATIVE_FIREBASE_PARENT_ENABLED) {
+    return (
+      <DesktopContainer>
+        <Stack.Screen options={{ title: "Sign in" }} />
+        <View style={styles.container}>
+          <Text style={styles.title}>Sign in</Text>
+          <Text style={styles.subtitle}>
+            Parent and teacher setup happens on the parents web app. Kids use
+            the QR code shown by their adult.
+          </Text>
+
+          {error && <Text style={styles.error}>{error}</Text>}
+
+          <Pressable
+            style={[styles.button, styles.buttonPrimary]}
+            onPress={() => router.push("/kid-handoff")}
+          >
+            <Text style={styles.buttonText}>Scan kid QR</Text>
+          </Pressable>
+
+          <Pressable
+            style={[styles.button, styles.buttonGhost]}
+            onPress={() => {
+              void Linking.openURL("https://parents.dragonfly-app.net");
+            }}
+          >
+            <Text style={styles.buttonText}>Open parent setup</Text>
+          </Pressable>
+        </View>
+      </DesktopContainer>
+    );
+  }
+
   return (
     <DesktopContainer>
       <Stack.Screen
@@ -107,8 +150,8 @@ export default function SignInScreen() {
           {mode === "sign-in" ? "Welcome back" : "Create a parent account"}
         </Text>
         <Text style={styles.subtitle}>
-          Dragonfly accounts are for parents and teachers. Kids get a join
-          code from you and never enter an email.
+          Development parent sign-in uses the legacy Firebase path. Play
+          Internal and production use the parents web app plus kid QR handoff.
         </Text>
 
         {mode === "sign-up" && (
@@ -166,6 +209,13 @@ export default function SignInScreen() {
               {mode === "sign-in" ? "Sign in" : "Create account"}
             </Text>
           )}
+        </Pressable>
+
+        <Pressable
+          style={[styles.button, styles.buttonGhost]}
+          onPress={() => router.push("/kid-handoff")}
+        >
+          <Text style={styles.buttonText}>Kid: scan handoff QR</Text>
         </Pressable>
 
         <Pressable
@@ -235,6 +285,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   buttonPrimary: { backgroundColor: "#2f6feb" },
+  buttonGhost: {
+    borderColor: "#888",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
   buttonDisabled: { opacity: 0.4 },
   buttonText: { fontSize: 14, color: "#fff", fontWeight: "500" },
   linkButton: { marginTop: 16, alignItems: "center" },

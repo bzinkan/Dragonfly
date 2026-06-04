@@ -75,30 +75,49 @@ def _wire_session(
     *,
     species_row: models.RarityCache | None,
     region_seen: bool = True,
+    parent_species_row: models.RarityCache | None = None,
+    parent_region_seen: bool = False,
 ) -> None:
-    """Stub the species-by-(region, taxon) lookup, the region-existence
-    fallback, and (when applicable) the rarest_tier UPDATE."""
+    """Stub rarity lookups and (when applicable) the rarest_tier UPDATE."""
     species_result = MagicMock()
     species_result.scalar_one_or_none = MagicMock(return_value=species_row)
 
     region_result = MagicMock()
     region_result.scalar_one_or_none = MagicMock(return_value="dnp1" if region_seen else None)
 
+    parent_species_result = MagicMock()
+    parent_species_result.scalar_one_or_none = MagicMock(return_value=parent_species_row)
+
+    parent_region_result = MagicMock()
+    parent_region_result.scalar_one_or_none = MagicMock(
+        return_value="dnp" if parent_region_seen else None
+    )
+
     update_result = MagicMock()
 
     side_effects: list[object] = [species_result]
     if species_row is None:
         side_effects.append(region_result)
-    side_effects.append(update_result)
+        if not region_seen:
+            side_effects.append(parent_species_result)
+            if parent_species_row is None:
+                side_effects.append(parent_region_result)
+    if (
+        species_row is not None
+        or region_seen
+        or parent_species_row is not None
+        or parent_region_seen
+    ):
+        side_effects.append(update_result)
 
     fake_session.execute = AsyncMock(side_effect=side_effects)
     fake_session.commit = AsyncMock()
 
 
-def _rarity_row(tier: str) -> models.RarityCache:
+def _rarity_row(tier: str, *, region: str = "dnp1") -> models.RarityCache:
     return models.RarityCache(
-        id=f"dnp1:{12345}",
-        region_geohash="dnp1",
+        id=f"{region}:{12345}",
+        region_geohash=region,
         taxon_id=12345,
         tier=tier,
         observation_count=1,
@@ -184,3 +203,25 @@ async def test_cold_start_region_no_rewards(fake_session: AsyncMock) -> None:
     result = await handler.handle(_ctx(fake_session))
     assert result.rewards == []
     assert result.state["tier"] is None
+
+
+async def test_low_data_child_region_falls_back_to_parent_geohash3(
+    fake_session: AsyncMock,
+) -> None:
+    """Scenario 4: low-data geohash4 falls back to parent geohash3."""
+    _wire_session(
+        fake_session,
+        species_row=None,
+        region_seen=False,
+        parent_species_row=_rarity_row("rare", region="dnp"),
+    )
+    handler = RarityHandler()
+
+    result = await handler.handle(_ctx(fake_session))
+
+    assert len(result.rewards) == 1
+    reward = result.rewards[0]
+    assert reward.type == "rarity_tier"
+    assert reward.weight == 40
+    assert reward.payload == {"tier": "rare", "region": "dnp"}
+    assert result.state["tier"] == "rare"

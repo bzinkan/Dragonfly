@@ -1,46 +1,48 @@
 # Dragonfly
 
-Citizen-science field app for kids ages 9-12. Every observation is real
-science via iNaturalist, fills a personal Dex, contributes to expeditions, and
-earns standing in an invite-only class or family group.
+Citizen-science field app for kids ages 9-12. Kids log real outdoor
+observations, fill a personal Dex, complete expeditions, and eventually
+contribute to iNaturalist through an app-owned project account.
 
 ## Repo Layout
 
-Exists today:
-
 ```text
-backend/     FastAPI app. Runs locally via uvicorn; Mangum handler kept for
-             the legacy AWS path until Cloud Run is fully production.
-infra-gcp/   Terraform for Cloud Run, Cloud SQL, GCS, Artifact Registry, IAM,
-             Workload Identity Federation, monitoring, and DNS.
-infra/       Legacy AWS CDK stacks. Kept only until the GCP path is serving
-             production traffic.
-docs/        Architecture, data model, ingest rules, ADRs, and runbooks.
-internal/    Internal-only tooling such as future AI-agent experiments.
-AGENTS.md    Project plan, invariants, and guardrails for coding agents.
-```
-
-Planned, not yet present:
-
-```text
-mobile/      Expo app for iOS, Android, and web.
-content/     Expedition JSON. Source of truth; Postgres is a materialized view.
-scripts/     Content sync, replay, seed, validation, and operational helpers.
+backend/      FastAPI app, Alembic migrations, admin jobs, async-worker code.
+mobile/       Expo app for Android, iOS, and parents web.
+content/      Expedition and Sanctuary JSON. Source of truth for authored content.
+scripts/      Smoke tests, content validation/sync, schema generation, helper tools.
+infra-azure/  Azure setup/decommission scripts and manifest.
+infra-gcp/    Legacy GCP Terraform kept for historical reference/residual DNS notes.
+infra/        Legacy AWS CDK reference path.
+docs/         Architecture, data model, ADRs, risks, runbooks, pilot checklists.
+internal/     Internal-only tooling. Never import into kid-facing backend code.
+AGENTS.md     Guardrails and current risk closure plan for coding agents.
 ```
 
 ## Current Direction
 
-Active migration target is **GCP / Cloud Run** for the API runtime. The GCP
-target architecture is documented in
-[`docs/adr/0005-gcp-target-architecture.md`](docs/adr/0005-gcp-target-architecture.md).
-Postgres replaces the old DynamoDB data model. Ingest pipelines are explicit
-and replayable per [`docs/adr/0006-ingest-pipelines.md`](docs/adr/0006-ingest-pipelines.md).
-AI agent tooling is internal-only per
-[`docs/adr/0007-internal-ai-agent-tooling.md`](docs/adr/0007-internal-ai-agent-tooling.md).
+The active runtime target is **Azure**, per
+[`docs/adr/0010-azure-target-architecture.md`](docs/adr/0010-azure-target-architecture.md).
+ADR 0010 supersedes the earlier GCP target ADRs 0005, 0008, and 0009.
+
+Active Azure shape:
+
+- API: Azure Container Apps running `backend/Dockerfile`.
+- Database: Azure Database for PostgreSQL Flexible Server.
+- Photos: Azure Blob Storage with SAS URLs.
+- Adult auth: Microsoft Entra External Identities.
+- Kid auth: Dragonfly-signed RS256 handoff/session JWTs.
+- Moderation provider: Azure AI Content Safety, still async and off the hot path.
+- Frontend: parents web on Azure Static Web Apps; apex/www currently remain on Firebase Hosting per ADR 0010 migration notes.
+
+Residual GCP resources are historical or intentionally retained only where ADR
+0010 says so. Do not add new Cloud Run, Cloud SQL, Cloud Tasks, Eventarc, Cloud
+Vision, or Firebase Auth implementation unless a new ADR explicitly reopens the
+platform decision.
 
 ## Getting Started
 
-Prereqs: Python 3.12, `uv`, Docker, and Terraform for GCP infra work.
+Prereqs: Python 3.12, `uv`, Docker, Node 20, and npm.
 
 ```bash
 make install
@@ -60,34 +62,41 @@ docker run --rm -p 8080:8080 -e DRAGONFLY_ENV=local dragonfly-api
 curl localhost:8080/health
 ```
 
-Terraform dev plan:
+Mobile checks:
 
 ```bash
-make terraform-plan-dev
+cd mobile
+npm ci
+npm run typecheck
+APP_ENV=play-internal npm run config:play-internal
 ```
 
-Legacy AWS CDK remains available only for historical/reference work:
+Azure smoke:
 
 ```bash
-cd infra
-export DRAGONFLY_ENV=dev
-uv run cdk bootstrap
-uv run cdk deploy --all
+curl -fsS https://api.dragonfly-app.net/health
+curl -fsS https://api.dragonfly-app.net/ready
+curl -fsS https://api.dragonfly-app.net/.well-known/dragonfly-kid-jwks.json
+
+# Authenticated parent/kid smoke requires an operator-provided Entra token.
+DRAGONFLY_SMOKE_ENTRA_BEARER="<access-token>" \
+  python scripts/smoke_azure_parent_kid.py
 ```
 
 ## Where To Look
 
-- **Agent instructions and current phase:** `AGENTS.md`
+- **Agent instructions and guardrails:** `AGENTS.md`
 - **Architecture:** `docs/architecture.md`
 - **Postgres model:** `docs/data-model.md`
-- **Ingest/replay rules:** `docs/ingest.md`
-- **Rewards and dispatcher:** `docs/dispatcher.md`
+- **Dispatcher/rewards:** `docs/dispatcher.md`
 - **Mobile constraints:** `docs/mobile.md`
-- **Sanctuary (Phase 2 design):** `docs/sanctuary.md`
+- **Sanctuary:** `docs/sanctuary.md`
+- **Runbook:** `docs/runbook.md`
+- **Risks:** `docs/risks/`
 - **Decisions:** `docs/adr/`
 
 ## Current Phase
 
-Phase 1 MVP, targeting closed beta. The current implementation focus is the
-production foundation: Cloud Run, Cloud SQL/Postgres, Terraform, ingest
-contracts, and deterministic API/runtime scaffolding before product features.
+Code is in closed-beta polish. The immediate priority is the W1 Android
+Internal Testing pilot: Entra parent setup via web, native kid QR handoff,
+coarse-location manifest, Azure deployment hygiene, and docs/risk closure.

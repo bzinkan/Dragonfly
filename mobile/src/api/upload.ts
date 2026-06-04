@@ -1,8 +1,8 @@
 /**
  * PUT a local file to a V4 signed URL with a content-type binding.
  *
- * GCS rejects PUTs whose `Content-Type` header doesn't match the value
- * baked into the signed URL when it was generated. Since the presign
+ * Object storage rejects PUTs whose `Content-Type` header doesn't match the
+ * value baked into the signed URL when it was generated. Since the presign
  * endpoint always uses `image/jpeg`, that's what we send here.
  */
 export async function putPhotoToSignedUrl(

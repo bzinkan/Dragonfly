@@ -1,127 +1,87 @@
 # Dragonfly Privacy Policy (DRAFT)
 
-> **STATUS: DRAFT, NOT FOR PUBLICATION.** This file is a structural starting
-> point, not legal copy. Before going live as `https://dragonfly-app.net/privacy`
-> it must be reviewed by a lawyer with COPPA / kids-app experience. The
-> sections below capture what Dragonfly actually does with data, in plain
-> English. The lawyer's job is to translate that into the contractual /
-> regulatory language that App Store + Play Store + COPPA require.
+> **STATUS: DRAFT, NOT FOR PUBLICATION.** This captures the Azure-era product
+> facts. Counsel must review the final text before closed/public store release.
 
-Last updated: 2026-05-10 (draft)
-
----
+Last updated: 2026-06-04 (draft)
 
 ## What Dragonfly is
 
 Dragonfly is a citizen-science field app for kids ages 9-12. Kids photograph
-plants and animals they find outdoors. Each photo + the location it was taken
-becomes a scientific observation that contributes to iNaturalist, a global
-species database used by researchers.
+real outdoor organisms, build a personal Dex, complete expeditions, and may
+eventually contribute approved observations to iNaturalist through a
+Dragonfly-owned project account.
 
-A parent or teacher creates the kid's account. The kid never types an email
-address, never sees ads, and never communicates with anyone outside their
-family/classroom group.
+A parent or teacher creates the kid account. Kids do not enter email addresses,
+do not see ads, and do not communicate through public chat, direct messages, or
+kid-to-kid free text.
 
 ## What we collect from a kid account
 
-- **A photo of an organism (plant, animal, fungus, etc.).** Stored encrypted
-  at rest in Google Cloud Storage. Photos that pass automated moderation are
-  retained as part of the observation record. Photos that fail moderation
-  (Cloud Vision SafeSearch flags adult / violence / racy / medical content) are
-  moved to a teacher review queue and auto-deleted after 90 days if not
-  approved (see [moderation.md](moderation.md)).
-- **The location the photo was taken**, rounded to roughly city-block precision
-  for caching purposes. Used to assemble the regional rarity context that makes
-  the observation scientifically meaningful.
-- **The species identification** (chosen by the kid, optionally suggested by
-  iNaturalist's computer vision).
-- **A timestamp.**
-- **The kid's display name and group affiliation.** Display name is set by the
-  parent/teacher; the kid never types their full name.
+- A photo of an organism, stored privately in Azure Blob Storage.
+- Observation location. The Play Internal pilot uses coarse location.
+- Species identification chosen by the kid, optionally suggested by iNaturalist.
+- Timestamp, display name, age band, group membership, Dex/reward/Sanctuary
+  progress.
 
-We do not collect:
+We do not collect kid email, phone number, last name, exact birth date,
+advertising IDs, contacts, microphone, calendar, SMS, or behavioral ad data.
 
-- Email addresses for kid accounts (kids authenticate via Firebase custom
-  tokens issued by their parent's app)
-- Phone numbers
-- Browser cookies, advertising IDs, or any tracking identifiers
-- Voice recordings or microphone access
-- Contacts or calendar
-- Any data about other apps on the device
+## What we collect from a parent or teacher account
 
-## What we collect from a parent/teacher account
+- Email address for sign-in through Microsoft Entra External Identities.
+- Display name, owned groups, provisioned kid accounts, consent records.
+- Standard service logs for debugging and security.
 
-- An email address (Firebase Authentication; used only for sign-in)
-- A display name
-- The groups they own/teach
-- Standard service operational data (request logs, error reports)
+## Where data is stored
+
+The active backend uses Azure:
+
+- Azure Database for PostgreSQL Flexible Server for structured data.
+- Azure Blob Storage for photos.
+- Azure Container Apps for the API runtime.
+- Azure Key Vault for secrets.
+- Azure Monitor / Log Analytics for operational logs.
+
+Data is encrypted in transit and at rest. The landing site may still be served
+from Firebase Hosting while ADR 0010 keeps apex/www hosting and DNS split during
+the migration.
 
 ## What we do with the data
 
-- **Scientific contribution.** Observations (photo + location + species) are
-  submitted to iNaturalist via Dragonfly's project account. Submissions become
-  part of the public iNaturalist record under the project's name. Per
-  iNaturalist's own privacy posture, location data may be obfuscated for
-  threatened species. Kid display names are not transmitted to iNaturalist.
-- **Moderation.** Every photo is screened by Cloud Vision SafeSearch before
-  being shown to other group members or submitted to iNaturalist (see
-  [`docs/moderation.md`](moderation.md) and [ADR 0009](adr/0009-moderation-provider-cloud-vision-safesearch.md)).
-- **Reward and feedback.** The dispatcher computes "first find" / "rare in your
-  region" / "expedition step complete" badges and shows them in the app. All
-  reward computation happens server-side from data the app already has.
-- **Operational logs.** Cloud Logging captures structured request logs for
-  debugging. Logs are retained for 30 days. Photo bytes are never logged.
+- **App functionality.** Show observations, Dex entries, expedition progress,
+  rewards, review queue, and Sanctuary state.
+- **Moderation.** Photos are reviewed asynchronously. The closed-beta target is
+  Azure AI Content Safety; W1 Internal Testing may run with noop moderation and
+  adult-supervised manual review only.
+- **Scientific contribution.** iNaturalist public submission is off for W1
+  Internal Testing. For closed beta and later, approved observations may be
+  submitted through the Dragonfly project account, not under the kid's name.
+- **Operations.** Structured logs help debug failures. Photo bytes are never
+  logged.
 
-## What we do NOT do with the data
+## What we do not do
 
-- We do not sell, rent, or share data with third-party advertisers
-- We do not use kid data to train AI models (per ADR 0007: no kid-facing
-  runtime LLM, no LLM training on kid input)
-- We do not share data with anyone outside the kid's group except where
-  iNaturalist submissions are inherent to the product purpose
-- We do not send marketing emails or notifications
-- We do not engage in profiling, ad targeting, or tracking-based personalization
-- We do not transfer data outside the United States
+- No selling, renting, advertising, ad targeting, or profiling.
+- No third-party ad SDKs.
+- No kid data used to train AI models.
+- No kid-facing runtime LLM or multi-agent calls.
+- No marketing emails or push notifications in Phase 1.
 
-## Children's Online Privacy Protection Act (COPPA)
+## COPPA / parent rights
 
-Dragonfly is designed for users ages 9-12. We comply with COPPA via:
+Parents can request access, export, or deletion of their own account and linked
+kid accounts. The app includes an account-deletion request button in Settings.
+The immediate API effect is `users.disabled_at`; full deletion of linked child
+data, photos, and future iNaturalist contributions remains an operator follow-up
+until legal copy and retention policy are finalized.
 
-- **Verifiable parent consent.** A parent creates the kid account and consents
-  to data collection at signup. The consent flow is plain English and lists
-  every data category collected.
-- **Durable audit record.** Each consent event is persisted to our own
-  database with a unique receipt id, the parent's email address, the
-  policy version the parent agreed to, and the server-side timestamp.
-  Receipts are retained for the lifetime of the linked accounts and
-  are available on parent request. We do NOT log raw IP addresses or
-  raw User-Agent strings as part of the consent record.
-- **Data minimization.** We collect only what's necessary for the scientific
-  observation and the celebration sequence. No analytics, no advertising IDs.
-- **Parent access and deletion.** Parents can view, export, and delete their
-  kid's data at any time via the parent app. Deletion is immediate and removes
-  the data from our database; the iNaturalist contribution is requested for
-  removal at the same time (subject to iNaturalist's own retention policy).
-- **No third-party trackers.** Sentry (error reporting) is the only third-party
-  SDK and is configured with `sendDefaultPii: false` (no IP, no user identifier).
-- **Annual review.** This policy is reviewed annually by counsel.
-
-## Account deletion
-
-Both parents and teachers can delete their account (and all associated kid
-accounts) from Settings → Delete account. Deletion is immediate at the
-application level; the underlying database rows are purged within 24 hours and
-all photos are removed from Cloud Storage within 7 days. iNaturalist
-contributions submitted under the project account are requested for deletion
-via iNaturalist's standard process.
+Consent events are persisted in `parent_consent_records` with a receipt id,
+parent email, policy version, and server timestamp. Raw IP and User-Agent are
+not stored as consent fields.
 
 ## Contact
 
-For privacy questions or to exercise the rights above, email
-**privacy@dragonfly-app.net**. We respond within 7 days.
+Privacy requests: **privacy@dragonfly-app.net**
 
-## Changes to this policy
-
-Material changes will be communicated via the app's Settings tab AND via email
-to the parent/teacher account on file. Continued use after a material change
-constitutes acceptance.
+Support: **support@dragonfly-app.net**
