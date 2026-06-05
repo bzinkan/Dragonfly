@@ -63,8 +63,11 @@ def _build_client(
     fake_session: AsyncMock,
     *,
     storage: _StubStorage | None = None,
+    inat_submit_enabled: bool = False,
 ) -> Iterator[TestClient]:
-    app = create_app(Settings(env="local", app_version="test"))
+    app = create_app(
+        Settings(env="local", app_version="test", inat_submit_enabled=inat_submit_enabled)
+    )
     app.state.signed_url_generator = storage if storage is not None else _StubStorage()
 
     async def override() -> AsyncIterator[AsyncSession]:
@@ -230,6 +233,7 @@ def _wire_resolve(
     photo: models.Photo | None,
     observation: models.Observation | None = None,
     approve_outbox: bool = False,
+    approve_obs_only: bool = False,
 ) -> None:
     """Sequence the session.execute side_effects for the approve / reject flows.
 
@@ -269,8 +273,13 @@ def _wire_resolve(
 
     side_effects: list[Any] = [user_result, review_result, membership_result, photo_result]
     if approve_outbox:
-        # Approve flow: select(Observation) + update(InatSubmitOutbox).
+        # Approve flow with inat_submit_enabled=True: select(Observation)
+        # + update(InatSubmitOutbox).
         side_effects.extend([obs_result, outbox_update_result])
+    elif approve_obs_only:
+        # Approve flow with Option B inat_submit_enabled=False: only
+        # the select(Observation) lookup; no outbox write.
+        side_effects.append(obs_result)
     elif observation is not None:
         # Reject flow: select(Observation) + update(Membership).
         side_effects.extend([obs_result, update_result])
@@ -338,9 +347,14 @@ def test_approve_409_when_already_resolved(
 def test_approve_happy_path_moves_photo_back_and_marks_review(
     monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
 ) -> None:
-    """Happy path now also flips observation.moderation_status='clean',
-    inserts an InatSubmitOutbox row, and attempts a Service Bus enqueue.
-    Mock the enqueue helper so the test does not touch Azure."""
+    """Happy path (with `inat_submit_enabled=True`): flips
+    observation.moderation_status='clean', inserts an InatSubmitOutbox
+    row, and attempts a Service Bus enqueue. Mock the enqueue helper
+    so the test does not touch Azure.
+
+    Option B default (`inat_submit_enabled=False`) is covered by the
+    separate ``test_approve_happy_path_option_b_skips_outbox`` test
+    below."""
     from app.inat.enqueue import InatEnqueueResult
 
     _stub_token_verifier(monkeypatch)
@@ -368,7 +382,7 @@ def test_approve_happy_path_moves_photo_back_and_marks_review(
     fake_session.add = MagicMock()
     storage = _StubStorage()
 
-    for client in _build_client(fake_session, storage=storage):
+    for client in _build_client(fake_session, storage=storage, inat_submit_enabled=True):
         response = client.post(
             f"/v1/review-queue/{_REVIEW_ID}/approve",
             headers={"Authorization": "Bearer fake"},
@@ -406,6 +420,64 @@ def test_approve_happy_path_moves_photo_back_and_marks_review(
     # Two commits: the in-transaction outbox commit + the post-enqueue
     # status update commit.
     assert fake_session.commit.await_count == 2
+
+
+def test_approve_happy_path_option_b_skips_outbox(
+    monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
+) -> None:
+    """Option B default (`inat_submit_enabled=False`): the approve handler
+    still flips observation.moderation_status='clean', but writes NO
+    `inat_submit_outbox` row and attempts NO Service Bus enqueue. The
+    observation stays inside Dragonfly until the kid claims it via the
+    Phase 3 age-13 flow."""
+    _stub_token_verifier(monkeypatch)
+
+    enqueue_calls: list[str] = []
+
+    async def fake_enqueue(observation_id: str, *, settings: object) -> object:
+        enqueue_calls.append(observation_id)
+        # Should never be called -- the handler short-circuits before it.
+        raise AssertionError("enqueue should not be invoked under Option B default")
+
+    monkeypatch.setattr("app.api.routes.review_queue.enqueue_inat_submit", fake_enqueue)
+
+    review = _review_row()
+    photo = _photo_row()
+    obs = _observation_row()
+    _wire_resolve(
+        fake_session,
+        user=_adult_user(),
+        review=review,
+        membership_present=True,
+        photo=photo,
+        observation=obs,
+        approve_obs_only=True,
+    )
+    fake_session.add = MagicMock()
+    storage = _StubStorage()
+
+    # `inat_submit_enabled` defaults to False; build_client mirrors that.
+    for client in _build_client(fake_session, storage=storage):
+        response = client.post(
+            f"/v1/review-queue/{_REVIEW_ID}/approve",
+            headers={"Authorization": "Bearer fake"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "approved"
+        assert body["photo_status"] == "clean"
+
+    # Photo + review state still flipped.
+    assert photo.status == "clean"
+    assert review.status == "approved"
+    # Observation flipped but NO outbox row added.
+    assert obs.moderation_status == "clean"
+    fake_session.add.assert_not_called()
+    # Enqueue never attempted.
+    assert enqueue_calls == []
+    # One commit only: the in-transaction approve commit (no outbox-status
+    # update commit because no enqueue was attempted).
+    assert fake_session.commit.await_count == 1
 
 
 # ---------------------------------------------------------------------------

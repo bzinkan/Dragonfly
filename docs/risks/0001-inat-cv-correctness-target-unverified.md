@@ -1,9 +1,37 @@
 # Risk 0001: iNat CV correctness target unverified
 
-- **Status:** Open
+- **Status:** Scoped down via Option B (2026-06-04)
 - **Date filed:** 2026-05-10
 - **Source:** `AGENTS.md` Phase 7 exit criterion ("50 kid-style test observations achieve top-3 iNat CV correctness target **or a risk is filed**")
 - **Owner:** Brian (requires real-world setup; can't be unblocked autonomously)
+
+## 2026-06-04 — Option B decision
+
+Outbound iNat submission of kid observations was reframed under
+**Option B**: Dragonfly does NOT post kid observations to iNat while
+the kid is under 13 (iNat's ToS requires users to be 13+).
+Observations stay inside Dragonfly until the kid reaches 13 and uses
+the Phase 3 age-13 iNat-claim flow to push their own back catalogue
+under their own iNat account.
+
+The `inat_submit_enabled` setting defaults to False (PR #6 of the
+risk-closure series). The Service Bus iNat-submit pipeline ships
+dormant: queues + workers + alerts stay provisioned so flipping the
+flag back on is a zero-deploy operator action, but no outbox rows
+are written by default.
+
+What stays open in Risk 0001:
+
+- iNat's read-only **CV identify** endpoint
+  (`POST /v1/observations/{id}/identify`) -- still used during the
+  submit flow to suggest a species. Its accuracy on kid photos is
+  still untested.
+- The OAuth token + 50-photo benchmark items below now apply only
+  to the CV identify path, not to outbound observation submission.
+  The token's rate-limit scope is narrower than originally planned.
+
+The bullets about "iNat user account + project + outbound submit"
+are descoped; only the CV identify subset remains relevant.
 
 ## What we have
 
