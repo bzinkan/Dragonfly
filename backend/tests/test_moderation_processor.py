@@ -279,11 +279,12 @@ def _wire_session_with_outbox_update(
     fake_session.commit = AsyncMock()
 
 
-async def test_clean_with_observation_writes_outbox_row_no_settings(
+async def test_clean_with_observation_and_no_settings_skips_outbox(
     fake_session: AsyncMock,
 ) -> None:
-    """Clean path with a matching observation writes the outbox row even
-    when settings=None; status stays `pending` until the replay job runs."""
+    """Option B default: when settings=None the processor flips
+    moderation_status but does NOT write an outbox row. The kid's
+    observation stays entirely inside Dragonfly."""
     photo = _photo_row()
     obs = _obs_row()
     _wire_session(fake_session, photo=photo, observation=obs)
@@ -300,23 +301,56 @@ async def test_clean_with_observation_writes_outbox_row_no_settings(
     )
     assert result.decision == "clean"
     assert result.observation_id == _OBS_ID
-    assert result.outbox_status == "pending"
+    assert result.outbox_status is None
     # Observation flipped to clean in the SAME transaction.
     assert obs.moderation_status == "clean"
-    # Exactly one session.add for the outbox row (no review queue insert).
-    assert fake_session.add.call_count == 1
-    added = fake_session.add.call_args.args[0]
-    assert isinstance(added, models.InatSubmitOutbox)
-    assert added.observation_id == _OBS_ID
-    assert added.status == "pending"
+    # No outbox row added.
+    fake_session.add.assert_not_called()
 
 
-async def test_clean_with_observation_and_disabled_settings_attempts_enqueue(
+async def test_clean_with_observation_and_inat_disabled_default_skips_outbox(
+    fake_session: AsyncMock,
+) -> None:
+    """Option B default: `inat_submit_enabled=False` (default) skips
+    the outbox write even when Service Bus is configured. iNat-submit
+    pipeline is dormant until the operator flips the flag for a Phase 3
+    family-account model."""
+    from app.core.config import Settings
+
+    photo = _photo_row()
+    obs = _obs_row()
+    _wire_session(fake_session, photo=photo, observation=obs)
+    storage = _StubStorage()
+    moderator = _StubModerator(ModerationResult(decision="clean"))
+
+    # SB configured but inat_submit_enabled defaults to False.
+    settings = Settings(
+        env="local", service_bus_namespace="dragonfly-sb-test.servicebus.windows.net"
+    )
+
+    result = await process_pending_photo(
+        fake_session,
+        storage,
+        moderator,
+        bucket=_BUCKET,
+        object_name=_OBJECT_NAME,
+        settings=settings,
+    )
+    assert result.decision == "clean"
+    assert result.outbox_status is None
+    assert obs.moderation_status == "clean"
+    fake_session.add.assert_not_called()
+
+
+async def test_clean_with_inat_enabled_and_disabled_sb_leaves_outbox_pending(
     fake_session: AsyncMock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Settings provided but service_bus_namespace empty -> enqueue helper
-    is called, returns not_configured, outbox row gets retry_count bump."""
+    """When `inat_submit_enabled=True` but Service Bus is not yet
+    provisioned, the outbox row IS written (the rollout window where
+    the operator flipped the flag before populating
+    `service_bus_namespace`) and the enqueue helper returns
+    not_configured -- the row stays pending for the replay job."""
     from app.core.config import Settings
     from app.inat.enqueue import InatEnqueueResult
 
@@ -334,7 +368,7 @@ async def test_clean_with_observation_and_disabled_settings_attempts_enqueue(
 
     monkeypatch.setattr("app.moderation.processor.enqueue_inat_submit", fake_enqueue)
 
-    settings = Settings(env="local", service_bus_namespace="")
+    settings = Settings(env="local", service_bus_namespace="", inat_submit_enabled=True)
 
     result = await process_pending_photo(
         fake_session,
@@ -348,16 +382,16 @@ async def test_clean_with_observation_and_disabled_settings_attempts_enqueue(
     assert result.outbox_status == "pending"
     assert enqueue_calls == [_OBS_ID]
     # Two commits: the in-transaction outbox commit + the post-enqueue
-    # outbox-status update commit.
+    # retry-count bump commit.
     assert fake_session.commit.await_count == 2
 
 
-async def test_clean_with_observation_and_successful_enqueue_flips_outbox(
+async def test_clean_with_inat_enabled_and_successful_enqueue_flips_outbox(
     fake_session: AsyncMock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Settings provided, enqueue helper returns success -> outbox row
-    is updated to status=enqueued."""
+    """Phase-3 happy path: `inat_submit_enabled=True` + SB configured +
+    enqueue success -> outbox row flips to `enqueued`."""
     from app.core.config import Settings
     from app.inat.enqueue import InatEnqueueResult
 
@@ -373,7 +407,9 @@ async def test_clean_with_observation_and_successful_enqueue_flips_outbox(
     monkeypatch.setattr("app.moderation.processor.enqueue_inat_submit", fake_enqueue)
 
     settings = Settings(
-        env="local", service_bus_namespace="dragonfly-sb-test.servicebus.windows.net"
+        env="local",
+        service_bus_namespace="dragonfly-sb-test.servicebus.windows.net",
+        inat_submit_enabled=True,
     )
 
     result = await process_pending_photo(

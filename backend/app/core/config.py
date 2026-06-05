@@ -93,6 +93,24 @@ class Settings(BaseSettings):
     inat_oauth_token: str = ""
     inat_request_timeout_seconds: float = 8.0
 
+    # Outbound iNat submission posture. Defaults to False per the
+    # Option B decision (2026-06-04): Dragonfly does NOT post kid
+    # observations to iNaturalist while the kid is under 13 because
+    # iNat's standard ToS requires users to be 13+. Observations stay
+    # in Dragonfly until the kid claims them via the Phase 3 age-13
+    # iNat-claim flow.
+    #
+    # When False the moderation worker / review-queue approve handler
+    # skip writing the `inat_submit_outbox` row entirely; the Service
+    # Bus consumer is dormant and the queue stays empty. The
+    # infrastructure (queues, jobs, alerts) stays provisioned so
+    # flipping this flag back on is a zero-deploy operator action.
+    #
+    # iNat CV (the read-only species identify endpoint) is unaffected
+    # -- it never posts; the `inat_oauth_token` setting still wires
+    # rate limits for it.
+    inat_submit_enabled: bool = False
+
     # Reverse-geocoding provider. "noop" returns None for every lookup --
     # the kid sees no place_name; the observation itself still saves.
     # "nominatim" hits the public Nominatim instance (1 req/sec, no

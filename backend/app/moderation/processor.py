@@ -185,13 +185,20 @@ async def process_pending_photo(
             # Outbox row guarantees at-least-once iNat submit even if the
             # Service Bus send below fails. Replay job picks up rows that
             # stay in `pending` past the 5-min grace window.
-            session.add(
-                models.InatSubmitOutbox(
-                    observation_id=observation.id,
-                    status="pending",
+            #
+            # Gated on the Option B `inat_submit_enabled` flag (default
+            # False). When False, the iNat-submit pipeline is dormant
+            # and no outbox row is written -- the observation stays
+            # entirely inside Dragonfly until the kid claims it via
+            # the Phase 3 age-13 iNat-claim flow.
+            if settings is not None and settings.inat_submit_enabled:
+                session.add(
+                    models.InatSubmitOutbox(
+                        observation_id=observation.id,
+                        status="pending",
+                    )
                 )
-            )
-            wrote_outbox = True
+                wrote_outbox = True
     else:
         # Flagged path: mark the observation quarantined so it cannot
         # be picked up by the iNat submit consumer until an adult
