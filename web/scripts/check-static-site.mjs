@@ -15,6 +15,16 @@ const pages = {
 const staticWebAppConfig = JSON.parse(read("public/staticwebapp.config.json"));
 
 const failures = [];
+const pilotMailtoSubject = "mailto:support@dragonfly-app.net?subject=Dragonfly%20pilot%20access%20request";
+const pilotMailtoFields = [
+  "Parent%2Fguardian%20name%3A",
+  "Email%3A",
+  "Number%20of%20kids%3A",
+  "Kids%27%20age%20range%3A",
+  "Android%20phone%20available%3F%3A",
+  "Are%20you%20willing%20to%20test%20with%20your%20child%20present%3F%3A",
+  "Anything%20we%20should%20know%3F%3A",
+];
 
 function expectIncludes(file, text) {
   if (!pages[file].includes(text)) {
@@ -31,6 +41,15 @@ function expectAbsent(file, pattern, label) {
 expectIncludes("public/index.html", "Turn backyard curiosity into real science.");
 expectIncludes("public/index.html", "curious explorers of all ages");
 expectIncludes("public/index.html", "Request pilot access");
+expectIncludes("public/index.html", pilotMailtoSubject);
+expectIncludes("public/index.html", "Parent%2Fguardian%20name%3A%0D%0AEmail%3A");
+expectIncludes("public/index.html", "Please do not include your child&rsquo;s full name in this request.");
+expectIncludes("public/index.html", "Dragonfly is in a small supervised pilot. We&rsquo;ll reply if we can include your family in the next test group.");
+expectIncludes("public/index.html", "What happens next?");
+expectIncludes("public/index.html", "We review pilot requests.");
+expectIncludes("public/index.html", "If selected, we send Android internal-testing instructions.");
+expectIncludes("public/index.html", "A parent or guardian helps create the kid account.");
+expectIncludes("public/index.html", "The first test should happen with the adult present.");
 expectIncludes("public/index.html", 'id="how-it-works"');
 expectIncludes("public/index.html", 'id="sanctuary"');
 expectIncludes("public/index.html", 'id="safety"');
@@ -73,7 +92,17 @@ expectIncludes("public/support.html", 'href="/contact"');
 expectIncludes("public/contact.html", "support@dragonfly-app.net");
 expectIncludes("public/contact.html", "privacy@dragonfly-app.net");
 expectIncludes("public/contact.html", "Request pilot access");
+expectIncludes("public/contact.html", pilotMailtoSubject);
+expectIncludes("public/contact.html", "Parent%2Fguardian%20name%3A%0D%0AEmail%3A");
+expectIncludes("public/contact.html", "Please do not include your child&rsquo;s full name in this request.");
+expectIncludes("public/contact.html", "Dragonfly is in a small supervised pilot. We&rsquo;ll reply if we can");
 expectIncludes("public/contact.html", "Dragonfly is in limited Android testing");
+
+for (const file of ["public/index.html", "public/contact.html"]) {
+  for (const field of pilotMailtoFields) {
+    expectIncludes(file, field);
+  }
+}
 
 const rewrites = new Map(
   staticWebAppConfig.routes.map((route) => [route.route, route.rewrite]),
@@ -99,6 +128,11 @@ const forbiddenCopy = [
   [/no location collected/i, "no location collected"],
   [/kids ages 9(?:-|&ndash;|–)12/i, "kids ages 9-12"],
   [/field app for kids ages/i, "field app for kids ages"],
+  [/Dragonfly%20Android%20pilot/i, "old Android pilot mailto subject"],
+  [/Kid%20age%20range/i, "old kid age mailto field"],
+  [/Adult%20name%3A/i, "old adult name mailto field"],
+  [/child(?:%27|'|&rsquo;)s%20full%20name%3A/i, "child full name mailto field"],
+  [/school%20name%3A/i, "school name mailto field"],
 ];
 
 for (const file of Object.keys(pages)) {

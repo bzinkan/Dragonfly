@@ -412,8 +412,27 @@ Before closed/public store tracks, confirm both inboxes are live and monitored.
 
 Use a low-risk pilot CTA for the first implementation.
 
-Recommended first pass: a `mailto:` link to `support@dragonfly-app.net` with a
-pre-filled subject such as `Dragonfly Android pilot interest`.
+Recommended first pass: a `mailto:` link to `support@dragonfly-app.net` with
+the pre-filled subject `Dragonfly pilot access request`.
+
+The first mailto body should ask only for adult contact and pilot logistics:
+
+- Parent/guardian name
+- Email
+- Number of kids
+- Kids' age range
+- Android phone available?
+- Are you willing to test with your child present?
+- Anything we should know?
+
+Place this note near every main pilot CTA:
+
+> Please do not include your child's full name in this request.
+
+Use this confirmation/help copy near the pilot CTA:
+
+> Dragonfly is in a small supervised pilot. We'll reply if we can include your
+> family in the next test group.
 
 Acceptable second pass: a simple static form that submits to an operator-owned
 endpoint or low-risk form backend after privacy review. Do not add a tracking
@@ -423,14 +442,16 @@ Do not embed third-party analytics on the first public landing page.
 
 Do not collect kid names on the public landing page.
 
-If a form is added, collect only:
+If a form is added later, collect only:
 
 - parent/guardian name
 - email
-- kids' age range, such as `9-10`, `11-12`, or `13+`
+- number of kids
+- kids' age range
 - Android availability
-- whether the adult is a parent/guardian, teacher, or group leader
-- consent to be contacted about a supervised pilot
+- willingness to test with the adult present
+- consent to be contacted about a supervised pilot, if explicit consent text is
+  added to that future form
 
 Optional free-text should be framed for adult logistics only, such as:
 
