@@ -112,6 +112,7 @@ function displayName(appEnv: AppEnv): string {
 const config: ExpoConfig = {
   name: displayName(APP_ENV),
   slug: "dragonfly",
+  owner: "dragonflybrian",
   version: "0.1.0",
   orientation: "portrait",
   icon: "./assets/images/icon.png",
@@ -184,6 +185,9 @@ const config: ExpoConfig = {
     firebase: env.firebase,
     entra: env.entra,
     sanctuary3d: SANCTUARY_3D,
+    eas: {
+      projectId: "7dab1a21-6bd3-489d-86b7-59cf336fdb67",
+    },
   },
 };
 
