@@ -941,27 +941,64 @@ share, no location, no streak / FOMO language.
 
 ### MVP tab shipped (placeholder art)
 
-The first iteration of the Sanctuary tab is live at
-[`mobile/app/(tabs)/sanctuary.tsx`](../mobile/app/(tabs)/sanctuary.tsx)
+The first iteration of the Sanctuary tab is live, now at
+[`mobile/src/sanctuary/Sanctuary2DScreen.tsx`](../mobile/src/sanctuary/Sanctuary2DScreen.tsx)
+(moved verbatim from the route file for the 3D work — see below),
 backed by [`mobile/src/sanctuary/useSanctuary.ts`](../mobile/src/sanctuary/useSanctuary.ts)
 (TanStack Query) and the typed API client at
 [`mobile/src/api/sanctuary.ts`](../mobile/src/api/sanctuary.ts). The
-diorama is rendered from React Native primitives (`View`, `Text`,
+2D diorama is rendered from React Native primitives (`View`, `Text`,
 `Pressable`, `Modal`, `ScrollView`) tinted per habitat — no art
-assets, no new heavy dependencies. The tab is registered in
+assets. The tab is registered in
 [`mobile/app/(tabs)/_layout.tsx`](../mobile/app/(tabs)/_layout.tsx)
 with the same `IS_WEB ? null : "/sanctuary"` hidden-on-web rule the
 other kid-facing tabs use. Loading / error / empty states are
 implemented; pull-to-refresh uses `RefreshControl`; tap-to-inspect
-opens a modal with the element title / detail / icon-key.
+opens a modal with the element title / detail / icon-key (shared
+component:
+[`mobile/src/sanctuary/panels/ElementInspectModal.tsx`](../mobile/src/sanctuary/panels/ElementInspectModal.tsx)).
 
-Remaining work (later PRs):
+### 3D living diorama (ADR 0011, in progress behind a build flag)
 
-- Final illustration, audio bed, and soft motion beyond opacity fades.
-- Lottie / Reanimated 3 reveal beat (post-submit celebration; tracked
-  separately from this MVP because the dispatcher reveal flow ships
-  in the same PR cluster as the on-submit celebration sequence).
-- Mystery cue silhouettes once art lands.
+The "final illustration + soft motion" deferred work is being built as
+a low-poly true-3D island diorama — see
+[ADR 0011](adr/0011-sanctuary-3d-rendering.md) for the stack
+(three + @react-three/fiber + expo-gl, bundled quantized GLBs) and
+[`docs/sanctuary-assets.md`](sanctuary-assets.md) for the CC0 asset
+pipeline. Key contract points:
+
+- The route file [`mobile/app/(tabs)/sanctuary.tsx`](../mobile/app/(tabs)/sanctuary.tsx)
+  is now a flag chooser. `SANCTUARY_3D=1` (development/preview builds)
+  renders [`mobile/src/sanctuary3d/Sanctuary3DScreen.tsx`](../mobile/src/sanctuary3d/Sanctuary3DScreen.tsx);
+  play-internal/production stay `0` until the post-pilot flag flip, so
+  the W1 pilot ships the 2D screen unchanged.
+- **The 2D screen is permanent.** It is the GL-crash fallback (error
+  boundary + 5 s first-frame watchdog + persisted 3-strike crash
+  latch), the screen-reader default, and the kid-facing "Simple view"
+  escape hatch. Every "no" lands on 2D, never on a broken canvas.
+- Island layout: meadow front-left, woodland back, pond center-right,
+  urban front-right, soil as the visible cliff cross-section on the
+  island's front face, sky above, elsewhere as a small detached
+  floating islet
+  ([`zoneAnchors.ts`](../mobile/src/sanctuary3d/placement/zoneAnchors.ts)).
+  Dormant zones render in a warm-grey palette — *asleep, not locked*:
+  no padlocks, no progress meters in the scene.
+- All 3D invariants inherit from this doc: not a map, offline render
+  (assets bundled, never fetched), deterministic scene (placement
+  seeded by `element_id` hash, no `Math.random` in the render path),
+  no analytics, and the backend/API/content contract is untouched.
+
+Remaining work (later PRs, per the ADR 0011 milestone plan):
+
+- M2 data-driven scene (manifest-placed elements, tier layers,
+  mystery-cue silhouettes from the dormant palette).
+- M3 ambient animation (camera drift, grass sway, water shimmer,
+  birds) and M4 gestures (pinch/constrained orbit, raycast
+  tap-to-inspect into the shared inspector modal).
+- M5 reveal beat v2 (camera fly-to + grow-in + particles on
+  `world_unlock`; the existing reveal modal remains the fallback).
+- Audio bed (expo-audio, tier-10 gated, off-by-default tap-to-play)
+  as a fast-follow after visuals.
 - Real authored guide audio.
 
 ### screen

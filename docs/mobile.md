@@ -200,9 +200,38 @@ Profiles as described above. `preview` and `production` both have `autoIncrement
 - `ignoreErrors`: common RN noise (`Network request failed` at the network boundary, because we handle that in the offline queue and don't want Sentry to page on it).
 - Source maps uploaded per EAS build.
 
+### Sanctuary 3D (ADR 0011)
+
+The Sanctuary 3D diorama adds a GL surface behind the `SANCTUARY_3D`
+build flag (eas.json env → `extra.sanctuary3d`): `1` for
+development/preview, `0` for play-internal/production until the
+post-pilot flag flip. Stack and constraints:
+
+- three@0.184.0 (pinned exact) + @react-three/fiber ^9.6.1 (`/native`)
+  + expo-gl + react-native-gesture-handler. **No drei** (DOM/Blob
+  breakage on Hermes); GLBs load via expo-asset → `File.bytes()` →
+  `GLTFLoader.parseAsync` (never Blob/fetch).
+- Models are bundled, quantized (`KHR_mesh_quantization` — no
+  Draco/meshopt; Hermes has no WASM), textureless GLBs from the
+  pipeline in `scripts/sanctuary_assets/` (see
+  `docs/sanctuary-assets.md`). Metro resolves `.glb` via `assetExts`.
+- Adding these modules was a **native change**: dev clients and store
+  binaries must be rebuilt; EAS Update cannot deliver it (see the EAS
+  Update policy above).
+- The 2D sanctuary screen is the permanent fallback (crash latch,
+  first-frame watchdog, screen-reader default, "Simple view"). The
+  frame budget inherits the performance targets above: 60fps mid-tier,
+  30fps floor on the 3-year-old 4GB Android reference device, verified
+  on physical hardware only — emulator GL is unrepresentative.
+
 ### Testing
 
-- **Unit:** Jest, runs in CI. Component tests for anything with non-trivial logic (the celebration sequence, the offline queue orchestrator, the permission pre-prompt flow).
+- **Unit:** Jest (`jest-expo` preset, `npm test` in `mobile/`), runs in
+  CI. Component tests for anything with non-trivial logic (the
+  celebration sequence, the offline queue orchestrator, the permission
+  pre-prompt flow). Sanctuary 3D keeps its logic in pure modules
+  (`flagDecision.ts`, `season/palette.ts`, `scenePlan.ts` from M2 on)
+  so it is testable without GL.
 - **E2E:** Maestro, one smoke flow per release — role picker → sign in → take photo → submit → see celebration. Runs against a staging build on EAS. Not blocking PR merge, blocking release.
 - **Device farm:** BrowserStack or AWS Device Farm for physical-device smoke testing before production release. Two devices — one low-end Android, one mid-range iPhone — cover the variance we care about.
 

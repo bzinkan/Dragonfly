@@ -8,7 +8,14 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
+    "test": "jest",
     "config:play-internal": "node ./scripts/verify-play-internal-config.mjs"
+  },
+  "jest": {
+    "preset": "jest-expo",
+    "testMatch": [
+      "**/__tests__/**/*.test.ts"
+    ]
   },
   "dependencies": {
     "@azure/msal-browser": "^5.11.0",
