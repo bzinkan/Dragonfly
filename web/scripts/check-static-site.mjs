@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = (path) => readFileSync(join(root, path), "utf8");
+const readBinary = (path) => readFileSync(join(root, path));
 
 const pages = {
   "public/index.html": read("public/index.html"),
@@ -13,6 +14,13 @@ const pages = {
   "public/contact.html": read("public/contact.html"),
 };
 const staticWebAppConfig = JSON.parse(read("public/staticwebapp.config.json"));
+const manifest = JSON.parse(read("public/site.webmanifest"));
+const robots = read("public/robots.txt");
+const sitemap = read("public/sitemap.xml");
+const socialCardSource = read("public/social-card.svg");
+const socialCardPng = readBinary("public/social-card.png");
+const favicon = read("public/favicon.svg");
+const touchIconPng = readBinary("public/apple-touch-icon.png");
 
 const failures = [];
 const pilotMailtoSubject = "mailto:support@dragonfly-app.net?subject=Dragonfly%20pilot%20access%20request";
@@ -38,8 +46,43 @@ function expectAbsent(file, pattern, label) {
   }
 }
 
+function expectPngDimensions(file, buffer, width, height) {
+  const signature = "89504e470d0a1a0a";
+  if (buffer.subarray(0, 8).toString("hex") !== signature) {
+    failures.push(`${file} must be a PNG file`);
+    return;
+  }
+
+  if (buffer.toString("ascii", 12, 16) !== "IHDR") {
+    failures.push(`${file} is missing a PNG IHDR chunk`);
+    return;
+  }
+
+  const actualWidth = buffer.readUInt32BE(16);
+  const actualHeight = buffer.readUInt32BE(20);
+  if (actualWidth !== width || actualHeight !== height) {
+    failures.push(`${file} must be ${width}x${height}, got ${actualWidth}x${actualHeight}`);
+  }
+}
+
 expectIncludes("public/index.html", "Turn backyard curiosity into real science.");
 expectIncludes("public/index.html", "curious explorers of all ages");
+expectIncludes("public/index.html", "<title>Dragonfly &mdash; Real nature, real science for curious kids</title>");
+expectIncludes("public/index.html", 'content="Dragonfly is a field app for kids ages 9&ndash;12. Kids log real outdoor observations, build a personal Dex, complete nature expeditions, and grow their own Sanctuary."');
+expectIncludes("public/index.html", '<link rel="canonical" href="https://dragonfly-app.net/">');
+expectIncludes("public/index.html", '<meta name="robots" content="index,follow">');
+expectIncludes("public/index.html", '<meta name="theme-color" content="#2f6f4e">');
+expectIncludes("public/index.html", '<meta property="og:title" content="Dragonfly &mdash; Turn backyard curiosity into real science">');
+expectIncludes("public/index.html", '<meta property="og:description" content="An invite-only field app where kids make real nature observations and grow a living Sanctuary from what they discover.">');
+expectIncludes("public/index.html", '<meta property="og:image" content="https://dragonfly-app.net/social-card.png">');
+expectIncludes("public/index.html", '<meta name="twitter:card" content="summary_large_image">');
+expectIncludes("public/index.html", '<meta name="twitter:title" content="Dragonfly &mdash; Turn backyard curiosity into real science">');
+expectIncludes("public/index.html", '<meta name="twitter:image" content="https://dragonfly-app.net/social-card.png">');
+expectIncludes("public/index.html", '<link rel="apple-touch-icon" href="/apple-touch-icon.png">');
+expectIncludes("public/index.html", '<link rel="manifest" href="/site.webmanifest">');
+expectIncludes("public/index.html", '<script type="application/ld+json">');
+expectIncludes("public/index.html", '"@type": "Organization"');
+expectIncludes("public/index.html", '"url": "https://dragonfly-app.net/"');
 expectIncludes("public/index.html", "Request pilot access");
 expectIncludes("public/index.html", pilotMailtoSubject);
 expectIncludes("public/index.html", "Parent%2Fguardian%20name%3A%0D%0AEmail%3A");
@@ -98,6 +141,21 @@ expectIncludes("public/contact.html", "Please do not include your child&rsquo;s 
 expectIncludes("public/contact.html", "Dragonfly is in a small supervised pilot. We&rsquo;ll reply if we can");
 expectIncludes("public/contact.html", "Dragonfly is in limited Android testing");
 
+for (const [file, url] of [
+  ["public/privacy.html", "https://dragonfly-app.net/privacy"],
+  ["public/terms.html", "https://dragonfly-app.net/terms"],
+  ["public/support.html", "https://dragonfly-app.net/support"],
+  ["public/contact.html", "https://dragonfly-app.net/contact"],
+]) {
+  expectIncludes(file, `<link rel="canonical" href="${url}">`);
+  expectIncludes(file, '<meta name="robots" content="index,follow">');
+  expectIncludes(file, '<meta name="theme-color" content="#2f6f4e">');
+  expectIncludes(file, '<meta property="og:image" content="https://dragonfly-app.net/social-card.png">');
+  expectIncludes(file, '<meta name="twitter:card" content="summary_large_image">');
+  expectIncludes(file, '<link rel="apple-touch-icon" href="/apple-touch-icon.png">');
+  expectIncludes(file, '<link rel="manifest" href="/site.webmanifest">');
+}
+
 for (const file of ["public/index.html", "public/contact.html"]) {
   for (const field of pilotMailtoFields) {
     expectIncludes(file, field);
@@ -126,8 +184,6 @@ const forbiddenCopy = [
   [/submitted automatically to iNaturalist/i, "submitted automatically to iNaturalist"],
   [/automatic iNaturalist submission/i, "automatic iNaturalist submission"],
   [/no location collected/i, "no location collected"],
-  [/kids ages 9(?:-|&ndash;|–)12/i, "kids ages 9-12"],
-  [/field app for kids ages/i, "field app for kids ages"],
   [/Dragonfly%20Android%20pilot/i, "old Android pilot mailto subject"],
   [/Kid%20age%20range/i, "old kid age mailto field"],
   [/Adult%20name%3A/i, "old adult name mailto field"],
@@ -142,13 +198,67 @@ for (const file of Object.keys(pages)) {
 }
 
 for (const [file, content] of Object.entries(pages)) {
-  if (/<script[\s>]/i.test(content)) {
-    failures.push(`${file} must work without JavaScript`);
+  const executableScript = /<script(?![^>]*type\s*=\s*['"]?application\/ld\+json['"]?)[\s>]/i;
+  if (executableScript.test(content)) {
+    failures.push(`${file} must work without executable JavaScript`);
   }
 
   if (/<(?:script|iframe|img)[^>]+(?:analytics|googletagmanager|gtag|facebook\.net|doubleclick|pixel)/i.test(content)) {
     failures.push(`${file} appears to include analytics or tracking code`);
   }
+}
+
+if (manifest.name !== "Dragonfly") {
+  failures.push("public/site.webmanifest must name the app Dragonfly");
+}
+
+if (manifest.theme_color !== "#2f6f4e") {
+  failures.push("public/site.webmanifest must use the Dragonfly theme color");
+}
+
+for (const icon of ["/favicon.svg", "/apple-touch-icon.png"]) {
+  if (!manifest.icons.some((manifestIcon) => manifestIcon.src === icon)) {
+    failures.push(`public/site.webmanifest is missing icon ${icon}`);
+  }
+}
+
+if (!manifest.icons.some((manifestIcon) => manifestIcon.src === "/apple-touch-icon.png" && manifestIcon.type === "image/png")) {
+  failures.push("public/site.webmanifest must declare apple-touch-icon.png as image/png");
+}
+
+expectPngDimensions("public/social-card.png", socialCardPng, 1200, 630);
+expectPngDimensions("public/apple-touch-icon.png", touchIconPng, 180, 180);
+
+for (const text of [
+  "User-agent: *",
+  "Allow: /",
+  "Sitemap: https://dragonfly-app.net/sitemap.xml",
+]) {
+  if (!robots.includes(text)) {
+    failures.push(`public/robots.txt is missing: ${text}`);
+  }
+}
+
+for (const url of [
+  "https://dragonfly-app.net/",
+  "https://dragonfly-app.net/privacy",
+  "https://dragonfly-app.net/terms",
+  "https://dragonfly-app.net/support",
+  "https://dragonfly-app.net/contact",
+]) {
+  if (!sitemap.includes(`<loc>${url}</loc>`)) {
+    failures.push(`public/sitemap.xml is missing ${url}`);
+  }
+}
+
+for (const text of ["Dragonfly", "Real nature.", "Real science.", "Closed beta"]) {
+  if (!socialCardSource.includes(text)) {
+    failures.push(`public/social-card.svg is missing: ${text}`);
+  }
+}
+
+if (!favicon.includes("Dragonfly")) {
+  failures.push("public/favicon.svg should include Dragonfly title text");
 }
 
 if (failures.length > 0) {

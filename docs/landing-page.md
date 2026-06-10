@@ -496,6 +496,12 @@ labels, focus states, high-contrast checks, reduced-motion-safe decorative
 assets, and mobile viewport QA. Use real copy and alt text; avoid fake app-store
 badges.
 
+The public hero copy can remain all-ages while search/social metadata may
+describe the current Google Play review and pilot audience more narrowly as
+kids ages 9-12. Do not use SEO metadata to claim public availability, Google
+Play Families approval, COPPA compliance, automatic iNaturalist submission, or
+legal review before those are true.
+
 ### PR 5: Deploy verification
 
 Verify the static landing site deploys cleanly to the active hosting path for
