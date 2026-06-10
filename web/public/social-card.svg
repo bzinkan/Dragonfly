@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">Dragonfly social preview card</title>
+  <desc id="desc">Warm Dragonfly social preview with field notebook typography and a simple Sanctuary nature scene.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fffaf0"/>
+      <stop offset="0.55" stop-color="#fbf7ec"/>
+      <stop offset="1" stop-color="#e9f3ee"/>
+    </linearGradient>
+    <linearGradient id="pond" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8fd0d4"/>
+      <stop offset="1" stop-color="#5e9fba"/>
+    </linearGradient>
+    <pattern id="grid" width="38" height="38" patternUnits="userSpaceOnUse">
+      <path d="M38 0H0V38" fill="none" stroke="#2f6f4e" stroke-opacity="0.055" stroke-width="2"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+  <circle cx="1040" cy="118" r="52" fill="#efc75e"/>
+  <circle cx="102" cy="94" r="130" fill="#a9d8e8" opacity="0.28"/>
+  <circle cx="1120" cy="508" r="190" fill="#d9ead2" opacity="0.5"/>
+
+  <g transform="translate(92 82)">
+    <g transform="translate(0 0)">
+      <circle cx="36" cy="36" r="34" fill="#d9ead2" stroke="#2f6f4e" stroke-width="4"/>
+      <path d="M36 14c3 11 3 32 0 46" fill="none" stroke="#234f3a" stroke-width="4" stroke-linecap="round"/>
+      <path d="M32 28C18 12 6 19 21 34c-15 4-11 19 8 11" fill="#eef8f5" stroke="#5e9fba" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M40 28c14-16 26-9 11 6 15 4 11 19-8 11" fill="#eef8f5" stroke="#5e9fba" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <text x="92" y="51" font-family="Georgia, 'Times New Roman', serif" font-size="44" font-weight="700" fill="#1f2a24">Dragonfly</text>
+  </g>
+
+  <g transform="translate(92 200)">
+    <text x="0" y="0" font-family="Georgia, 'Times New Roman', serif" font-size="78" font-weight="700" fill="#1f2a24">Real nature.</text>
+    <text x="0" y="92" font-family="Georgia, 'Times New Roman', serif" font-size="78" font-weight="700" fill="#1f2a24">Real science.</text>
+    <text x="0" y="154" font-family="'Trebuchet MS', Verdana, sans-serif" font-size="30" font-weight="700" fill="#2f6f4e">A field app for curious kids and adult-managed pilot groups.</text>
+  </g>
+
+  <g transform="translate(720 188)">
+    <rect x="0" y="0" width="370" height="306" rx="24" fill="#fffdf7" stroke="#ded4bd" stroke-width="3"/>
+    <path d="M0 70C62 45 120 80 178 58c76-28 134 26 192 5 65-23 116-20 178 0v74H0Z" fill="#a9d8e8"/>
+    <path d="M0 124c68-26 131 20 205-10 68-27 112 18 165-8v92H0Z" fill="#8e9f5f"/>
+    <path d="M38 215c56-40 146-38 202 4-48 44-148 44-202-4Z" fill="url(#pond)"/>
+    <path d="M73 218c46-18 100-17 137 4" fill="none" stroke="#d8eef0" stroke-width="7" stroke-linecap="round" opacity="0.78"/>
+    <path d="M0 244c88-18 155 20 236-1 58-16 95 12 134-5v68H0Z" fill="#7a5238"/>
+    <g stroke="#2f6f4e" stroke-width="6" stroke-linecap="round">
+      <path d="M278 190v42"/>
+      <path d="M302 204v38"/>
+      <path d="M326 186v48"/>
+    </g>
+    <g fill="#efc75e">
+      <circle cx="278" cy="180" r="8"/>
+      <circle cx="302" cy="195" r="7"/>
+      <circle cx="326" cy="176" r="8"/>
+    </g>
+    <g transform="translate(170 58)" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M22 6c4 21 4 54 0 80" fill="none" stroke="#234f3a" stroke-width="6"/>
+      <path d="M17 29C-18-6-54 12-23 45c-31 7-24 39 7 22" fill="#eef8f5" stroke="#5e9fba" stroke-width="5"/>
+      <path d="M29 29C64-6 100 12 69 45c31 7 24 39-7 22" fill="#eef8f5" stroke="#5e9fba" stroke-width="5"/>
+    </g>
+  </g>
+
+  <text x="92" y="560" font-family="'Trebuchet MS', Verdana, sans-serif" font-size="24" font-weight="700" fill="#526057">Closed beta - Parent-managed accounts - No ads - No public chat</text>
+</svg>
