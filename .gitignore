@@ -54,3 +54,7 @@ yarn-debug.log*
 
 # Local dev
 docker-compose.override.yml
+
+# Sanctuary 3D raw asset packs (re-downloadable via sources.json; only
+# processed GLBs under mobile/assets/sanctuary/ are committed)
+scripts/sanctuary_assets/.cache/

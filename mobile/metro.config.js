@@ -24,6 +24,10 @@ const { getDefaultConfig } = require("expo/metro-config");
 const config = getDefaultConfig(__dirname);
 config.resolver.unstable_enablePackageExports = true;
 
+// Sanctuary 3D models ship as bundled GLB assets (offline-render invariant:
+// docs/sanctuary.md forbids runtime asset fetches).
+config.resolver.assetExts.push("glb");
+
 const MSAL_COMMON_BROWSER_PATH = path.join(
   __dirname,
   "node_modules",

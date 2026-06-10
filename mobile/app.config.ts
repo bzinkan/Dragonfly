@@ -92,6 +92,12 @@ const ENV: Record<AppEnv, EnvConfig> = {
 const env = ENV[APP_ENV];
 const isPlayInternal = APP_ENV === "play-internal";
 
+// Sanctuary 3D diorama build flag (ADR 0011). Build-time default only --
+// runtime overrides (screen reader, Simple view, crash latch) layer on top
+// in src/config/featureFlags.ts. Stays "0" for play-internal/production
+// until the post-pilot flag-flip milestone.
+const SANCTUARY_3D = process.env.SANCTUARY_3D === "1";
+
 function displayName(appEnv: AppEnv): string {
   switch (appEnv) {
     case "production":
@@ -144,6 +150,7 @@ const config: ExpoConfig = {
   plugins: [
     "expo-router",
     "expo-secure-store",
+    "expo-asset",
     [
       "expo-camera",
       {
@@ -176,6 +183,7 @@ const config: ExpoConfig = {
     updatesChannel: env.updatesChannel,
     firebase: env.firebase,
     entra: env.entra,
+    sanctuary3d: SANCTUARY_3D,
   },
 };
 

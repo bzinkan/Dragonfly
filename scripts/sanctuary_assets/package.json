@@ -1,0 +1,18 @@
+{
+  "name": "sanctuary-assets",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Build pipeline for Sanctuary 3D GLB assets. Raw CC0 packs in .cache/ (git-ignored) -> normalized, quantized, palette-locked GLBs committed under mobile/assets/sanctuary/models/. See docs/sanctuary-assets.md.",
+  "type": "module",
+  "scripts": {
+    "test-model": "node make_test_model.mjs",
+    "normalize": "node normalize.mjs",
+    "manifest": "node build_manifest.mjs",
+    "validate": "node validate.mjs"
+  },
+  "dependencies": {
+    "@gltf-transform/core": "^4.2.0",
+    "@gltf-transform/extensions": "^4.2.0",
+    "@gltf-transform/functions": "^4.2.0"
+  }
+}

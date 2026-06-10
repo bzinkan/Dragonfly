@@ -204,6 +204,23 @@ export default function SettingsScreen() {
 
         {devTokenShortcutEnabled && (
           <>
+            <Text style={styles.label}>Sanctuary 3D (dev)</Text>
+            <Pressable
+              style={[styles.button, styles.buttonGhost]}
+              onPress={() => router.push("/dev-sanctuary-spike")}
+            >
+              <Text style={styles.buttonText}>Open 3D spike (M0)</Text>
+            </Pressable>
+            <Text style={styles.help}>
+              ADR 0011 device check: GLB render, FPS, tap raycast.
+            </Text>
+
+            <View
+              style={styles.separator}
+              lightColor="#eee"
+              darkColor="rgba(255,255,255,0.1)"
+            />
+
             <Text style={styles.label}>Auth (dev shortcut)</Text>
             <Text style={styles.help}>
               Paste a development bearer token to skip the sign-in flow.
