@@ -1,0 +1,54 @@
+name: Validate sanctuary 3D assets
+
+# Runs when 3D asset inputs or outputs change. Enforces:
+#   - every content icon key is modeled or explicitly placeholder-allowlisted
+#   - per-model and total size budgets
+#   - CC0-only source licenses
+#   - the generated app manifest matches assets.json (drift check, same
+#     trick as content/schema/ in content-validate.yml)
+# See docs/sanctuary-assets.md.
+
+on:
+  pull_request:
+    paths:
+      - "content/sanctuary/**"
+      - "mobile/assets/sanctuary/**"
+      - "mobile/src/sanctuary/assetManifest.gen.ts"
+      - "scripts/sanctuary_assets/**"
+  push:
+    paths:
+      - "content/sanctuary/**"
+      - "mobile/assets/sanctuary/**"
+      - "mobile/src/sanctuary/assetManifest.gen.ts"
+      - "scripts/sanctuary_assets/**"
+
+jobs:
+  validate-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: scripts/sanctuary_assets/package-lock.json
+
+      - name: Install pipeline dependencies
+        working-directory: scripts/sanctuary_assets
+        run: npm ci
+
+      - name: Regenerate manifest
+        working-directory: scripts/sanctuary_assets
+        run: node build_manifest.mjs
+
+      - name: Confirm generated manifest is up to date
+        run: |
+          git diff --exit-code mobile/src/sanctuary/assetManifest.gen.ts scripts/sanctuary_assets/manifest.gen.json || (
+            echo "::error::assetManifest.gen.ts is out of date. Run scripts/sanctuary_assets/build_manifest.mjs and commit."
+            exit 1
+          )
+
+      - name: Validate assets
+        working-directory: scripts/sanctuary_assets
+        run: node validate.mjs

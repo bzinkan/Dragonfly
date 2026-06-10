@@ -1,0 +1,21 @@
+{
+  "_comment": "The single 16-slot color palette every Sanctuary 3D material samples. Hex sRGB. Seasonal files remap the SAME slot names; dormant.json is the tier-0/silhouette greyscale 'fifth season'. CI enforces that every material baseColorFactor resolves to one of these slots.",
+  "slots": {
+    "green_deep": "#3F6B40",
+    "green_mid": "#528C40",
+    "green_light": "#8FBC6F",
+    "earth_dark": "#4A3826",
+    "earth_mid": "#6E5235",
+    "sand": "#D9C49A",
+    "bark": "#6B4F33",
+    "water_deep": "#2E6B78",
+    "water_light": "#7FB8C4",
+    "sky": "#A8CBE8",
+    "cloud": "#F2F5F7",
+    "accent_warm": "#E08A2E",
+    "accent_cool": "#5E7BB3",
+    "blossom": "#D98BB6",
+    "snow_grey": "#C9CDD1",
+    "glow": "#F2E18C"
+  }
+}

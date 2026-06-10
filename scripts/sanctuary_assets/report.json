@@ -1,0 +1,7 @@
+[
+  {
+    "name": "spike-tree",
+    "out": "dev/spike-tree.glb",
+    "skipped": "generated"
+  }
+]

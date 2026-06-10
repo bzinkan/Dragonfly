@@ -1,0 +1,32 @@
+{
+  "_comment": "Icon keys from content/sanctuary/*.json that do not yet have a 3D model. validate.mjs requires every content icon key to resolve to a manifest entry OR appear here, so zones can land incrementally without breaking CI. The 3D scene renders a typed fallback marker for these. Goal: empty this list by asset milestone A6.",
+  "allowlist": [
+    "sanctuary.elsewhere.unknown",
+    "sanctuary.meadow.butterfly",
+    "sanctuary.meadow.hummingbird",
+    "sanctuary.meadow.insecta",
+    "sanctuary.meadow.monarch",
+    "sanctuary.meadow.plantae",
+    "sanctuary.meadow.pollination_moment",
+    "sanctuary.pond.actinopterygii",
+    "sanctuary.pond.amphibia",
+    "sanctuary.pond.bullfrog",
+    "sanctuary.pond.dragonfly",
+    "sanctuary.pond.frog_in_the_water_moment",
+    "sanctuary.pond.mollusca",
+    "sanctuary.sky.aves",
+    "sanctuary.sky.red_tailed_hawk",
+    "sanctuary.soil.annelida",
+    "sanctuary.soil.fly_agaric",
+    "sanctuary.soil.fungi",
+    "sanctuary.soil.fungi_on_the_log_moment",
+    "sanctuary.urban.aves",
+    "sanctuary.urban.edge_life_moment",
+    "sanctuary.urban.raccoon",
+    "sanctuary.woodland.aves",
+    "sanctuary.woodland.hawk_above_the_trees_moment",
+    "sanctuary.woodland.mammalia",
+    "sanctuary.woodland.red_fox",
+    "sanctuary.woodland.white_tailed_deer"
+  ]
+}

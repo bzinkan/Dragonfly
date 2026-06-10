@@ -1,0 +1,21 @@
+{
+  "_comment": "Tier-0 / mystery-silhouette remap: the island asleep. Warm greys, slightly varied so depth still reads. Same slot names as base.json.",
+  "slots": {
+    "green_deep": "#5E605C",
+    "green_mid": "#6E706B",
+    "green_light": "#84867F",
+    "earth_dark": "#4E4B47",
+    "earth_mid": "#5F5B55",
+    "sand": "#8A867E",
+    "bark": "#5A5650",
+    "water_deep": "#5C6466",
+    "water_light": "#778083",
+    "sky": "#9AA3A8",
+    "cloud": "#C4C8CA",
+    "accent_warm": "#8C857A",
+    "accent_cool": "#7C8189",
+    "blossom": "#8E8489",
+    "snow_grey": "#B0B3B6",
+    "glow": "#A89F7E"
+  }
+}

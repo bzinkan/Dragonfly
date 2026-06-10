@@ -1,0 +1,77 @@
+{
+  "_comment": "Provenance ledger for every raw asset input. CC0-only is a hard rule (validate.mjs enforces the license literal): attribution UI conflicts with the no-external-links-for-kids invariant. Raw downloads live in .cache/ (git-ignored); sha256 lets a clean clone verify a re-download. Add an entry BEFORE using any model from a pack.",
+  "sources": [
+    {
+      "id": "generated-dev",
+      "name": "Generated dev/test models (make_test_model.mjs)",
+      "url": null,
+      "license": "CC0",
+      "sha256": null,
+      "notes": "Programmatically generated; no external input."
+    },
+    {
+      "id": "kenney-nature-kit",
+      "name": "Kenney Nature Kit",
+      "url": "https://kenney.nl/assets/nature-kit",
+      "license": "CC0",
+      "sha256": null,
+      "notes": "~330 low-poly nature models (trees, rocks, foliage, terrain). Download manually; record sha256 of the zip when first used."
+    },
+    {
+      "id": "kenney-fantasy-town-kit",
+      "name": "Kenney Fantasy Town Kit",
+      "url": "https://kenney.nl/assets/fantasy-town-kit",
+      "license": "CC0",
+      "sha256": null,
+      "notes": "Walls, fences, planters, lamps for the urban zone."
+    },
+    {
+      "id": "kenney-holiday-kit",
+      "name": "Kenney Holiday Kit",
+      "url": "https://kenney.nl/assets/holiday-kit",
+      "license": "CC0",
+      "sha256": null,
+      "notes": "Snow-covered props for the winter seasonal pass."
+    },
+    {
+      "id": "quaternius-animated-animals",
+      "name": "Quaternius Ultimate Animated Animal Pack",
+      "url": "https://quaternius.com/packs/ultimateanimatedanimals.html",
+      "license": "CC0",
+      "sha256": null,
+      "notes": "Rigged animals with Idle/Walk clips (fox, deer, ...). glTF downloads preferred."
+    },
+    {
+      "id": "quaternius-animated-fish",
+      "name": "Quaternius Animated Fish Pack",
+      "url": "https://quaternius.com/",
+      "license": "CC0",
+      "sha256": null,
+      "notes": "Animated fish for the pond zone."
+    },
+    {
+      "id": "quaternius-nature",
+      "name": "Quaternius Ultimate Nature Pack",
+      "url": "https://quaternius.com/",
+      "license": "CC0",
+      "sha256": null,
+      "notes": "Trees, flowers, grass, rocks, crystals (elsewhere islet)."
+    },
+    {
+      "id": "polypizza-quaternius-singles",
+      "name": "Poly Pizza singles by Quaternius (Raccoon, Frog, Wasp, Cloud)",
+      "url": "https://poly.pizza/u/Quaternius",
+      "license": "CC0",
+      "sha256": null,
+      "notes": "ONLY Quaternius uploads are CC0 on Poly Pizza. 'Poly by Google' archive models are CC-BY 3.0 and are EXCLUDED."
+    },
+    {
+      "id": "blockbench-authored",
+      "name": "Authored in Blockbench (butterfly, hummingbird, songbird, soaring bird, snail, worm, wisp, dragonfly)",
+      "url": null,
+      "license": "CC0",
+      "sha256": null,
+      "notes": "Hand-built originals; source .bbmodel files committed under sources_authored/ when created."
+    }
+  ]
+}
