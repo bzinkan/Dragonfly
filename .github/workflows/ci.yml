@@ -2,7 +2,7 @@ name: CI
 
 # Runs on every PR and every push (any branch).
 # - backend: ruff + mypy + pytest with coverage
-# - mobile: TypeScript + play-internal Expo config sanity
+# - mobile: TypeScript + jest + play-internal Expo config sanity
 #
 # Note: the legacy AWS CDK diff job and GCP deploy path are inactive after
 # ADR 0010. Azure deployment is handled by deploy-azure-api-dev.yml and the
@@ -75,6 +75,9 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
 
       - name: Verify play-internal config
         run: APP_ENV=play-internal npm run config:play-internal
