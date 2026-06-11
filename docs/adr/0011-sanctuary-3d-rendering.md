@@ -102,6 +102,31 @@ explicitly (`adb shell am start -n com.dragonfly.app.dev/.MainActivity -a
 android.intent.action.VIEW -d "<link>"`) or pick the server from the dev
 client's launcher UI.
 
+## World-design direction: biome archipelago (2026-06-10, product owner)
+
+The end-state Sanctuary is **seven floating islands — one per zone, each a
+distinct biome** — not one island with seven regions. A kid's observation
+routes to the island whose biome it belongs to (long-term example: a
+penguin photographed in an arctic context feeds an arctic biome island).
+
+Implementation notes:
+
+- The current single-island terrain is L1 look-dev scaffolding. The
+  architecture already isolates the change: `zoneAnchors.ts` becomes
+  per-island positions, `heightfield.ts` becomes a per-island
+  mini-heightfield generator, `cameraViews.ts` gets per-island fly-to
+  framings. `scenePlan`, element placement, the manifest, and all data
+  flow are untouched. Target: the L2 terrain pass, before zone-specific
+  asset dressing begins (so art lands on the final layout).
+- An archipelago also composes better visually: each island can be
+  strongly themed (palette, silhouette, props) without crowding, and the
+  camera "dive" becomes a flight to an island.
+- True biome routing (arctic, desert, ...) beyond today's seven
+  iconic-taxon zones is a BACKEND/content vocabulary change
+  (`SanctuaryZoneId` literal, zone routing map, authored content) — a
+  Phase 2+ ADR of its own. The 3D layer renders whatever zones the API
+  ships, so the renderer does not block that evolution.
+
 ## Cross-platform addendum (2026-06-10)
 
 The Sanctuary must eventually render in the parents web app (Expo web,

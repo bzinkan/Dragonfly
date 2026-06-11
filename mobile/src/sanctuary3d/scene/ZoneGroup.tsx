@@ -54,21 +54,26 @@ export function ZoneGroup({
         </mesh>
       ) : null}
       {plan.zoneId === "elsewhere" ? (
-        // Dreamlike floating mini-island: grassy domed top over a rocky
-        // taper -- a tiny echo of the main island, not a bare rock.
+        // Dreamlike floating mini-island: flat grassy cap on an irregular
+        // faceted rock chunk (low-poly facets read as rock; smooth domes
+        // and cones read as toys).
         <group
           position={[cx, cy, cz]}
           onClick={(e) => { e.stopPropagation(); focus(); }}
         >
-          <mesh position={[0, 0.12, 0]} scale={[1, 0.35, 1]}>
-            <sphereGeometry args={[layout.radius, 12, 8]} />
+          <mesh position={[0, 0.1, 0]}>
+            <cylinderGeometry args={[layout.radius, layout.radius * 0.92, 0.22, 9]} />
             <meshToonMaterial
               color={awake ? "#86A861" : "#8A8C84"}
               gradientMap={toonRamp()}
             />
           </mesh>
-          <mesh position={[0, -0.45, 0]} rotation={[Math.PI, 0, 0]}>
-            <coneGeometry args={[layout.radius * 0.8, 1.1, 7]} />
+          <mesh
+            position={[0, -0.5, 0]}
+            rotation={[0.4, 0.9, 0.2]}
+            scale={[1, 1.35, 0.85]}
+          >
+            <dodecahedronGeometry args={[layout.radius * 0.72, 0]} />
             <meshToonMaterial color="#6E6256" gradientMap={toonRamp()} />
           </mesh>
         </group>
