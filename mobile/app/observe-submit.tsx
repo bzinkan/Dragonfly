@@ -1,6 +1,6 @@
 import { router, Stack } from "expo-router";
 import * as Location from "expo-location";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -14,14 +14,16 @@ import { ApiError } from "@/src/api/client";
 import { reverseGeocode } from "@/src/api/geocode";
 import {
   type CvSuggestion,
+  type ObservationPatch,
   type ObservationReward,
+  type PhotoPresignResponse,
   createObservation,
   identifyObservation,
   patchObservation,
   presignPhoto,
 } from "@/src/api/observations";
 import { queryClient } from "@/src/api/queryClient";
-import { putPhotoToSignedUrl } from "@/src/api/upload";
+import { legacyPutHeaders, putPhotoToSignedUrl } from "@/src/api/upload";
 import { useDraftStore } from "@/src/observation/draftStore";
 import { SanctuaryRevealModal } from "@/src/sanctuary/SanctuaryRevealModal";
 
@@ -38,6 +40,25 @@ type Phase =
   | { kind: "patching"; observationId: string }
   | { kind: "done"; observationId: string }
   | { kind: "error"; message: string };
+
+/**
+ * Server-side progress that survives a failed leg. The phase machine above
+ * is what the kid sees; this is what lets "Try again" resume from the
+ * failed leg instead of re-running presign + create -- which would attach
+ * a second observation to a fresh photo row and orphan the first one.
+ */
+type SubmitProgress = {
+  presigned: PhotoPresignResponse | null;
+  uploaded: boolean;
+  observationId: string | null;
+  identify: { suggestions: CvSuggestion[]; cvUnavailable: boolean } | null;
+  pendingPatch: ObservationPatch | null;
+};
+
+function presignExpired(presigned: PhotoPresignResponse): boolean {
+  // 30s safety margin: a PUT started on the edge of SAS expiry fails.
+  return Date.parse(presigned.expires_at) - 30_000 < Date.now();
+}
 
 export default function ObserveSubmitScreen() {
   const photo = useDraftStore((s) => s.photo);
@@ -59,6 +80,15 @@ export default function ObserveSubmitScreen() {
   // ``done`` AND ``sanctuaryRewards.length > 0``.
   const [sanctuaryRewards, setSanctuaryRewards] = useState<ObservationReward[]>([]);
   const [revealVisible, setRevealVisible] = useState(false);
+  // Not state: progress is only read inside runSubmit/sendPatch, and a
+  // re-render mid-pipeline must not reset it.
+  const progressRef = useRef<SubmitProgress>({
+    presigned: null,
+    uploaded: false,
+    observationId: null,
+    identify: null,
+    pendingPatch: null,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -131,59 +161,160 @@ export default function ObserveSubmitScreen() {
     );
   }
 
-  const submittable =
-    phase.kind === "idle" && locStatus === "ready" && coords !== null;
+  // Submit starts the pipeline; Try again resumes it after an error.
+  const canSubmit =
+    (phase.kind === "idle" || phase.kind === "error") &&
+    locStatus === "ready" &&
+    coords !== null;
 
-  async function pickSuggestion(s: CvSuggestion) {
-    if (phase.kind !== "picking") return;
-    const obsId = phase.observationId;
+  function finishDone(observationId: string) {
+    progressRef.current.pendingPatch = null;
+    clearDraft();
+    // The Home list caches for 30s; without this the fresh observation
+    // doesn't show up until a pull-to-refresh.
+    void queryClient.invalidateQueries({ queryKey: ["observations", "me"] });
+    setPhase({ kind: "done", observationId });
+  }
+
+  async function sendPatch(obsId: string, payload: ObservationPatch) {
+    // Stashed before the request so a failure can re-send it verbatim
+    // from the Try again button.
+    progressRef.current.pendingPatch = payload;
     setPhase({ kind: "patching", observationId: obsId });
     try {
-      await patchObservation(obsId, {
-        taxon_id: s.taxon_id,
-        // Server auto-fills species_name from species_cache when only
-        // taxon_id is sent (PR #40).
-        place_name: placeName,
-      });
-      clearDraft();
-      setPhase({ kind: "done", observationId: obsId });
+      await patchObservation(obsId, payload);
+      finishDone(obsId);
     } catch (err) {
       setPhase({ kind: "error", message: errorMessage(err) });
     }
+  }
+
+  async function pickSuggestion(s: CvSuggestion) {
+    if (phase.kind !== "picking") return;
+    // Server auto-fills species_name from species_cache when only
+    // taxon_id is sent (PR #40).
+    await sendPatch(phase.observationId, {
+      taxon_id: s.taxon_id,
+      place_name: placeName,
+    });
   }
 
   async function pickManual() {
     if (phase.kind !== "picking") return;
-    const obsId = phase.observationId;
     const trimmed = manualSpecies.trim();
     if (!trimmed) return;
-    setPhase({ kind: "patching", observationId: obsId });
-    try {
-      await patchObservation(obsId, {
-        species_name: trimmed,
-        place_name: placeName,
-      });
-      clearDraft();
-      setPhase({ kind: "done", observationId: obsId });
-    } catch (err) {
-      setPhase({ kind: "error", message: errorMessage(err) });
-    }
+    await sendPatch(phase.observationId, {
+      species_name: trimmed,
+      place_name: placeName,
+    });
   }
 
   async function pickSkip() {
     if (phase.kind !== "picking") return;
-    const obsId = phase.observationId;
     if (!placeName) {
       // Nothing to PATCH; skip straight to done.
-      clearDraft();
-      setPhase({ kind: "done", observationId: obsId });
+      finishDone(phase.observationId);
       return;
     }
-    setPhase({ kind: "patching", observationId: obsId });
+    await sendPatch(phase.observationId, { place_name: placeName });
+  }
+
+  /**
+   * Run (or resume) the submit pipeline. Completed legs are recorded in
+   * progressRef, so a retry picks up at the failed leg: a created
+   * observation is never re-created, an uploaded photo is never
+   * re-presigned (unless the SAS expired), and a failed species PATCH is
+   * re-sent as-is.
+   */
+  async function runSubmit() {
+    if (!coords || !photo) return;
+    const p = progressRef.current;
     try {
-      await patchObservation(obsId, { place_name: placeName });
-      clearDraft();
-      setPhase({ kind: "done", observationId: obsId });
+      // A species pick failed mid-PATCH: re-send it and finish.
+      if (p.observationId && p.pendingPatch) {
+        const payload = p.pendingPatch;
+        setPhase({ kind: "patching", observationId: p.observationId });
+        await patchObservation(p.observationId, payload);
+        finishDone(p.observationId);
+        return;
+      }
+
+      // Identify already completed: drop straight back into picking.
+      if (p.observationId && p.identify) {
+        setPhase({
+          kind: "picking",
+          observationId: p.observationId,
+          suggestions: p.identify.suggestions,
+          cvUnavailable: p.identify.cvUnavailable,
+        });
+        return;
+      }
+
+      let observationId = p.observationId;
+      if (observationId === null) {
+        let presigned = p.presigned;
+        // Presign fresh, or re-presign when the SAS sat in an error state
+        // past expiry. A superseded pending photo row never gets an
+        // observation and is cleaned up with other upload orphans.
+        if (!presigned || presignExpired(presigned)) {
+          setPhase({ kind: "uploading", step: "presign" });
+          presigned = await presignPhoto();
+          p.presigned = presigned;
+          p.uploaded = false;
+        }
+
+        if (!p.uploaded) {
+          setPhase({ kind: "uploading", step: "put" });
+          await putPhotoToSignedUrl(
+            presigned.upload_url,
+            photo.localUri,
+            presigned.required_headers ?? legacyPutHeaders(presigned.content_type),
+          );
+          p.uploaded = true;
+        }
+
+        setPhase({ kind: "uploading", step: "create" });
+        const obs = await createObservation({
+          photo_id: presigned.photo_id,
+          latitude: coords.lat,
+          longitude: coords.lng,
+        });
+        observationId = obs.id;
+        p.observationId = observationId;
+
+        // Stash any Sanctuary rewards from the dispatcher response
+        // so the reveal modal can render when we transition to
+        // ``done``. ``rewards`` is optional on the wire (empty list
+        // when the dispatcher emitted nothing); the filter handles
+        // the missing-field case.
+        const sRewards = (obs.rewards ?? []).filter(
+          (r) => r.type === "world_unlock" || r.type === "world_evolution",
+        );
+        if (sRewards.length > 0) {
+          setSanctuaryRewards(sRewards);
+        }
+
+        // Fire geocode in parallel; result folded into the
+        // eventual PATCH. Failure is non-fatal.
+        void reverseGeocode(coords.lat, coords.lng)
+          .then((r) => setPlaceName(r.place_name))
+          .catch(() => {
+            /* ignore */
+          });
+      }
+
+      setPhase({ kind: "identifying", observationId });
+      const ident = await identifyObservation(observationId);
+      p.identify = {
+        suggestions: ident.suggestions,
+        cvUnavailable: ident.cv_unavailable,
+      };
+      setPhase({
+        kind: "picking",
+        observationId,
+        suggestions: ident.suggestions,
+        cvUnavailable: ident.cv_unavailable,
+      });
     } catch (err) {
       setPhase({ kind: "error", message: errorMessage(err) });
     }
@@ -327,60 +458,14 @@ export default function ObserveSubmitScreen() {
             style={[
               styles.button,
               styles.buttonPrimary,
-              !submittable && styles.buttonDisabled,
+              !canSubmit && styles.buttonDisabled,
             ]}
-            disabled={!submittable}
-            onPress={async () => {
-              if (!coords) return;
-              try {
-                setPhase({ kind: "uploading", step: "presign" });
-                const presigned = await presignPhoto();
-
-                setPhase({ kind: "uploading", step: "put" });
-                await putPhotoToSignedUrl(presigned.upload_url, photo.localUri);
-
-                setPhase({ kind: "uploading", step: "create" });
-                const obs = await createObservation({
-                  photo_id: presigned.photo_id,
-                  latitude: coords.lat,
-                  longitude: coords.lng,
-                });
-
-                // Stash any Sanctuary rewards from the dispatcher response
-                // so the reveal modal can render when we transition to
-                // ``done``. ``rewards`` is optional on the wire (empty list
-                // when the dispatcher emitted nothing); the filter handles
-                // the missing-field case.
-                const sRewards = (obs.rewards ?? []).filter(
-                  (r) =>
-                    r.type === "world_unlock" || r.type === "world_evolution",
-                );
-                if (sRewards.length > 0) {
-                  setSanctuaryRewards(sRewards);
-                }
-
-                // Fire geocode in parallel; result folded into the
-                // eventual PATCH. Failure is non-fatal.
-                void reverseGeocode(coords.lat, coords.lng)
-                  .then((r) => setPlaceName(r.place_name))
-                  .catch(() => {
-                    /* ignore */
-                  });
-
-                setPhase({ kind: "identifying", observationId: obs.id });
-                const ident = await identifyObservation(obs.id);
-                setPhase({
-                  kind: "picking",
-                  observationId: obs.id,
-                  suggestions: ident.suggestions,
-                  cvUnavailable: ident.cv_unavailable,
-                });
-              } catch (err) {
-                setPhase({ kind: "error", message: errorMessage(err) });
-              }
-            }}
+            disabled={!canSubmit}
+            onPress={() => void runSubmit()}
           >
-            <Text style={styles.buttonText}>Submit</Text>
+            <Text style={styles.buttonText}>
+              {phase.kind === "error" ? "Try again" : "Submit"}
+            </Text>
           </Pressable>
         )}
       </View>

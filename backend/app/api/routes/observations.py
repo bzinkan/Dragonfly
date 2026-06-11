@@ -30,6 +30,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select, update
+from sqlalchemy.exc import IntegrityError
 from ulid import ULID
 
 from app.core.auth import CurrentUserDep, resolve_current_user_row
@@ -193,7 +194,18 @@ async def create_observation(
         place_name=payload.place_name,
     )
     session.add(observation)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        # uq_observations_photo_id: a duplicate/concurrent submit already
+        # attached this photo. Rollback also undoes the membership counter
+        # bump above. Same 409 family as the status check so the client
+        # treats both as "this photo is spent".
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Photo is already attached to an observation",
+        ) from None
     await session.refresh(observation)
 
     log.info(
