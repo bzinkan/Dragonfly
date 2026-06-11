@@ -23,7 +23,11 @@ import {
   presignPhoto,
 } from "@/src/api/observations";
 import { queryClient } from "@/src/api/queryClient";
-import { legacyPutHeaders, putPhotoToSignedUrl } from "@/src/api/upload";
+import {
+  UploadHttpError,
+  legacyPutHeaders,
+  putPhotoToSignedUrl,
+} from "@/src/api/upload";
 import { useDraftStore } from "@/src/observation/draftStore";
 import { SanctuaryRevealModal } from "@/src/sanctuary/SanctuaryRevealModal";
 
@@ -131,12 +135,14 @@ export default function ObserveSubmitScreen() {
     // state on first visit. We do NOT await the refetch -- the navigation
     // is the user's intent; the data lands when it lands.
     void queryClient.invalidateQueries({ queryKey: ["sanctuary", "me"] });
+    clearDraft();
     setRevealVisible(false);
     router.replace("/sanctuary");
   }
 
   function handleDone() {
     void queryClient.invalidateQueries({ queryKey: ["sanctuary", "me"] });
+    clearDraft();
     setRevealVisible(false);
     // Same destination the existing post-submit flow would land on if no
     // reveal fired -- the submit screen stays mounted (kid can read the
@@ -169,7 +175,11 @@ export default function ObserveSubmitScreen() {
 
   function finishDone(observationId: string) {
     progressRef.current.pendingPatch = null;
-    clearDraft();
+    // The draft is NOT cleared here: the done screen still renders the
+    // photo, and clearing it in the same batch as setPhase would trip the
+    // no-photo early return below -- swallowing the done state and the
+    // Sanctuary reveal modal. The exit paths (Done / See Sanctuary /
+    // back button) clear it instead.
     // The Home list caches for 30s; without this the fresh observation
     // doesn't show up until a pull-to-refresh.
     void queryClient.invalidateQueries({ queryKey: ["observations", "me"] });
@@ -265,11 +275,23 @@ export default function ObserveSubmitScreen() {
 
         if (!p.uploaded) {
           setPhase({ kind: "uploading", step: "put" });
-          await putPhotoToSignedUrl(
-            presigned.upload_url,
-            photo.localUri,
-            presigned.required_headers ?? legacyPutHeaders(presigned.content_type),
-          );
+          try {
+            await putPhotoToSignedUrl(
+              presigned.upload_url,
+              photo.localUri,
+              presigned.required_headers ?? legacyPutHeaders(presigned.content_type),
+            );
+          } catch (err) {
+            // 403 = storage rejected the SAS (expired server-side, or a
+            // slow device clock fooled presignExpired). Forget this
+            // presign so the next Try again mints a fresh one instead of
+            // looping on the same dead URL.
+            if (err instanceof UploadHttpError && err.status === 403) {
+              p.presigned = null;
+              p.uploaded = false;
+            }
+            throw err;
+          }
           p.uploaded = true;
         }
 
@@ -447,7 +469,13 @@ export default function ObserveSubmitScreen() {
       <View style={styles.actions}>
         <Pressable
           style={[styles.button, styles.buttonGhost]}
-          onPress={() => router.back()}
+          onPress={() => {
+            // Submitted drafts are spent; clear on the way out so the
+            // next visit starts fresh. Mid-flow cancels keep the draft
+            // (the kid may come back and retry).
+            if (phase.kind === "done") clearDraft();
+            router.back();
+          }}
         >
           <Text style={styles.buttonText}>
             {phase.kind === "done" ? "Done" : "Cancel"}

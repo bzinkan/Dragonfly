@@ -13,6 +13,16 @@
  */
 import * as FileSystem from "expo-file-system/legacy";
 
+export class UploadHttpError extends Error {
+  constructor(
+    public readonly status: number,
+    body: string,
+  ) {
+    super(`Photo upload failed (HTTP ${status}): ${body.slice(0, 200) || "no body"}`);
+    this.name = "UploadHttpError";
+  }
+}
+
 export async function putPhotoToSignedUrl(
   signedUrl: string,
   localUri: string,
@@ -26,9 +36,7 @@ export async function putPhotoToSignedUrl(
 
   // uploadAsync resolves on any HTTP status; non-2xx is our failure.
   if (res.status < 200 || res.status >= 300) {
-    throw new Error(
-      `Photo upload failed (HTTP ${res.status}): ${res.body.slice(0, 200) || "no body"}`,
-    );
+    throw new UploadHttpError(res.status, res.body);
   }
 }
 

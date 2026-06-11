@@ -10,8 +10,10 @@ to one photo. The moderation worker resolves photo -> observation with
 abandon-looping the Service Bus message into the DLQ and permanently
 wedging that photo's moderation.
 
-The unique constraint makes the invariant structural; the create route
-maps the violation to a 409.
+The unique constraint makes the invariant structural; on violation the
+create route replays the existing observation idempotently (a retry
+after a lost create response is the common cause), falling back to 409
+only when no existing row can be found.
 
 This will fail loudly if duplicate `photo_id` rows already exist --
 resolve those by hand first (keep the oldest, delete the rest); we do
@@ -29,9 +31,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_unique_constraint(
-        "uq_observations_photo_id", "observations", ["photo_id"]
-    )
+    op.create_unique_constraint("uq_observations_photo_id", "observations", ["photo_id"])
 
 
 def downgrade() -> None:
