@@ -54,19 +54,38 @@ export function ZoneGroup({
         </mesh>
       ) : null}
       {plan.zoneId === "elsewhere" ? (
-        <mesh position={[cx, cy, cz]} onClick={(e) => { e.stopPropagation(); focus(); }}>
-          <cylinderGeometry args={[layout.radius, layout.radius * 0.55, 0.5, 7]} />
-          <meshToonMaterial color={color} gradientMap={toonRamp()} />
-        </mesh>
-      ) : null}
-      {plan.zoneId === "soil" ? (
-        <mesh
+        // Dreamlike floating mini-island: grassy domed top over a rocky
+        // taper -- a tiny echo of the main island, not a bare rock.
+        <group
           position={[cx, cy, cz]}
-          rotation={[-0.18, 0, 0]}
           onClick={(e) => { e.stopPropagation(); focus(); }}
         >
-          <boxGeometry args={[layout.radius * 2, 1.2, 0.25]} />
-          <meshToonMaterial color={color} gradientMap={toonRamp()} />
+          <mesh position={[0, 0.12, 0]} scale={[1, 0.35, 1]}>
+            <sphereGeometry args={[layout.radius, 12, 8]} />
+            <meshToonMaterial
+              color={awake ? "#86A861" : "#8A8C84"}
+              gradientMap={toonRamp()}
+            />
+          </mesh>
+          <mesh position={[0, -0.45, 0]} rotation={[Math.PI, 0, 0]}>
+            <coneGeometry args={[layout.radius * 0.8, 1.1, 7]} />
+            <meshToonMaterial color="#6E6256" gradientMap={toonRamp()} />
+          </mesh>
+        </group>
+      ) : null}
+      {plan.zoneId === "soil" ? (
+        // Earth-toned stratum band set INTO the cliff face (not a floating
+        // slab): the visible soil cross-section the zone deepens into.
+        <mesh
+          position={[cx, cy - 0.15, cz - 0.2]}
+          rotation={[-0.42, 0, 0]}
+          onClick={(e) => { e.stopPropagation(); focus(); }}
+        >
+          <boxGeometry args={[layout.radius * 2, 1.0, 0.16]} />
+          <meshToonMaterial
+            color={awake ? "#6E5235" : "#6B655C"}
+            gradientMap={toonRamp()}
+          />
         </mesh>
       ) : null}
 

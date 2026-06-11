@@ -23,20 +23,33 @@ const TERRAIN_ZONES = new Set<SanctuaryZoneId>([
 export function MysterySilhouette({ zoneId }: { zoneId: SanctuaryZoneId }) {
   const [cx, cy, cz] = ZONE_LAYOUT[zoneId].center;
   const y = TERRAIN_ZONES.has(zoneId) ? heightAt(cx, cz) : cy;
+  if (zoneId === "pond") {
+    return (
+      <mesh position={[cx, y + 0.5, cz]}>
+        <cylinderGeometry args={[0.4, 0.4, 0.06, 12]} />
+        <meshLambertMaterial color={SILHOUETTE_COLOR} transparent opacity={0.45} />
+      </mesh>
+    );
+  }
+  if (zoneId === "sky") {
+    return (
+      <mesh position={[cx, y + 0.5, cz]}>
+        <sphereGeometry args={[0.4, 8, 6]} />
+        <meshLambertMaterial color={SILHOUETTE_COLOR} transparent opacity={0.45} />
+      </mesh>
+    );
+  }
+  // Everywhere else: a ghosted young tree (trunk + canopy), whispering
+  // "something could grow here" -- not a rock cone.
   return (
     <group position={[cx, y, cz]}>
-      <mesh position={[0, 0.5, 0]}>
-        {zoneId === "pond" ? (
-          // Lily-pad disc for the pond...
-          <cylinderGeometry args={[0.4, 0.4, 0.06, 12]} />
-        ) : zoneId === "sky" ? (
-          // ...cloud wisp for the sky...
-          <sphereGeometry args={[0.4, 8, 6]} />
-        ) : (
-          // ...and a tall tapering form (grass/tree/post) everywhere else.
-          <coneGeometry args={[0.28, 1.0, 7]} />
-        )}
-        <meshLambertMaterial color={SILHOUETTE_COLOR} transparent opacity={0.45} />
+      <mesh position={[0, 0.22, 0]}>
+        <cylinderGeometry args={[0.05, 0.07, 0.44, 6]} />
+        <meshLambertMaterial color={SILHOUETTE_COLOR} transparent opacity={0.5} />
+      </mesh>
+      <mesh position={[0, 0.78, 0]}>
+        <coneGeometry args={[0.3, 0.75, 7]} />
+        <meshLambertMaterial color={SILHOUETTE_COLOR} transparent opacity={0.5} />
       </mesh>
     </group>
   );

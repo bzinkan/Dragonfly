@@ -33,10 +33,11 @@ export function IslandScene({
       <SkyDome topColor={plan.palette.skyTop} horizonColor={plan.palette.horizon} />
       <TerrainMesh plan={plan} />
       <GrassField dormant={meadowDormant} />
-      {/* Rocky underside taper: closes the floating-island silhouette. */}
-      <mesh position={[0, -3.4, 0]}>
-        <coneGeometry args={[7.6, 3.2, 9]} />
-        <meshToonMaterial color="#6B5B49" gradientMap={toonRamp()} />
+      {/* Rocky underside taper: closes the floating-island silhouette.
+          Kept tight and shadow-dark so it never competes with the frame. */}
+      <mesh position={[0, -3.9, 0]}>
+        <coneGeometry args={[6.2, 3.0, 9]} />
+        <meshToonMaterial color="#574C40" gradientMap={toonRamp()} />
       </mesh>
       {plan.zones.map((zone) => (
         <ZoneGroup
