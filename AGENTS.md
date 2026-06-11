@@ -17,6 +17,7 @@ Start with these files, in this order:
 7. `docs/mobile.md` for Expo/mobile constraints.
 8. `docs/adr/` for decisions that must not be casually reversed. Most active:
    - [ADR 0010](docs/adr/0010-azure-target-architecture.md) — Azure target architecture (Entra External Identities, Dragonfly-signed kid JWTs, Azure Postgres, Blob Storage, Container Apps, Key Vault, Azure AI Content Safety, Azure Monitor). Supersedes ADR 0005, 0008, and 0009.
+   - [ADR 0011](docs/adr/0011-sanctuary-3d-rendering.md) — Sanctuary 3D rendering stack (three + react-three-fiber + expo-gl, bundled quantized GLBs, permanent 2D fallback, biome-archipelago world design). Active on branch `feature/sanctuary-3d`.
    - [ADR 0006](docs/adr/0006-ingest-pipelines.md) — Ingest pipelines are explicit, replayable, and audited via `ingest_runs`.
    - [ADR 0007](docs/adr/0007-internal-ai-agent-tooling.md) — Multi-agent AI is internal/adult-only; never on a kid-facing request path.
    - [ADR 0002](docs/adr/0002-no-runtime-llm.md) — Kid-facing runtime LLM calls remain forbidden.
@@ -82,6 +83,24 @@ Migration scaffolding present:
 - `infra-azure/` — Azure setup/decommission scripts and the current manifest.
 - `infra-gcp/` — legacy GCP Terraform and residual DNS/Firebase reference only.
 - `infra/` — legacy AWS CDK stacks, reference only.
+
+Sanctuary 3D track (post-pilot feature, branch `feature/sanctuary-3d`, ADR 0011):
+
+- `mobile/src/sanctuary3d/` — the 3D living-diorama renderer behind the
+  `SANCTUARY_3D` build flag (`1` in development/preview, `0` in
+  play-internal/production until the post-pilot flag flip; local
+  `expo start` defaults ON). `Sanctuary2DScreen` is the PERMANENT fallback
+  (crash latch, screen reader, Simple view) — never delete it.
+- `scripts/sanctuary_assets/` — GLB asset pipeline (normalize → manifest →
+  validate; CC0-only sources, CI-gated). See `docs/sanctuary-assets.md`.
+- `mobile/` now has a jest suite (`npm test`, runs in CI) alongside
+  typecheck; keep 3D logic in pure modules so it stays testable without GL.
+- Dev-loop gotchas (hard-won; do not rediscover): three.js needs
+  `@babel/plugin-transform-class-static-block` (in `babel.config.js`);
+  Metro must restart after ADDING `.glb` files; never start the look-dev
+  Metro with `CI=1` (disables file watching); pre-warm the bundle via curl
+  after a cache clear or the dev client ANRs; jest maps `.glb` via
+  `jest.glbMock.js`.
 
 ## Immediate Risk Closure Priority
 
