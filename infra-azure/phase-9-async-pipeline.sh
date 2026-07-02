@@ -22,13 +22,14 @@
 #     filtering BlobCreated events under `photos/pending/` and delivering
 #     to the moderation-pending queue. No webhook handshake -- Event
 #     Grid -> Service Bus is a first-class destination.
-#   - 6 Container Apps Jobs:
+#   - 7 Container Apps Jobs:
 #       * `dragonfly-moderation-worker`     -- KEDA-scaled Service Bus consumer
 #       * `dragonfly-inat-submit-worker`    -- KEDA-scaled Service Bus consumer
 #       * `dragonfly-rarity-refresh`        -- nightly cron 03:00 UTC
 #       * `dragonfly-sweep-stale-reviews`   -- nightly cron 04:00 UTC
 #       * `dragonfly-inat-outbox-replay`    -- */15 * * * * cron
 #       * `dragonfly-dispatcher-replay`     -- */15 * * * * cron
+#       * `dragonfly-expedition-funnel`     -- manual (engagement funnel report)
 #     All use the same Container App image, the same UAMI, and the same
 #     env-var set (Postgres, Blob, Service Bus + KV refs).
 #   - UAMI role assignments for the new resources:
@@ -654,6 +655,64 @@ EOF
   fi
 }
 
+ensure_manual_job() {
+  local job_name="$1"
+  local command="$2"
+  local yaml_path
+  yaml_path="$(mktemp)"
+
+  echo "==> ensure manual Container Apps Job $job_name"
+  cat > "$yaml_path" <<EOF
+name: $(yaml_quote "$job_name")
+location: $(yaml_quote "$LOCATION")
+identity:
+  type: UserAssigned
+  userAssignedIdentities:
+    $(yaml_quote "$UAMI_ID"): {}
+properties:
+  environmentId: $(yaml_quote "$CAE_ID")
+  configuration:
+    triggerType: Manual
+    replicaTimeout: 1800
+    replicaRetryLimit: 0
+    registries:
+    - server: $(yaml_quote "${ACR_NAME}.azurecr.io")
+      identity: $(yaml_quote "$UAMI_ID")
+$(write_job_secrets_yaml)
+    manualTriggerConfig:
+      parallelism: 1
+      replicaCompletionCount: 1
+  template:
+    containers:
+    - name: $(yaml_quote "$job_name")
+      image: $(yaml_quote "$IMAGE")
+      command:
+      - /bin/sh
+      - -c
+      args:
+      - $(yaml_quote "$command")
+      resources:
+        cpu: 0.5
+        memory: 1Gi
+$(write_job_env_yaml)
+EOF
+  if az containerapp job show --name "$job_name" --resource-group "$RG" --subscription "$MGMT_SUB" >/dev/null 2>&1; then
+    az containerapp job update \
+      --name "$job_name" \
+      --resource-group "$RG" \
+      --subscription "$MGMT_SUB" \
+      --yaml "$yaml_path" \
+      --output none
+  else
+    az containerapp job create \
+      --name "$job_name" \
+      --resource-group "$RG" \
+      --subscription "$MGMT_SUB" \
+      --yaml "$yaml_path" \
+      --output none
+  fi
+}
+
 ensure_event_job "dragonfly-moderation-worker"  "python -m admin.moderation_consumer --max-messages ${EVENT_JOB_MAX_MESSAGES}"  "$SB_QUEUE_MODERATION" "$SECRET_MOD_SCALER" "$MODERATION_SCALER_CONNECTION"
 ensure_event_job "dragonfly-inat-submit-worker" "python -m admin.inat_submit_consumer --max-messages ${EVENT_JOB_MAX_MESSAGES}" "$SB_QUEUE_INAT" "$SECRET_INAT_SCALER" "$INAT_SCALER_CONNECTION"
 
@@ -661,6 +720,8 @@ ensure_cron_job "dragonfly-rarity-refresh"      "python -m admin.rarity_refresh"
 ensure_cron_job "dragonfly-sweep-stale-reviews" "python -m admin.sweep_stale_reviews" "0 4 * * *"
 ensure_cron_job "dragonfly-inat-outbox-replay"  "python -m admin.inat_outbox_replay"  "*/15 * * * *"
 ensure_cron_job "dragonfly-dispatcher-replay"   "python -m admin.dispatcher_replay"   "*/15 * * * *"
+
+ensure_manual_job "dragonfly-expedition-funnel" "python -m admin.expedition_funnel"
 
 # ---------------------------------------------------------------------------
 # 9. Done
