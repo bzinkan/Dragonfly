@@ -167,6 +167,24 @@ def test_combinator_any_of_parses() -> None:
     assert len(spec.matches) == 2
 
 
+def test_combinator_empty_matches_rejected() -> None:
+    """An empty all_of would vacuously match ANY photo; empty any_of
+    would match none. Both are authoring mistakes -- reject them."""
+    with pytest.raises(ValidationError):
+        MatchAllOf.model_validate({"kind": "all_of", "matches": []})
+    with pytest.raises(ValidationError):
+        MatchAnyOf.model_validate({"kind": "any_of", "matches": []})
+
+
+def test_combinator_single_element_accepted() -> None:
+    all_of = MatchAllOf.model_validate({"kind": "all_of", "matches": [{"kind": "not_in_dex"}]})
+    assert len(all_of.matches) == 1
+    any_of = MatchAnyOf.model_validate(
+        {"kind": "any_of", "matches": [{"kind": "iconic_taxon", "value": "Aves"}]}
+    )
+    assert len(any_of.matches) == 1
+
+
 def test_step_descriminated_union_resolves_each_kind() -> None:
     """One step per kind, just to smoke each one."""
     kinds = [

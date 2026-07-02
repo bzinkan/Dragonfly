@@ -1,3 +1,10 @@
+# Build context is the REPO ROOT, not backend/ -- expedition content ships
+# inside the image so image version == content version:
+#   docker build -f backend/Dockerfile .
+#   az acr build --registry ... --image ... --file backend/Dockerfile .
+# The context-level ignore rules live in the repo-root .dockerignore
+# (Docker only reads <context>/.dockerignore; backend/.dockerignore does
+# not apply to this build).
 FROM python:3.12-slim AS builder
 
 WORKDIR /app
@@ -8,7 +15,7 @@ RUN apt-get update \
 
 RUN pip install --no-cache-dir uv
 
-COPY pyproject.toml uv.lock ./
+COPY backend/pyproject.toml backend/uv.lock ./
 
 RUN uv sync --frozen --no-install-project --no-dev
 
@@ -17,10 +24,13 @@ FROM python:3.12-slim
 WORKDIR /app
 
 COPY --from=builder /app/.venv /app/.venv
-COPY app/ ./app/
-COPY alembic.ini ./
-COPY alembic/ ./alembic/
-COPY admin/ ./admin/
+COPY backend/app/ ./app/
+COPY backend/alembic.ini ./
+COPY backend/alembic/ ./alembic/
+COPY backend/admin/ ./admin/
+# Expedition content baked into the image; admin.sync_expeditions
+# materializes it into Postgres after each deploy (docs/runbook.md).
+COPY content/expeditions/ ./content/expeditions/
 
 ENV PATH="/app/.venv/bin:${PATH}"
 

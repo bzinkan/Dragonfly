@@ -206,11 +206,12 @@ class MatchNotWithinRadius(BaseModel):
 
 class MatchAllOf(BaseModel):
     kind: Literal["all_of"]
-    matches: list["MatchSpec"]  # forward ref
+    # min_length: an empty all_of would vacuously match ANY photo
+    matches: Annotated[list["MatchSpec"], Field(min_length=1)]  # forward ref
 
 class MatchAnyOf(BaseModel):
     kind: Literal["any_of"]
-    matches: list["MatchSpec"]
+    matches: Annotated[list["MatchSpec"], Field(min_length=1)]
 
 MatchSpec = Annotated[
     Union[

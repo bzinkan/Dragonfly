@@ -80,6 +80,10 @@ fi
 # This image will deploy in Phase 5 but the app won't be healthy until
 # Phase 6 code lands. That's deliberate: the deploy path is what we want
 # to validate now; the runtime correctness is Phase 6's job.
+#
+# The build context is the REPO ROOT (not backend/) so that
+# content/expeditions/ ships inside the image; the upload is trimmed by
+# the repo-root .dockerignore.
 
 echo "==> build + push $IMAGE_TAG (Azure-side build)"
 az acr build \
@@ -87,7 +91,7 @@ az acr build \
   --subscription "$MGMT_SUB" \
   --image "$IMAGE_TAG" \
   --file backend/Dockerfile \
-  "${REPO_ROOT}/backend"
+  "${REPO_ROOT}"
 
 # ---------------------------------------------------------------------------
 # 4. KV secret

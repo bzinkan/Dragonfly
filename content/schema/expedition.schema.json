@@ -45,6 +45,7 @@
               }
             ]
           },
+          "minItems": 1,
           "title": "Matches",
           "type": "array"
         }
@@ -101,6 +102,7 @@
               }
             ]
           },
+          "minItems": 1,
           "title": "Matches",
           "type": "array"
         }

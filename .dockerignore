@@ -1,0 +1,23 @@
+# Ignore rules for the dragonfly-api image build, whose context is the
+# REPO ROOT (az acr build ... --file backend/Dockerfile .). Docker reads
+# only <context>/.dockerignore, so backend/.dockerignore does NOT apply
+# here -- without this file `az acr build` would upload the entire repo
+# (.git, mobile/node_modules, web/, ...) as the build context.
+#
+# Pattern: exclude everything, allowlist what the Dockerfile COPYs, then
+# re-exclude junk the allowlist re-admitted. Last matching rule wins.
+*
+!backend/**
+!content/expeditions/**
+
+# Junk re-admitted by !backend/** (mirrors backend/.dockerignore).
+backend/.venv
+backend/**/__pycache__
+backend/**/*.pyc
+backend/**/*.pyo
+backend/.pytest_cache
+backend/.mypy_cache
+backend/.ruff_cache
+backend/tests
+backend/.env*
+backend/**/*.md

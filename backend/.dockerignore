@@ -1,3 +1,7 @@
+# NOTE: the deployed image builds from the REPO ROOT context
+# (az acr build ... --file backend/Dockerfile .), which reads the
+# repo-root .dockerignore instead of this file. This file only applies
+# to legacy backend-context builds.
 .venv
 __pycache__
 *.pyc

@@ -76,7 +76,7 @@ curl localhost:8080/v1/meta
 Docker smoke:
 
 ```bash
-docker build -t dragonfly-api backend/
+docker build -f backend/Dockerfile -t dragonfly-api .
 docker run --rm -p 8080:8080 -e DRAGONFLY_ENV=local dragonfly-api
 curl localhost:8080/health
 ```

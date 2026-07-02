@@ -2,9 +2,11 @@
 
 Mirrors `docs/expedition-authoring.md`. Authors edit JSON files under
 `content/expeditions/`; `scripts/validate_content.py` parses each file
-through this model; `scripts/sync_expeditions.py` writes valid files
-to the `expedition_content` Postgres table; `app.matchers.registry`
-interprets each step's `match` block at observation time.
+through this model; `admin.sync_expeditions` (the deployed
+`dragonfly-sync-expeditions` job; `scripts/sync_expeditions.py` is its
+local shim) writes valid files to the `expedition_content` Postgres
+table; `app.matchers.registry` interprets each step's `match` block at
+observation time.
 
 Adding a new match kind: add a `Match<Name>` model here, add it to the
 `MatchSpec` discriminated union, add a matcher in
@@ -67,12 +69,13 @@ class MatchNotWithinRadius(BaseModel):
 
 class MatchAllOf(BaseModel):
     kind: Literal["all_of"]
-    matches: list[MatchSpec]
+    # min_length guard: an empty all_of would vacuously match ANY photo.
+    matches: Annotated[list[MatchSpec], Field(min_length=1)]
 
 
 class MatchAnyOf(BaseModel):
     kind: Literal["any_of"]
-    matches: list[MatchSpec]
+    matches: Annotated[list[MatchSpec], Field(min_length=1)]
 
 
 MatchSpec = Annotated[
