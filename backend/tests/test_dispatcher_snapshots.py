@@ -479,7 +479,8 @@ async def test_scenario_7_observation_completes_the_final_step(
 ) -> None:
     """Active expedition with 3 steps; the first two are already
     completed. The observation matches the third step. Expect both an
-    `expedition_step` AND an `expedition_complete` reward."""
+    `expedition_step` AND an `expedition_complete` reward -- with the
+    completion (60) sorting BEFORE its own step (40) in the celebration."""
     content = _exp_content(
         exp_id="park_starter",
         title="Park Starter",
@@ -490,8 +491,8 @@ async def test_scenario_7_observation_completes_the_final_step(
 
     rewards = await dispatch(_ctx(fake_session), _HANDLERS)
     reward_types = [r.type for r in rewards]
-    assert reward_types == ["first_find", "expedition_step", "expedition_complete", "rarity_tier"]
-    assert [r.weight for r in rewards] == [80, 40, 30, 10]
+    assert reward_types == ["first_find", "expedition_complete", "expedition_step", "rarity_tier"]
+    assert [r.weight for r in rewards] == [80, 60, 40, 10]
     complete_reward = next(r for r in rewards if r.type == "expedition_complete")
     assert complete_reward.payload == {"expedition_id": "park_starter"}
     # Progress row got completed_at stamped; the final step is recorded

@@ -41,9 +41,11 @@ class Reward:
     shown first. Convention table is in `docs/dispatcher.md`:
         100 = "never happened in the world before" (unrecorded)
          80 = "never happened for you before" (first_find)
-         60 = rare/high-tier contextual (rarity_tier legendary/epic)
+         60 = rare/high-tier contextual (rarity_tier legendary/epic,
+              world_unlock) + expedition_complete, which must outrank
+              its own expedition_step so completion renders first
          40 = progress on a goal (expedition_step)
-         30 = goal completion (expedition_complete)
+         30 = goal completion (world_evolution)
          10 = ambient acknowledgment (repeat_find)
     """
 

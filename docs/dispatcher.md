@@ -52,12 +52,12 @@ class Reward:
 |--------|---------------------------------------------------|---------------------------------------|
 | 100    | "This has never happened before in the world"     | `unrecorded` in region                |
 | 80     | "This has never happened before for you"          | `first_find`                          |
-| 60     | Rare or high-tier contextual                      | `rarity_tier` (legendary/epic), `world_unlock` |
+| 60     | Rare or high-tier contextual                      | `rarity_tier` (legendary/epic), `world_unlock`, `expedition_complete` |
 | 40     | Progress on a goal                                | `expedition_step`, `mission_progress` |
-| 30     | Goal completion                                   | `expedition_complete`, `territory_claimed`, `world_evolution` |
+| 30     | Goal completion                                   | `territory_claimed`, `world_evolution` |
 | 10     | Ambient acknowledgment                            | `repeat_find`                         |
 
-The client sorts by `weight` desc and shows rewards one at a time as a sequence. Equal weights resolve by handler registration order (stable).
+The client sorts by `weight` desc and shows rewards one at a time as a sequence. Equal weights resolve by handler registration order (stable). `expedition_complete` sits at 60 — above its own `expedition_step` at 40 — so completing an expedition celebrates before the step that finished it; its tie with `world_unlock` resolves by registration order (World before Expedition).
 
 ### `Context`
 
@@ -246,7 +246,7 @@ Downstream handlers read `ctx.results["dex"].state["is_first_find"]`.
 
 ### `ExpeditionHandler`
 
-Queries the user's active expedition progress rows, runs each incomplete step's `match` spec against the observation via the matcher registry, advances matched steps, emits `expedition_step` rewards, and — on the final step — an `expedition_complete` reward. Each completed step is recorded in `expedition_progress.completed_steps` as `{"completed_at": <iso string>, "observation_id": <ulid>}` (legacy rows hold a plain iso string); the recorded `observation_id` is a per-observation gate — an expedition whose `completed_steps` already credits this observation is skipped on re-dispatch, so a replay cannot chain one observation through multiple steps.
+Queries the user's active expedition progress rows, runs each incomplete step's `match` spec against the observation via the matcher registry, advances matched steps, emits `expedition_step` rewards, and — on the final step — an `expedition_complete` reward. Each completed step is recorded in `expedition_progress.completed_steps` as `{"completed_at": <iso string>, "observation_id": <ulid>}` (legacy rows hold a plain iso string); the recorded `observation_id` is a per-observation gate — an expedition whose `completed_steps` already credits this observation is skipped on re-dispatch, so a replay cannot chain one observation through multiple steps. After a restart (`POST /v1/expeditions/{id}/restart`) the gate map is empty, so a re-dispatched old observation may credit the fresh run once — the invariant is one step per expedition per *run*; if that ever needs hardening, a `restarted_at` column is the lever.
 
 Key correctness property: a single observation can match at most one step per expedition (the first unmatched step), but can progress multiple expeditions at once. Document this in the handler's docstring and snapshot-test it. `PATCH /v1/observations/{id}` re-dispatches the observation when its first `taxon_id` lands (the live mobile flow picks the species after create), which is what makes taxon-based steps reachable; corrections (A -> B) and observations that already minted a dex entry do not re-dispatch (one photo can never farm first-find credit), and a failed re-dispatch resets `dispatched_at` to NULL so the nightly replay recovers it.
 
