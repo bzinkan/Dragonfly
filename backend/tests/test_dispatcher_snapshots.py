@@ -408,7 +408,9 @@ def _wire_expedition_full_dispatch(
       5. Expedition: SELECT (progress, content) JOIN
       6. Expedition: species_cache lookup (taxon_id is set)
       7. Expedition: dex_rows lookup
-      8. Expedition: prior_rows lookup
+      8. Expedition: prior_rows lookup -- only consumed when an active
+         step uses the radius matcher; these scenarios are all
+         any_organism, so it stays queued (harmless leftover)
     """
     dex_insert = MagicMock()
     dex_insert.scalar_one_or_none = MagicMock(return_value="dex-row-1")

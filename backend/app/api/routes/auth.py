@@ -8,7 +8,7 @@ from typing import Annotated
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from ulid import ULID
@@ -85,13 +85,25 @@ async def request_account_deletion(
     """Disable the authenticated account and record the deletion request.
 
     This is the app-store-visible one-tap path. The immediate effect is
-    fail-closed auth on the next request via ``users.disabled_at``; full data
-    erasure for linked kid accounts/photos/iNat contributions remains the
-    documented human follow-up for beta operations.
+    fail-closed auth on the next request via ``users.disabled_at``, and the
+    user's expedition progress is erased immediately in the same transaction;
+    full data erasure for linked kid accounts/photos/iNat contributions
+    remains the documented human follow-up for beta operations.
     """
     requested_at = datetime.now(UTC)
     user = await resolve_current_user_row(session, current_user)
     user.disabled_at = requested_at
+    # COPPA: expedition progress is per-user gameplay data with no audit
+    # value -- purge it in the same transaction as the disable so the
+    # deletion request leaves no progress rows behind. RETURNING gives
+    # the purged count for the structured event without a second query.
+    purged = (
+        await session.execute(
+            delete(models.ExpeditionProgress)
+            .where(models.ExpeditionProgress.user_id == user.id)
+            .returning(models.ExpeditionProgress.id)
+        )
+    ).all()
     await session.commit()
     bust_user_cache(
         user.id,
@@ -104,6 +116,7 @@ async def request_account_deletion(
         user_id=user.id,
         role=user.role,
         requested_at=requested_at.isoformat(),
+        expedition_progress_purged=len(purged),
     )
     return AccountDeletionResponse(
         status="deletion_requested",

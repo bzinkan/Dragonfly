@@ -8,6 +8,10 @@ matched steps. Per docs/dispatcher.md:
   first unmatched), but can advance MULTIPLE expeditions in one shot.
 - ExpeditionHandler runs AFTER DexHandler so `not_in_dex` matchers see
   the dex state before this observation's row was inserted.
+- Progress is scoped to (user, observation.group): an observation
+  submitted in group A can only advance expeditions started under
+  group A. Phase 1 users have a single group, so behavior is unchanged
+  today -- this is latent multi-group correctness.
 
 Completed steps are recorded as
 ``{"completed_at": <iso string>, "observation_id": <ulid>}`` (legacy
@@ -34,17 +38,50 @@ from app.db import models
 from app.dispatcher.types import Context, HandlerResult, Reward
 from app.matchers.context import MatcherInputs, PriorObservation, TaxonInfo
 from app.matchers.registry import matches
-from app.models.expedition import Expedition
+from app.models.expedition import (
+    Expedition,
+    MatchNotWithinRadius,
+    MatchSpec,
+)
 from app.services.expedition_progress import parse_step_completion
 from app.services.species_cache import ancestor_ids_from_payload
 
 log = structlog.get_logger()
 
 
+def _uses_radius(spec: MatchSpec) -> bool:
+    """True when the spec tree contains a not_within_radius_of_existing leaf.
+
+    Combinators recurse; every other leaf kind imposes no prior-location
+    requirement. Used to decide whether `_build_inputs` needs to load the
+    user's full (lat, lng) history at all.
+    """
+    if isinstance(spec, MatchNotWithinRadius):
+        return True
+    # Recurse through anything carrying a `matches` list, not just the
+    # two known combinators -- a future combinator kind that nests a
+    # radius leaf must not silently skip the prior-location load (an
+    # empty history makes the radius matcher vacuously true).
+    nested = getattr(spec, "matches", None)
+    if nested is not None:
+        return any(_uses_radius(sub) for sub in nested)
+    return False
+
+
 class ExpeditionHandler:
     name = "expedition"
 
     async def handle(self, ctx: Context) -> HandlerResult:
+        # group_id filter: an observation submitted in group A only
+        # advances expeditions started under group A (see module
+        # docstring).
+        #
+        # with_for_update(of=progress): the restart endpoint and this
+        # handler are both read-modify-write writers on
+        # expedition_progress; the row lock closes the restart-vs-
+        # dispatch lost-update window. Both transactions are short and
+        # commit promptly, so the lock is held briefly. `of=` keeps the
+        # joined expedition_content rows unlocked.
         progress_pairs = (
             await ctx.db.execute(
                 select(models.ExpeditionProgress, models.ExpeditionContent)
@@ -54,20 +91,23 @@ class ExpeditionHandler:
                 )
                 .where(
                     models.ExpeditionProgress.user_id == ctx.user.id,
+                    models.ExpeditionProgress.group_id == ctx.observation.group_id,
                     models.ExpeditionProgress.completed_at.is_(None),
                     models.ExpeditionContent.archived.is_(False),
                 )
+                .with_for_update(of=models.ExpeditionProgress)
+                # Deterministic lock order so two concurrent dispatches
+                # for the same kid can never deadlock on these rows.
+                .order_by(models.ExpeditionProgress.id)
             )
         ).all()
 
         if not progress_pairs:
             return HandlerResult(rewards=[])
 
-        inputs = await self._build_inputs(ctx)
-
-        rewards: list[Reward] = []
-        any_advanced = False
-
+        # Validate bodies up front so the radius walk below sees every
+        # active expedition before _build_inputs decides what to load.
+        parsed: list[tuple[models.ExpeditionProgress, models.ExpeditionContent, Expedition]] = []
         for progress, content in progress_pairs:
             try:
                 exp = Expedition.model_validate(content.body)
@@ -77,7 +117,20 @@ class ExpeditionHandler:
                     expedition_id=content.id,
                 )
                 continue
+            parsed.append((progress, content, exp))
 
+        # Only pay the prior-observation history scan when some active
+        # step can actually use it. Deliberately walks ALL steps of ALL
+        # active expeditions (not just each next incomplete step) --
+        # simple and safe over minimal.
+        needs_priors = any(_uses_radius(step.match) for _, _, exp in parsed for step in exp.steps)
+
+        inputs = await self._build_inputs(ctx, include_prior_observations=needs_priors)
+
+        rewards: list[Reward] = []
+        any_advanced = False
+
+        for progress, content, exp in parsed:
             completed = dict(progress.completed_steps or {})
 
             # Replay gate: this observation already credited a step in
@@ -153,7 +206,9 @@ class ExpeditionHandler:
         )
         return HandlerResult(rewards=rewards)
 
-    async def _build_inputs(self, ctx: Context) -> MatcherInputs:
+    async def _build_inputs(
+        self, ctx: Context, *, include_prior_observations: bool
+    ) -> MatcherInputs:
         obs = ctx.observation
 
         taxon: TaxonInfo | None = None
@@ -186,18 +241,23 @@ class ExpeditionHandler:
         ).all()
         user_dex = frozenset(r[0] for r in dex_rows)
 
-        prior_rows = (
-            await ctx.db.execute(
-                select(
-                    models.Observation.latitude,
-                    models.Observation.longitude,
-                ).where(
-                    models.Observation.user_id == ctx.user.id,
-                    models.Observation.id != obs.id,
+        # The full (lat, lng) history scan only runs when some active
+        # step uses not_within_radius_of_existing (the caller walks the
+        # spec trees); every other dispatch passes an empty tuple.
+        priors: tuple[PriorObservation, ...] = ()
+        if include_prior_observations:
+            prior_rows = (
+                await ctx.db.execute(
+                    select(
+                        models.Observation.latitude,
+                        models.Observation.longitude,
+                    ).where(
+                        models.Observation.user_id == ctx.user.id,
+                        models.Observation.id != obs.id,
+                    )
                 )
-            )
-        ).all()
-        priors = tuple(PriorObservation(latitude=lat, longitude=lng) for lat, lng in prior_rows)
+            ).all()
+            priors = tuple(PriorObservation(latitude=lat, longitude=lng) for lat, lng in prior_rows)
 
         return MatcherInputs(
             taxon=taxon,
