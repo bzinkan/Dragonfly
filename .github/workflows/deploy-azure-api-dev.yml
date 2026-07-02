@@ -43,11 +43,15 @@ jobs:
           IMAGE="${ACR_LOGIN_SERVER}/${IMAGE_REPOSITORY}:${GITHUB_SHA}"
           echo "ACR_LOGIN_SERVER=${ACR_LOGIN_SERVER}" >> "${GITHUB_ENV}"
           echo "IMAGE=${IMAGE}" >> "${GITHUB_ENV}"
+          # Context is the repo root (not backend/) so content/expeditions/
+          # ships inside the image; ignore rules come from the repo-root
+          # .dockerignore.
           az acr build \
             --registry "${AZURE_ACR_NAME}" \
             --image "${IMAGE_REPOSITORY}:${GITHUB_SHA}" \
             --image "${IMAGE_REPOSITORY}:latest" \
-            backend
+            --file backend/Dockerfile \
+            .
 
       - name: Deploy Container App revision
         run: |
@@ -64,6 +68,29 @@ jobs:
             --name "${AZURE_CONTAINER_APP}" \
             --resource-group "${AZURE_RESOURCE_GROUP}" \
             --command "/app/.venv/bin/alembic upgrade head"
+
+      - name: Start expedition content sync job
+        # The image IS the content version; the manual Container Apps Job
+        # materializes /app/content/expeditions into Postgres. The job's
+        # template pins whatever image it was provisioned with, so retarget
+        # it to this run's image before starting -- otherwise the job would
+        # sync the previous image's content. (Use `job update`, not a
+        # start-time --image override: start-time container overrides
+        # replace the whole template, dropping env vars and command.)
+        # Tolerant of the job not existing yet (provisioned by
+        # infra-azure/phase-9-async-pipeline.sh).
+        run: |
+          set -euo pipefail
+          if az containerapp job update \
+            --name dragonfly-sync-expeditions \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --image "${IMAGE}"; then
+            az containerapp job start \
+              --name dragonfly-sync-expeditions \
+              --resource-group "${AZURE_RESOURCE_GROUP}"
+          else
+            echo "::warning::dragonfly-sync-expeditions image update failed (not provisioned yet?). Run infra-azure/phase-9-async-pipeline.sh, then re-run this deploy to sync expedition content."
+          fi
 
       - name: Smoke probes
         run: |

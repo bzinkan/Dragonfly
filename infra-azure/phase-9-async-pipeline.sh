@@ -22,7 +22,7 @@
 #     filtering BlobCreated events under `photos/pending/` and delivering
 #     to the moderation-pending queue. No webhook handshake -- Event
 #     Grid -> Service Bus is a first-class destination.
-#   - 7 Container Apps Jobs:
+#   - 8 Container Apps Jobs:
 #       * `dragonfly-moderation-worker`     -- KEDA-scaled Service Bus consumer
 #       * `dragonfly-inat-submit-worker`    -- KEDA-scaled Service Bus consumer
 #       * `dragonfly-rarity-refresh`        -- nightly cron 03:00 UTC
@@ -30,6 +30,7 @@
 #       * `dragonfly-inat-outbox-replay`    -- */15 * * * * cron
 #       * `dragonfly-dispatcher-replay`     -- */15 * * * * cron
 #       * `dragonfly-expedition-funnel`     -- manual (engagement funnel report)
+#       * `dragonfly-sync-expeditions`      -- manual (expedition content sync after deploy)
 #     All use the same Container App image, the same UAMI, and the same
 #     env-var set (Postgres, Blob, Service Bus + KV refs).
 #   - UAMI role assignments for the new resources:
@@ -722,6 +723,7 @@ ensure_cron_job "dragonfly-inat-outbox-replay"  "python -m admin.inat_outbox_rep
 ensure_cron_job "dragonfly-dispatcher-replay"   "python -m admin.dispatcher_replay"   "*/15 * * * *"
 
 ensure_manual_job "dragonfly-expedition-funnel" "python -m admin.expedition_funnel"
+ensure_manual_job "dragonfly-sync-expeditions"  "python -m admin.sync_expeditions"
 
 # ---------------------------------------------------------------------------
 # 9. Done

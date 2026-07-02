@@ -60,11 +60,45 @@ Required GitHub secrets:
 Workflow shape:
 
 1. Authenticate with Azure federated identity.
-2. Build backend image in ACR `dragonflyacrdev`.
+2. Build backend image in ACR `dragonflyacrdev` (build context = repo root so
+   `content/expeditions/` ships inside the image).
 3. Update Container App `dragonfly-api` in resource group `dragonfly-dev-rg`.
 4. Run `alembic upgrade head`.
-5. Smoke public probes.
-6. Run authenticated smoke when the token secret is configured.
+5. Point the `dragonfly-sync-expeditions` Container Apps Job at the new image,
+   then start it.
+6. Smoke public probes.
+7. Run authenticated smoke when the token secret is configured.
+
+Manual deploy (run from the repo root — the build context must be the repo
+root so the expedition content ships inside the image):
+
+```bash
+az acr build \
+  --registry dragonflyacrdev \
+  --image dragonfly-api:<git-sha> \
+  --file backend/Dockerfile \
+  .
+
+az containerapp update \
+  --name dragonfly-api \
+  --resource-group dragonfly-dev-rg \
+  --image dragonflyacrdev.azurecr.io/dragonfly-api:<git-sha>
+
+az containerapp job update \
+  --name dragonfly-sync-expeditions \
+  --resource-group dragonfly-dev-rg \
+  --image dragonflyacrdev.azurecr.io/dragonfly-api:<git-sha>
+
+az containerapp job start -n dragonfly-sync-expeditions -g dragonfly-dev-rg
+```
+
+Run the sync job after every deploy: the image IS the expedition content
+version, and the job materializes `/app/content/expeditions` into Postgres.
+The job's template pins whatever image it was provisioned with, so the
+`az containerapp job update --image` step is mandatory — starting the job
+without it re-syncs the previous image's content. Do not pass `--image` on
+`job start` instead: start-time container overrides replace the whole
+template, dropping the job's env vars and command.
 
 The old Cloud Run workflow is a manual no-op. If a Cloud Run service was
 accidentally recreated, delete it only after the no-op workflow has landed.

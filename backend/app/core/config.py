@@ -39,6 +39,13 @@ class Settings(BaseSettings):
 
     photos_bucket: str = "photos"
 
+    # Expedition content root read by admin.sync_expeditions. The deployed
+    # image ships the JSON at /app/content/expeditions (backend/Dockerfile
+    # builds from the repo root and copies content/expeditions/ in). Local
+    # runs override via DRAGONFLY_CONTENT_ROOT -- the
+    # scripts/sync_expeditions.py shim points it at the repo checkout.
+    content_root: str = "/app/content/expeditions"
+
     # Object-storage backend. "noop" falls through to a fake impl in
     # tests (set explicitly via app.state.signed_url_generator).
     # "blob" uses Azure Blob Storage with user-delegation SAS URLs
