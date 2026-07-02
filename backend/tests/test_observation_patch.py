@@ -16,6 +16,7 @@ from app.db import models
 from app.db.session import get_db_session
 from app.dispatcher.types import Reward
 from app.main import create_app
+from app.services.species_cache import CachedSpecies
 from tests.helpers.auth import stub_token_verifier
 
 _FIREBASE_UID = "firebase-kid-001"
@@ -127,9 +128,11 @@ def _wire_session(
     if user is not None:
         side_effects.append(obs_result)
         if obs is not None and species_cache_hit is not None:
-            # Species cache lookup happens only when taxon_id was set
-            # without an explicit species_name. Tests that don't go down
-            # this path don't pre-stage a species result.
+            # Species cache lookup happens when taxon_id is set without
+            # an explicit species_name, or on any first taxon assignment
+            # (cache warm for the re-dispatch). Tests that don't go down
+            # this path -- or that patch get_or_fill directly -- don't
+            # pre-stage a species result.
             side_effects.append(species_result)
         if dispatch_photo is not None or dispatch_minted_dex_id is not None:
             probe_result = MagicMock()
@@ -223,12 +226,16 @@ def test_patch_only_place_name_no_species_lookup(
     fake_session.commit.assert_awaited_once()
 
 
-def test_patch_taxon_with_explicit_species_name_skips_cache(
+def test_patch_taxon_with_explicit_species_name_warms_cache_keeps_name(
     monkeypatch: pytest.MonkeyPatch,
     patch_client: TestClient,
     fake_session: AsyncMock,
 ) -> None:
-    """When the caller sends both, we honor it verbatim and skip the cache."""
+    """When the caller sends both, the name is honored verbatim but the
+    cache is STILL warmed: a first taxon assignment re-dispatches, and
+    the iconic/descendant matchers need the cached iNat payload
+    (ancestor_ids) -- a cold cache here would silently miss forever
+    because dispatched_at then stamps."""
     _stub_token_verifier(monkeypatch)
     # First taxon assignment also hits the re-dispatch block; stage a
     # dex-mint probe hit so it skips cleanly (re-dispatch behavior has
@@ -239,16 +246,28 @@ def test_patch_taxon_with_explicit_species_name_skips_cache(
         obs=_obs_row(),
         dispatch_minted_dex_id="01JDEXROW00000000000000ULID",
     )
+    warm_mock = AsyncMock(
+        return_value=CachedSpecies(
+            taxon_id=12345,
+            scientific_name="Cardinalis cardinalis",
+            common_name="Northern Cardinal",
+            iconic_taxon="Aves",
+            ancestor_ids=(1, 2, 3),
+        )
+    )
+    monkeypatch.setattr("app.api.routes.observations.species_cache.get_or_fill", warm_mock)
 
     response = patch_client.patch(
         f"/v1/observations/{_OBS_ID}",
-        json={"taxon_id": 12345, "species_name": "Northern Cardinal"},
+        json={"taxon_id": 12345, "species_name": "Cardinal (my pick)"},
         headers={"Authorization": "Bearer fake"},
     )
     assert response.status_code == 200
     body = response.json()
     assert body["taxon_id"] == 12345
-    assert body["species_name"] == "Northern Cardinal"
+    # Caller's name wins verbatim -- the cache result never overwrites it.
+    assert body["species_name"] == "Cardinal (my pick)"
+    warm_mock.assert_awaited_once()
 
 
 def test_patch_taxon_only_fills_species_name_from_cache_hit(

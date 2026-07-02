@@ -478,10 +478,16 @@ async def restart_expedition(
 
     progress = (
         await session.execute(
-            select(models.ExpeditionProgress).where(
+            select(models.ExpeditionProgress)
+            .where(
                 models.ExpeditionProgress.user_id == user.id,
                 models.ExpeditionProgress.expedition_id == expedition_id,
             )
+            # Restart and the dispatcher's ExpeditionHandler are both
+            # read-modify-write writers on this row; the row lock closes
+            # the restart-vs-dispatch lost-update window. The transaction
+            # is short and commits promptly below.
+            .with_for_update()
         )
     ).scalar_one_or_none()
     if progress is None:

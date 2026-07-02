@@ -13,7 +13,10 @@ IS the content version. Per docs/expedition-authoring.md:
   re-running with no changes is a no-op)
 - Never deletes and never resurrects: `archived` is untouched on
   update. Tombstoning stays manual; un-tombstoning is the explicit
-  `--unarchive <expedition_id>` flag (repeatable).
+  `--unarchive <expedition_id>` flag (repeatable). An --unarchive id
+  that matches nothing fails the run (exit 1) AFTER the rest of the
+  sync completes -- a typo'd id silently no-oping is how tombstones
+  get "revived" without anyone noticing it didn't happen.
 
 In Azure this runs as the manual Container Apps Job
 `dragonfly-sync-expeditions`, started after each deploy (see
@@ -31,6 +34,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -80,13 +84,17 @@ async def sync(
     *,
     unarchive_ids: Sequence[str] = (),
     dry_run: bool = False,
-) -> dict[str, int]:
-    """Upsert validated expeditions; returns counts per action.
+) -> tuple[dict[str, int], list[str]]:
+    """Upsert validated expeditions; returns (counts per action, unknown
+    --unarchive ids).
 
     With dry_run=True the reads still run but nothing is added, mutated,
-    or committed -- only the planned actions are logged.
+    or committed -- only the planned actions are logged. Unknown
+    unarchive ids don't stop the run here; `main` turns them into a
+    nonzero exit after everything else has been processed.
     """
     counts = {"inserted": 0, "updated": 0, "unchanged": 0, "unarchived": 0}
+    unknown_ids: list[str] = []
 
     for exp, content_hash in expeditions:
         existing = (
@@ -136,6 +144,7 @@ async def sync(
         ).scalar_one_or_none()
         if existing is None:
             log.warning("sync_expeditions.unarchive_unknown_id", expedition_id=expedition_id)
+            unknown_ids.append(expedition_id)
             continue
         if not existing.archived:
             log.info("sync_expeditions.unarchive_already_active", expedition_id=expedition_id)
@@ -147,7 +156,7 @@ async def sync(
 
     if not dry_run:
         await session.commit()
-    return counts
+    return counts, unknown_ids
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -193,7 +202,7 @@ async def main(argv: list[str] | None = None) -> int:
     sessions: async_sessionmaker[AsyncSession] = async_sessionmaker(engine, expire_on_commit=False)
     try:
         async with sessions() as session:
-            counts = await sync(
+            counts, unknown_ids = await sync(
                 session,
                 expeditions,
                 unarchive_ids=args.unarchive,
@@ -209,6 +218,17 @@ async def main(argv: list[str] | None = None) -> int:
         f"{counts['updated']} updated, {counts['unchanged']} unchanged, "
         f"{counts['unarchived']} unarchived"
     )
+    if unknown_ids:
+        # An explicit operator action that matched nothing must fail the
+        # run: a typo'd --unarchive silently no-oping is how tombstones
+        # get "revived" without anyone noticing they typoed. The rest of
+        # the sync above still landed (and committed) before this exit.
+        log.error("sync_expeditions.unarchive_unknown_ids", expedition_ids=unknown_ids)
+        print(
+            f"{prefix}error: --unarchive id(s) not found: {', '.join(unknown_ids)}",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

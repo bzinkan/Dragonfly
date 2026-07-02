@@ -614,6 +614,11 @@ def test_start_concurrent_duplicate_surfaces_409(
 
 # ---------------------------------------------------------------------------
 # POST /v1/expeditions/{id}/restart
+#
+# NOTE: restart's progress SELECT carries .with_for_update(); on a mocked
+# session that's transparent, so the row-lock behavior (restart-vs-dispatch
+# lost update) is not provable here -- real-Postgres coverage is the
+# Phase-11 harness item.
 # ---------------------------------------------------------------------------
 
 

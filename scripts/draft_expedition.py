@@ -13,8 +13,9 @@ Two providers:
   byte-identical output run-to-run -- safe for CI.
 * ``anthropic``: drafts with a pinned Claude model for human review. Requires
   the ``anthropic`` SDK (an author-time-only install, never a backend
-  dependency) and the ``ANTHROPIC_API_KEY`` environment variable. If the model
-  output fails validation twice, the tool falls back to the static template.
+  dependency) and either the ``ANTHROPIC_API_KEY`` or ``ANTHROPIC_AUTH_TOKEN``
+  environment variable (the SDK resolves both). If the model output fails
+  validation twice, the tool falls back to the static template.
 
 Examples:
     python scripts/draft_expedition.py "city park insects" --environment park
@@ -336,10 +337,12 @@ def main(argv: list[str] | None = None) -> int:
     expedition: Expedition | None = None
     provider_used = args.provider
     if args.provider == "anthropic":
-        if not os.environ.get("ANTHROPIC_API_KEY"):
+        # The SDK resolves either variable; accept both here so the
+        # preflight matches what anthropic.Anthropic() will actually do.
+        if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
             print(
-                "error: --provider anthropic needs ANTHROPIC_API_KEY set in the "
-                "environment (no API call was made).",
+                "error: --provider anthropic needs ANTHROPIC_API_KEY or "
+                "ANTHROPIC_AUTH_TOKEN set in the environment (no API call was made).",
                 file=sys.stderr,
             )
             return 1

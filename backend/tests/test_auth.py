@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import Delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -133,9 +134,13 @@ def test_delete_me_disables_authenticated_user(
         role="parent",
         display_name="Brian",
     )
-    result = MagicMock()
-    result.scalar_one_or_none = MagicMock(return_value=user)
-    fake_session.execute = AsyncMock(return_value=result)
+    user_result = MagicMock()
+    user_result.scalar_one_or_none = MagicMock(return_value=user)
+    # COPPA purge: the route DELETEs the user's expedition_progress rows
+    # in the same transaction and logs the count from RETURNING.
+    purge_result = MagicMock()
+    purge_result.all = MagicMock(return_value=[("prog-1",), ("prog-2",)])
+    fake_session.execute = AsyncMock(side_effect=[user_result, purge_result])
     fake_session.commit = AsyncMock()
 
     response = parent_signup_client.delete(
@@ -148,6 +153,11 @@ def test_delete_me_disables_authenticated_user(
     assert body["status"] == "deletion_requested"
     assert body["user_id"] == user.id
     assert user.disabled_at is not None
+    # The second execute is the expedition_progress purge, before the
+    # single commit that also persists disabled_at.
+    purge_stmt = fake_session.execute.await_args_list[1].args[0]
+    assert isinstance(purge_stmt, Delete)
+    assert "expedition_progress" in str(purge_stmt)
     fake_session.commit.assert_awaited_once()
 
 

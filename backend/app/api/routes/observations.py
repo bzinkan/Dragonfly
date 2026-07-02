@@ -494,10 +494,19 @@ async def patch_observation(
         "taxon_id" in fields and fields["taxon_id"] is not None and obs.taxon_id is None
     )
 
-    # If taxon_id is being set AND species_name wasn't explicitly sent,
-    # auto-fill species_name from the species cache. Cache miss falls
-    # through to iNat; iNat outage just leaves species_name as-is.
-    if "taxon_id" in fields and fields["taxon_id"] is not None and "species_name" not in fields:
+    # Warm the species cache whenever it's needed: for the species_name
+    # autofill, and -- on a first taxon assignment -- for the re-dispatch
+    # below, whose iconic/descendant matchers read the cached iNat
+    # payload (ancestor_ids). Without the taxon_assigned arm, a PATCH
+    # carrying BOTH taxon_id and species_name could re-dispatch against
+    # a cold cache: those matchers would silently miss and the
+    # dispatched_at stamp would prevent any later retry. Cache miss
+    # falls through to iNat; an iNat outage just leaves species_name
+    # as-is (and the matchers cold for this one dispatch).
+    wants_autofill = (
+        "taxon_id" in fields and fields["taxon_id"] is not None and "species_name" not in fields
+    )
+    if wants_autofill or taxon_assigned:
         try:
             cached = await species_cache.get_or_fill(session, inat_client, fields["taxon_id"])
         except InatUnavailable as exc:
@@ -508,7 +517,9 @@ async def patch_observation(
                 reason=str(exc),
             )
             cached = None
-        if cached is not None:
+        # An explicit species_name from the caller is honored verbatim
+        # -- the cache result only fills the gap.
+        if cached is not None and wants_autofill:
             fields["species_name"] = cached.common_name or cached.scientific_name
 
     for key, value in fields.items():
@@ -527,11 +538,11 @@ async def patch_observation(
     # flow sets the taxon AFTER create (CV identify -> PATCH), so the
     # create-time dispatch ran with taxon_id=None and taxon-based
     # expedition steps could never advance -- this second dispatch is what
-    # makes them reachable. In the taxon-only PATCH shape the autofill
-    # above has already warmed species_cache (including the raw iNat
-    # payload with ancestor_ids); an explicit species_name or an iNat
-    # outage can leave the cache cold, in which case iconic/descendant
-    # matches simply don't fire for this dispatch.
+    # makes them reachable. The warm-up above runs on every first taxon
+    # assignment (explicit species_name included), so species_cache holds
+    # the raw iNat payload with ancestor_ids by the time we get here;
+    # only an iNat outage can leave the cache cold, in which case
+    # iconic/descendant matches simply don't fire for this dispatch.
     #
     # Re-running the full handler list is safe: RarityHandler only does a
     # conditional monotonic counter bump, WorldHandler gates on its

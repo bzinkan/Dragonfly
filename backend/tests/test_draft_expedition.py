@@ -198,17 +198,38 @@ def test_main_falls_back_to_static_with_exit_zero(
     assert len(client.messages.calls) == 2
 
 
-def test_main_missing_api_key_fails_before_any_call(
+def test_main_missing_credentials_fails_before_any_call(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """Neither ANTHROPIC_API_KEY nor ANTHROPIC_AUTH_TOKEN set -> exit 1
+    with an error naming both accepted variables."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
 
     def _boom() -> Any:
-        raise AssertionError("client must not be created without an API key")
+        raise AssertionError("client must not be created without credentials")
 
     monkeypatch.setattr(draft_expedition, "_create_client", _boom)
     assert draft_expedition.main(["city park insects", "--provider", "anthropic"]) == 1
-    assert "ANTHROPIC_API_KEY" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "ANTHROPIC_API_KEY" in err
+    assert "ANTHROPIC_AUTH_TOKEN" in err
+
+
+def test_main_accepts_anthropic_auth_token(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """ANTHROPIC_AUTH_TOKEN alone passes the preflight -- the SDK
+    resolves either variable, so the preflight must too."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "test-token")
+    client = _FakeClient([json.dumps(_valid_model_payload())])
+    monkeypatch.setattr(draft_expedition, "_create_client", lambda: client)
+
+    assert draft_expedition.main(["meadow bugs", "--provider", "anthropic"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["id"] == "meadow_bugs"
+    assert len(client.messages.calls) == 1
 
 
 def test_main_missing_sdk_reports_install_hint(

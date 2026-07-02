@@ -87,9 +87,10 @@ async def test_insert_path_sets_archived_false(fake_session: AsyncMock) -> None:
     exp, content_hash = _validated()
     _wire(fake_session, existing=[None])
 
-    counts = await sync(fake_session, [(exp, content_hash)])
+    counts, unknown_ids = await sync(fake_session, [(exp, content_hash)])
 
     assert counts == {"inserted": 1, "updated": 0, "unchanged": 0, "unarchived": 0}
+    assert unknown_ids == []
     added = fake_session.add.call_args.args[0]
     assert added.id == exp.id
     assert added.content_hash == content_hash
@@ -103,7 +104,7 @@ async def test_update_path_preserves_archived(fake_session: AsyncMock) -> None:
     existing = _content_row(content_hash="stale", archived=True)
     _wire(fake_session, existing=[existing])
 
-    counts = await sync(fake_session, [(exp, content_hash)])
+    counts, _ = await sync(fake_session, [(exp, content_hash)])
 
     assert counts == {"inserted": 0, "updated": 1, "unchanged": 0, "unarchived": 0}
     assert existing.tier == 2
@@ -119,7 +120,7 @@ async def test_unchanged_hash_is_a_noop(fake_session: AsyncMock) -> None:
     stale_body = existing.body
     _wire(fake_session, existing=[existing])
 
-    counts = await sync(fake_session, [(exp, content_hash)])
+    counts, _ = await sync(fake_session, [(exp, content_hash)])
 
     assert counts == {"inserted": 0, "updated": 0, "unchanged": 1, "unarchived": 0}
     assert existing.body is stale_body
@@ -131,21 +132,76 @@ async def test_unarchive_sets_archived_false(fake_session: AsyncMock) -> None:
     existing = _content_row(archived=True)
     _wire(fake_session, existing=[existing])
 
-    counts = await sync(fake_session, [], unarchive_ids=["backyard_starter"])
+    counts, unknown_ids = await sync(fake_session, [], unarchive_ids=["backyard_starter"])
 
     assert counts == {"inserted": 0, "updated": 0, "unchanged": 0, "unarchived": 1}
+    assert unknown_ids == []
     assert existing.archived is False
     fake_session.commit.assert_awaited_once()
 
 
-async def test_unarchive_unknown_id_warns_and_continues(fake_session: AsyncMock) -> None:
+async def test_unarchive_unknown_id_reported_and_rest_still_processes(
+    fake_session: AsyncMock,
+) -> None:
+    """An unknown --unarchive id doesn't stop the run: the remaining ids
+    still process (and commit), and the unknown id is surfaced to main()
+    which turns it into a nonzero exit (test below)."""
     existing = _content_row(archived=True)
     _wire(fake_session, existing=[None, existing])
 
-    counts = await sync(fake_session, [], unarchive_ids=["nope", "backyard_starter"])
+    counts, unknown_ids = await sync(fake_session, [], unarchive_ids=["nope", "backyard_starter"])
 
     assert counts["unarchived"] == 1
+    assert unknown_ids == ["nope"]
     assert existing.archived is False
+    fake_session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_main_returns_nonzero_on_unknown_unarchive_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
+) -> None:
+    """A typo'd --unarchive must flip the exit code AFTER the full sync
+    ran -- an explicit operator action silently no-oping is how
+    tombstones get "revived" without anyone noticing they typoed."""
+    (tmp_path / "backyard_starter.json").write_text(json.dumps(_exp_dict()), encoding="utf-8")
+    monkeypatch.setenv("DRAGONFLY_CONTENT_ROOT", str(tmp_path))
+
+    archived_row = _content_row("street_starter", archived=True)
+    # Selects in sync order: backyard_starter content lookup (miss ->
+    # insert), then the two --unarchive lookups ("nope" miss,
+    # street_starter hit).
+    _wire(fake_session, existing=[None, None, archived_row])
+
+    class _SessionCtx:
+        async def __aenter__(self) -> AsyncMock:
+            return fake_session
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            return None
+
+    engine = MagicMock()
+    engine.dispose = AsyncMock()
+    monkeypatch.setattr("admin.sync_expeditions.create_async_engine", lambda url: engine)
+    monkeypatch.setattr(
+        "admin.sync_expeditions.async_sessionmaker",
+        lambda *args, **kwargs: lambda: _SessionCtx(),
+    )
+
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        assert await main(["--unarchive", "nope", "--unarchive", "street_starter"]) == 1
+    finally:
+        get_settings.cache_clear()
+
+    # The sync still processed everything before the nonzero exit: the
+    # new content row was inserted, the real unarchive landed, and the
+    # session committed.
+    fake_session.add.assert_called_once()
+    assert archived_row.archived is False
+    fake_session.commit.assert_awaited_once()
 
 
 async def test_dry_run_performs_no_writes(fake_session: AsyncMock) -> None:
@@ -155,7 +211,7 @@ async def test_dry_run_performs_no_writes(fake_session: AsyncMock) -> None:
     archived_row = _content_row("street_starter", archived=True)
     _wire(fake_session, existing=[None, existing, archived_row])
 
-    counts = await sync(
+    counts, unknown_ids = await sync(
         fake_session,
         [(new_exp, new_hash), (drifted_exp, drifted_hash)],
         unarchive_ids=["street_starter"],
@@ -164,6 +220,7 @@ async def test_dry_run_performs_no_writes(fake_session: AsyncMock) -> None:
 
     # Planned actions are still counted...
     assert counts == {"inserted": 1, "updated": 1, "unchanged": 0, "unarchived": 1}
+    assert unknown_ids == []
     # ...but nothing was added, mutated, or committed.
     fake_session.add.assert_not_called()
     fake_session.commit.assert_not_called()
