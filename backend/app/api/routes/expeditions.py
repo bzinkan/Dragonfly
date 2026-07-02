@@ -10,6 +10,9 @@ hint, completed_at) so the app can show what each step asks for.
 `POST /v1/expeditions/{id}/start` -- create an empty
 `expedition_progress` row. Fails 409 if a row already exists.
 
+`POST /v1/expeditions/{id}/restart` -- reset a stalled in-progress
+run back to step zero. Fails 409 on completed expeditions (trophies).
+
 Per docs/expedition-authoring.md: prerequisites are ANDed; current
 kinds are `dex_count_at_least` and `completed_expedition`. The
 "never edit ids" invariant from the doc means a row keyed by
@@ -18,14 +21,16 @@ expedition_id is a stable handle forever.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import desc, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 from ulid import ULID
 
 from app.core.auth import CurrentUserDep, resolve_current_user_row
@@ -361,11 +366,97 @@ async def start_expedition(
         completed_steps={},
     )
     session.add(progress)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        # Two concurrent starts both pass the SELECT above; the loser's
+        # commit trips uq_expedition_progress_user_exp and must surface
+        # the documented 409, not a 500.
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Expedition already started",
+        ) from exc
     await session.refresh(progress)
 
     log.info(
         "expeditions.started",
+        expedition_id=expedition_id,
+        user_id=user.id,
+    )
+    return StartResponse(expedition_id=expedition_id, started_at=progress.created_at)
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/expeditions/{id}/restart
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{expedition_id}/restart",
+    response_model=StartResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def restart_expedition(
+    expedition_id: str,
+    current_user: CurrentUserDep,
+    session: DbSessionDep,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+) -> StartResponse:
+    """Reset a stalled in-progress run back to step zero.
+
+    Restart is for stalled runs -- the kid started an expedition, got
+    stuck, and wants a fresh go. Completed expeditions are trophies
+    (and `completed_expedition` prerequisites hang off them), so they
+    are never restartable. Deliberately migration-free: the existing
+    progress row is reset in place rather than adding restart
+    bookkeeping columns.
+    """
+    user = await resolve_current_user_row(session, current_user)
+
+    content = (
+        await session.execute(
+            select(models.ExpeditionContent).where(
+                models.ExpeditionContent.id == expedition_id,
+                models.ExpeditionContent.archived.is_(False),
+            )
+        )
+    ).scalar_one_or_none()
+    if content is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expedition not found")
+
+    progress = (
+        await session.execute(
+            select(models.ExpeditionProgress).where(
+                models.ExpeditionProgress.user_id == user.id,
+                models.ExpeditionProgress.expedition_id == expedition_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if progress is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expedition not started")
+
+    if progress.completed_at is not None:
+        # Completed expeditions are trophies and back completed_expedition
+        # prerequisites -- never restartable.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Expedition already completed",
+        )
+
+    progress.completed_steps = {}
+    # JSONB mutation tracking needs an explicit nudge when we reassign.
+    flag_modified(progress, "completed_steps")
+    progress.completed_at = None
+    # Re-anchor created_at on the current run -- deliberate: /me
+    # started_at, list ordering, and funnel time-to-complete should all
+    # measure the fresh attempt, not the abandoned one.
+    progress.created_at = datetime.now(UTC)
+    await session.commit()
+    await session.refresh(progress)
+
+    log.info(
+        "expeditions.restarted",
         expedition_id=expedition_id,
         user_id=user.id,
     )

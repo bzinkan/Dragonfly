@@ -320,6 +320,37 @@ async def test_replay_gate_skips_expedition_already_credited(
     fake_session.commit.assert_not_called()
 
 
+async def test_post_restart_run_gets_exactly_one_credit_per_observation(
+    fake_session: AsyncMock,
+) -> None:
+    """Post-restart state is an EMPTY completed_steps map, so a
+    re-dispatched old observation may credit the fresh run once; a
+    second dispatch of the SAME observation is then replay-gated.
+    The invariant is one step per expedition per RUN."""
+    body = _expedition_body(
+        exp_id="x",
+        steps=[_step("first"), _step("second")],
+    )
+    progress = _progress("x")  # empty map == the row right after restart
+
+    _wire_session(fake_session, progress_pairs=[(progress, _content("x", body))])
+    handler = ExpeditionHandler()
+    result = await handler.handle(_ctx(fake_session))
+
+    assert [r.type for r in result.rewards] == ["expedition_step"]
+    assert result.rewards[0].payload["step_id"] == "first"
+    assert progress.completed_steps["first"]["observation_id"] == _OBS_ID
+
+    # Re-dispatch the same observation against the mutated row: the
+    # gate sees its id in the map and skips -- no chaining to "second".
+    _wire_session(fake_session, progress_pairs=[(progress, _content("x", body))])
+    result = await handler.handle(_ctx(fake_session))
+
+    assert result.rewards == []
+    assert "second" not in progress.completed_steps
+    fake_session.commit.assert_not_called()
+
+
 async def test_legacy_string_rows_still_advance(fake_session: AsyncMock) -> None:
     """Rows written before the dict value format hold plain iso strings.
     The gate must not trip on them (no observation_id recorded) and the

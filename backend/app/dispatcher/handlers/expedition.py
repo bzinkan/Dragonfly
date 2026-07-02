@@ -17,6 +17,11 @@ value in an expedition's completed_steps already carries this
 observation's id, the handler skips that expedition. Without the gate,
 a re-dispatch (taxon PATCH, admin replay) could chain one observation
 through multiple steps, violating the invariant above.
+
+After a restart (`POST /v1/expeditions/{id}/restart`) the gate map is
+empty, so a re-dispatched old observation may credit the fresh run
+once -- the invariant is one step per expedition per RUN. If that ever
+needs hardening, a `restarted_at` column is the lever.
 """
 
 from __future__ import annotations
@@ -126,7 +131,12 @@ class ExpeditionHandler:
                         title="Expedition complete!",
                         detail=exp.outro,
                         icon="expedition.complete",
-                        weight=30,
+                        # 60, not 30: the dispatcher sorts weight desc,
+                        # and completion must render BEFORE its own step
+                        # reward (weight 40). The tie with world_unlock
+                        # at 60 resolves by handler registration order
+                        # -- World before Expedition -- which is fine.
+                        weight=60,
                         payload={"expedition_id": exp.id},
                     )
                 )

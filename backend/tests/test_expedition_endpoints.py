@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
@@ -461,3 +462,158 @@ def test_start_happy_path_creates_progress_row(
     assert progress.group_id == _GROUP_ID
     assert progress.expedition_id == "backyard_starter"
     assert progress.completed_steps == {}
+
+
+def test_start_concurrent_duplicate_surfaces_409(
+    monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
+) -> None:
+    """Two concurrent starts both pass the pre-check SELECT; the loser's
+    commit trips uq_expedition_progress_user_exp and must surface the
+    documented 409, not a 500."""
+    _stub_token_verifier(monkeypatch)
+    body = _exp_body(exp_id="x")
+    _wire_start(fake_session, user=_user(), content=_content("x", body))
+    fake_session.commit = AsyncMock(
+        side_effect=IntegrityError("INSERT", {}, Exception("duplicate key"))
+    )
+    fake_session.rollback = AsyncMock()
+    for client in _build_client(fake_session):
+        response = client.post("/v1/expeditions/x/start", headers={"Authorization": "Bearer fake"})
+        assert response.status_code == 409
+        assert "already started" in response.json()["error"]["message"]
+
+    fake_session.rollback.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/expeditions/{id}/restart
+# ---------------------------------------------------------------------------
+
+
+def _wire_restart(
+    fake_session: AsyncMock,
+    *,
+    user: models.User | None,
+    content: models.ExpeditionContent | None,
+    progress: models.ExpeditionProgress | None,
+) -> None:
+    user_result = MagicMock()
+    user_result.scalar_one_or_none = MagicMock(return_value=user)
+
+    content_result = MagicMock()
+    content_result.scalar_one_or_none = MagicMock(return_value=content)
+
+    progress_result = MagicMock()
+    progress_result.scalar_one_or_none = MagicMock(return_value=progress)
+
+    side_effects: list[Any] = [user_result]
+    if user is not None:
+        side_effects.append(content_result)
+        if content is not None:
+            side_effects.append(progress_result)
+
+    fake_session.execute = AsyncMock(side_effect=side_effects)
+    fake_session.commit = AsyncMock()
+    fake_session.refresh = AsyncMock()
+
+
+def test_restart_requires_bearer(fake_session: AsyncMock) -> None:
+    for client in _build_client(fake_session):
+        response = client.post("/v1/expeditions/x/restart")
+        assert response.status_code == 401
+
+
+def test_restart_happy_path_resets_progress_in_place(
+    monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    body = _exp_body(exp_id="backyard_starter", steps_count=2)
+    progress = _progress_row(
+        "backyard_starter",
+        completed_steps={
+            "s0": {
+                "completed_at": "2026-05-10T13:00:00+00:00",
+                "observation_id": "01J0OBSID0000000000000ULID",
+            },
+        },
+    )
+    old_created_at = progress.created_at
+    _wire_restart(
+        fake_session,
+        user=_user(),
+        content=_content("backyard_starter", body),
+        progress=progress,
+    )
+    for client in _build_client(fake_session):
+        response = client.post(
+            "/v1/expeditions/backyard_starter/restart",
+            headers={"Authorization": "Bearer fake"},
+        )
+        assert response.status_code == 200
+        assert response.json()["expedition_id"] == "backyard_starter"
+
+    # The row is reset in place: empty step map, no completion, and
+    # created_at re-anchored on the fresh run. `progress` is a real
+    # instrumented ORM instance, so the endpoint's flag_modified call
+    # (which raises on an unmapped attribute) is exercised too.
+    assert progress.completed_steps == {}
+    assert progress.completed_at is None
+    assert progress.created_at > old_created_at
+    fake_session.commit.assert_awaited_once()
+
+
+def test_restart_404_when_never_started(
+    monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    body = _exp_body(exp_id="x")
+    _wire_restart(fake_session, user=_user(), content=_content("x", body), progress=None)
+    for client in _build_client(fake_session):
+        response = client.post(
+            "/v1/expeditions/x/restart",
+            headers={"Authorization": "Bearer fake"},
+        )
+        assert response.status_code == 404
+        assert "not started" in response.json()["error"]["message"]
+
+
+def test_restart_404_when_content_archived(
+    monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
+) -> None:
+    """The content query filters on archived=false, so an archived
+    expedition comes back as no row -- same 404 as a missing one."""
+    _stub_token_verifier(monkeypatch)
+    _wire_restart(fake_session, user=_user(), content=None, progress=None)
+    for client in _build_client(fake_session):
+        response = client.post(
+            "/v1/expeditions/x/restart",
+            headers={"Authorization": "Bearer fake"},
+        )
+        assert response.status_code == 404
+        assert "not found" in response.json()["error"]["message"]
+
+
+def test_restart_409_when_already_completed(
+    monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
+) -> None:
+    """Completed expeditions are trophies (and completed_expedition
+    prerequisites hang off them) -- never restartable."""
+    _stub_token_verifier(monkeypatch)
+    body = _exp_body(exp_id="x")
+    progress = _progress_row(
+        "x",
+        completed_steps={"s0": "2026-05-10T13:00:00+00:00"},
+        completed_at=datetime(2026, 5, 10, 13, 0, 0, tzinfo=UTC),
+    )
+    _wire_restart(fake_session, user=_user(), content=_content("x", body), progress=progress)
+    for client in _build_client(fake_session):
+        response = client.post(
+            "/v1/expeditions/x/restart",
+            headers={"Authorization": "Bearer fake"},
+        )
+        assert response.status_code == 409
+        assert "already completed" in response.json()["error"]["message"]
+
+    # Nothing touched on the trophy row.
+    assert progress.completed_steps == {"s0": "2026-05-10T13:00:00+00:00"}
+    fake_session.commit.assert_not_awaited()

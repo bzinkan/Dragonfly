@@ -425,8 +425,8 @@ moment lit up, a seasonal variant appeared.
 - `title` — short. e.g. "Your meadow is fuller."
 - `detail` — names what changed.
 - `icon` — asset key.
-- `weight` — **30**. Same band as `expedition_complete` /
-  `territory_claimed`. Ambient, not headline.
+- `weight` — **30**. Same band as `territory_claimed`. Ambient, not
+  headline.
 - `payload` — `{"zone": str, "evolution_id": str, "threshold": int | null}`.
 
 ### ordering and tie resolution
