@@ -53,8 +53,19 @@ def _build_client(
     fake_session: AsyncMock,
     *,
     storage: _StubStorage | None = None,
+    inat_submit_enabled: bool = True,
 ) -> Iterator[TestClient]:
-    app = create_app(Settings(env="local", app_version="test", inat_oauth_token="test-token"))
+    # inat_submit_enabled defaults True here because this suite exercises
+    # the submit path; the flag-off 403 has its own test (the production
+    # default is False -- the COPPA Option B posture).
+    app = create_app(
+        Settings(
+            env="local",
+            app_version="test",
+            inat_oauth_token="test-token",
+            inat_submit_enabled=inat_submit_enabled,
+        )
+    )
     app.state.signed_url_generator = storage if storage is not None else _StubStorage()
 
     async def override() -> AsyncIterator[AsyncSession]:
@@ -81,7 +92,13 @@ def _photo_row(status: str = "clean") -> models.Photo:
     )
 
 
-def _obs_row(*, inat_id: int | None = None) -> models.Observation:
+def _obs_row(
+    *,
+    inat_id: int | None = None,
+    moderation_status: str = "clean",
+) -> models.Observation:
+    # moderation_status defaults to "clean" because the route now skips
+    # anything else (mirroring the Service Bus consumer's gate).
     obs = models.Observation(
         id=_OBS_ID,
         user_id="user-id",
@@ -92,6 +109,7 @@ def _obs_row(*, inat_id: int | None = None) -> models.Observation:
         taxon_id=12345,
         species_name="Northern Cardinal",
         inat_observation_id=inat_id,
+        moderation_status=moderation_status,
     )
     obs.created_at = datetime(2026, 5, 10, 12, 0, 0, tzinfo=UTC)
     return obs
@@ -116,6 +134,34 @@ def _wire_session(
 
 
 # ---------------------------------------------------------------------------
+
+
+def test_submit_403_when_flag_disabled(fake_session: AsyncMock) -> None:
+    """COPPA posture (Option B): with inat_submit_enabled=false NO path
+    may push kid observations to iNat -- including this manual/admin
+    retry route, which previously bypassed the gate entirely."""
+    _wire_session(fake_session, observation=_obs_row(), photo=_photo_row())
+    for client in _build_client(fake_session, inat_submit_enabled=False):
+        response = client.post("/internal/inat/submit", json={"observation_id": _OBS_ID})
+        assert response.status_code == 403
+        # Rejected before any DB work.
+        fake_session.execute.assert_not_awaited()
+
+
+def test_submit_skips_non_clean_observation(fake_session: AsyncMock) -> None:
+    """Mirror the Service Bus consumer's gate: a quarantined observation
+    must never reach iNat even when its photo was approved separately."""
+    _wire_session(
+        fake_session,
+        observation=_obs_row(moderation_status="quarantine"),
+        photo=_photo_row(),
+    )
+    for client in _build_client(fake_session):
+        response = client.post("/internal/inat/submit", json={"observation_id": _OBS_ID})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["skipped"] is True
+        assert body["inat_observation_id"] is None
 
 
 def test_submit_404_when_observation_missing(fake_session: AsyncMock) -> None:
