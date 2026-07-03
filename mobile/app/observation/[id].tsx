@@ -6,12 +6,18 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  TextInput,
 } from "react-native";
 
 import { Text, View } from "@/components/Themed";
-import type {
-  ObservationListItem,
-  ObservationListResponse,
+import { ApiError } from "@/src/api/client";
+import {
+  type CvSuggestion,
+  type ObservationListItem,
+  type ObservationListResponse,
+  type ObservationReward,
+  identifyObservation,
+  patchObservation,
 } from "@/src/api/observations";
 import { queryClient } from "@/src/api/queryClient";
 import {
@@ -20,7 +26,13 @@ import {
   isUrlUsable,
   photoDisplayMode,
 } from "@/src/observation/galleryLogic";
+import {
+  conservationLabel,
+  factsAreEmpty,
+  worldwideLine,
+} from "@/src/observation/speciesFactsLogic";
 import { usePhotoUrl } from "@/src/observation/usePhotoUrl";
+import { useSpeciesFacts } from "@/src/observation/useSpeciesFacts";
 
 /**
  * Full-size view of one observation, opened from the Home gallery.
@@ -46,6 +58,16 @@ export default function ObservationDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const item = typeof id === "string" ? findCachedObservation(id) : null;
 
+  // Set when the kid identifies a Mystery find right here. The cached
+  // list item is a non-reactive snapshot, so this local override makes
+  // the species + facts appear immediately; the invalidations below
+  // bring the list cache in line for everyone else.
+  const [identified, setIdentified] = useState<{
+    taxonId: number | null;
+    speciesName: string | null;
+    rewards: ObservationReward[];
+  } | null>(null);
+
   if (!item) {
     return (
       <View style={styles.center}>
@@ -65,10 +87,27 @@ export default function ObservationDetailScreen() {
 
   const mode = photoDisplayMode(item.photo_status);
   const ts = new Date(item.created_at);
+  const effectiveTaxonId = identified ? identified.taxonId : item.taxon_id;
+  const effectiveSpecies = identified
+    ? (identified.speciesName ?? item.species_name)
+    : item.species_name;
+  const isMysteryFind = effectiveTaxonId === null && effectiveSpecies === null;
+
+  function handleIdentified(
+    taxonId: number | null,
+    speciesName: string | null,
+    rewards: ObservationReward[],
+  ) {
+    setIdentified({ taxonId, speciesName, rewards });
+    // The PATCH-time dispatch may have minted first-find / advanced an
+    // expedition; freshen both surfaces.
+    void queryClient.invalidateQueries({ queryKey: ["observations", "me"] });
+    void queryClient.invalidateQueries({ queryKey: ["expeditions"] });
+  }
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Stack.Screen options={{ title: galleryCaption(item.species_name) }} />
+      <Stack.Screen options={{ title: galleryCaption(effectiveSpecies) }} />
 
       {mode === "image" ? (
         <DetailPhoto
@@ -88,7 +127,29 @@ export default function ObservationDetailScreen() {
         </View>
       )}
 
-      <Text style={styles.species}>{galleryCaption(item.species_name)}</Text>
+      <Text style={styles.species}>{galleryCaption(effectiveSpecies)}</Text>
+
+      {/* Rewards from an identify-right-here PATCH: dispatcher-authored
+          copy, same philosophy as the submit screen's celebration card. */}
+      {identified !== null && identified.rewards.length > 0 && (
+        <View style={styles.rewardCard}>
+          {identified.rewards.map((r, i) => (
+            <View
+              key={`${r.type}-${i}`}
+              style={[styles.rewardRow, i > 0 && styles.rewardRowGap]}
+            >
+              <Text style={styles.rewardTitle}>{r.title}</Text>
+              {r.detail ? <Text style={styles.rewardDetail}>{r.detail}</Text> : null}
+            </View>
+          ))}
+        </View>
+      )}
+
+      {effectiveTaxonId !== null ? (
+        <SpeciesFactsCard taxonId={effectiveTaxonId} />
+      ) : isMysteryFind ? (
+        <IdentifySection observationId={item.id} onIdentified={handleIdentified} />
+      ) : null}
 
       <Text style={styles.label}>When</Text>
       <Text style={styles.value}>{ts.toLocaleString()}</Text>
@@ -184,6 +245,221 @@ function DetailPhoto({
   );
 }
 
+/**
+ * "About this species" -- factual sheet from the backend's cached iNat
+ * taxon payload (Wikipedia summary, worldwide sightings, conservation
+ * status). Renders nothing on error / degradation / empty facts: the
+ * card is a bonus, never a failure state.
+ */
+function SpeciesFactsCard({ taxonId }: { taxonId: number }) {
+  const facts = useSpeciesFacts(taxonId);
+
+  if (facts.isPending) {
+    return (
+      <View style={styles.factsCard}>
+        <ActivityIndicator />
+      </View>
+    );
+  }
+  if (facts.isError || !facts.data.facts_available || factsAreEmpty(facts.data)) {
+    return null;
+  }
+
+  const worldwide = worldwideLine(facts.data.observations_worldwide);
+  const conservation = conservationLabel(facts.data.conservation_status);
+
+  return (
+    <View style={styles.factsCard}>
+      <Text style={styles.factsHeading}>About this species</Text>
+      {facts.data.scientific_name ? (
+        <Text style={styles.factsScientific}>
+          {facts.data.scientific_name}
+          {facts.data.rank ? ` · ${facts.data.rank}` : ""}
+        </Text>
+      ) : null}
+      {facts.data.summary ? (
+        <Text style={styles.factsSummary}>{facts.data.summary}</Text>
+      ) : null}
+      {worldwide ? <Text style={styles.factRow}>🌍 {worldwide}</Text> : null}
+      {conservation ? (
+        <Text style={styles.factRow}>💚 Conservation status: {conservation}</Text>
+      ) : null}
+      {facts.data.summary ? (
+        <Text style={styles.factsAttribution}>Facts from Wikipedia via iNaturalist</Text>
+      ) : null}
+    </View>
+  );
+}
+
+type IdentifyPhase =
+  | { kind: "idle" }
+  | { kind: "identifying" }
+  | { kind: "picking"; suggestions: CvSuggestion[]; cvUnavailable: boolean }
+  | { kind: "patching" }
+  | { kind: "error"; message: string };
+
+/**
+ * Identify a Mystery find right from its detail screen -- the same
+ * identify -> pick -> PATCH flow as the submit screen. This is also the
+ * recovery path for observations whose species pick failed at submit
+ * time (previously stranded forever).
+ */
+function IdentifySection({
+  observationId,
+  onIdentified,
+}: {
+  observationId: string;
+  onIdentified: (
+    taxonId: number | null,
+    speciesName: string | null,
+    rewards: ObservationReward[],
+  ) => void;
+}) {
+  const [phase, setPhase] = useState<IdentifyPhase>({ kind: "idle" });
+  const [manualSpecies, setManualSpecies] = useState("");
+  const [showManualInput, setShowManualInput] = useState(false);
+
+  async function startIdentify() {
+    setPhase({ kind: "identifying" });
+    try {
+      const ident = await identifyObservation(observationId);
+      setPhase({
+        kind: "picking",
+        suggestions: ident.suggestions,
+        cvUnavailable: ident.cv_unavailable,
+      });
+    } catch (err) {
+      setPhase({ kind: "error", message: identifyErrorMessage(err) });
+    }
+  }
+
+  async function pick(payload: { taxon_id: number } | { species_name: string }) {
+    setPhase({ kind: "patching" });
+    try {
+      const obs = await patchObservation(observationId, payload);
+      onIdentified(obs.taxon_id, obs.species_name, obs.rewards ?? []);
+    } catch (err) {
+      setPhase({ kind: "error", message: identifyErrorMessage(err) });
+    }
+  }
+
+  return (
+    <View style={styles.factsCard}>
+      <Text style={styles.factsHeading}>What is it?</Text>
+
+      {phase.kind === "idle" && (
+        <>
+          <Text style={styles.identifyHelp}>
+            This is still a mystery find. Figure out what you spotted!
+          </Text>
+          <Pressable
+            style={[styles.button, styles.buttonPrimary]}
+            onPress={() => void startIdentify()}
+          >
+            <Text style={styles.buttonText}>Find out</Text>
+          </Pressable>
+        </>
+      )}
+
+      {phase.kind === "identifying" && (
+        <View style={styles.identifyRow}>
+          <ActivityIndicator />
+          <Text style={styles.identifyHelp}>asking iNaturalist…</Text>
+        </View>
+      )}
+
+      {phase.kind === "patching" && (
+        <View style={styles.identifyRow}>
+          <ActivityIndicator />
+          <Text style={styles.identifyHelp}>saving your pick…</Text>
+        </View>
+      )}
+
+      {phase.kind === "error" && (
+        <>
+          <Text style={styles.identifyError}>● {phase.message}</Text>
+          <Pressable
+            style={[styles.button, styles.buttonGhost]}
+            onPress={() => void startIdentify()}
+          >
+            <Text style={styles.buttonText}>Try again</Text>
+          </Pressable>
+        </>
+      )}
+
+      {phase.kind === "picking" && (
+        <>
+          {phase.cvUnavailable && (
+            <Text style={styles.identifyHelp}>
+              Couldn&apos;t reach iNaturalist. Type your own below.
+            </Text>
+          )}
+          {phase.suggestions.map((s) => (
+            <Pressable
+              key={s.taxon_id}
+              style={styles.suggestion}
+              onPress={() => void pick({ taxon_id: s.taxon_id })}
+            >
+              <Text style={styles.suggestionName}>
+                {s.common_name ?? s.scientific_name ?? "Unknown taxon"}
+              </Text>
+              <Text style={styles.suggestionMeta}>{Math.round(s.score)}%</Text>
+            </Pressable>
+          ))}
+
+          {!showManualInput ? (
+            <Pressable
+              style={[styles.suggestion, styles.suggestionGhost]}
+              onPress={() => setShowManualInput(true)}
+            >
+              <Text style={styles.suggestionName}>Type my own</Text>
+            </Pressable>
+          ) : (
+            <View>
+              <TextInput
+                style={styles.input}
+                value={manualSpecies}
+                onChangeText={setManualSpecies}
+                placeholder="e.g. Northern Cardinal"
+                placeholderTextColor="#999"
+                autoCapitalize="words"
+                autoFocus
+              />
+              <Pressable
+                style={[
+                  styles.button,
+                  styles.buttonPrimary,
+                  manualSpecies.trim().length === 0 && styles.buttonDisabled,
+                ]}
+                disabled={manualSpecies.trim().length === 0}
+                onPress={() => {
+                  const trimmed = manualSpecies.trim();
+                  if (trimmed) void pick({ species_name: trimmed });
+                }}
+              >
+                <Text style={styles.buttonText}>Save</Text>
+              </Pressable>
+            </View>
+          )}
+
+          <Pressable
+            style={[styles.suggestion, styles.suggestionGhost]}
+            onPress={() => setPhase({ kind: "idle" })}
+          >
+            <Text style={styles.suggestionName}>Not now</Text>
+          </Pressable>
+        </>
+      )}
+    </View>
+  );
+}
+
+function identifyErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) return `${err.status}: ${err.message}`;
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -253,9 +529,16 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     alignItems: "center",
   },
+  buttonPrimary: {
+    backgroundColor: "#2f6feb",
+    marginTop: 10,
+  },
   buttonGhost: {
     borderColor: "#888",
     borderWidth: StyleSheet.hairlineWidth,
+  },
+  buttonDisabled: {
+    opacity: 0.4,
   },
   buttonText: {
     fontSize: 14,
@@ -263,5 +546,109 @@ const styles = StyleSheet.create({
   },
   backButton: {
     marginTop: 24,
+  },
+  rewardCard: {
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginTop: 12,
+    borderRadius: 6,
+    backgroundColor: "#1a1a1a",
+  },
+  rewardRow: {
+    backgroundColor: "transparent",
+  },
+  rewardRowGap: {
+    marginTop: 10,
+  },
+  rewardTitle: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  rewardDetail: {
+    fontSize: 13,
+    opacity: 0.7,
+    marginTop: 2,
+  },
+  factsCard: {
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    marginTop: 14,
+    borderRadius: 8,
+    backgroundColor: "#1a1a1a",
+  },
+  factsHeading: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  factsScientific: {
+    fontSize: 13,
+    fontStyle: "italic",
+    opacity: 0.7,
+    marginTop: 4,
+  },
+  factsSummary: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 10,
+  },
+  factRow: {
+    fontSize: 14,
+    marginTop: 10,
+  },
+  factsAttribution: {
+    fontSize: 11,
+    opacity: 0.5,
+    marginTop: 10,
+  },
+  identifyHelp: {
+    fontSize: 13,
+    opacity: 0.7,
+    marginTop: 6,
+  },
+  identifyError: {
+    fontSize: 14,
+    color: "#ef4444",
+    marginTop: 6,
+    marginBottom: 8,
+  },
+  identifyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 10,
+    backgroundColor: "transparent",
+  },
+  suggestion: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginTop: 8,
+    borderRadius: 6,
+    backgroundColor: "#262626",
+  },
+  suggestionGhost: {
+    backgroundColor: "transparent",
+    borderColor: "#888",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  suggestionName: {
+    fontSize: 15,
+  },
+  suggestionMeta: {
+    fontSize: 13,
+    opacity: 0.6,
+  },
+  input: {
+    width: "100%",
+    height: 40,
+    borderColor: "#888",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    marginTop: 8,
+    fontSize: 14,
+    color: "#fff",
   },
 });

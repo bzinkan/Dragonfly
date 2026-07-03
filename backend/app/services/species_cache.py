@@ -116,6 +116,37 @@ async def get_or_fill(
     )
 
 
+async def get_source_payload(
+    session: AsyncSession,
+    inat_client: httpx.AsyncClient,
+    taxon_id: int,
+) -> dict[str, object] | None:
+    """Raw iNat `/taxa/{id}` payload for the species-facts endpoint.
+
+    Cache-first; on miss delegates to `get_or_fill` (which stores the raw
+    payload) and re-reads the row. Returns None when the taxon doesn't
+    exist on iNat. Raises `InatUnavailable` (from `get_taxon`) when iNat
+    is unreachable and the cache is empty -- callers degrade gracefully.
+    """
+    row = (
+        await session.execute(
+            select(models.SpeciesCache).where(models.SpeciesCache.taxon_id == taxon_id)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        if await get_or_fill(session, inat_client, taxon_id) is None:
+            return None
+        row = (
+            await session.execute(
+                select(models.SpeciesCache).where(models.SpeciesCache.taxon_id == taxon_id)
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+    payload = row.source_payload
+    return payload if isinstance(payload, dict) else None
+
+
 # Used in tests to seed without a real iNat call.
 async def upsert_for_tests(
     session: AsyncSession,

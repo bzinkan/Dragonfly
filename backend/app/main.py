@@ -26,6 +26,7 @@ from app.api.routes.observations import router as observations_router
 from app.api.routes.photos import router as photos_router
 from app.api.routes.review_queue import router as review_queue_router
 from app.api.routes.sanctuary import router as sanctuary_router
+from app.api.routes.species import router as species_router
 from app.core.config import Settings, get_settings
 from app.core.errors import install_exception_handlers
 from app.core.logging import configure_logging, install_request_logging
@@ -79,6 +80,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(review_queue_router)
     app.include_router(expeditions_router)
     app.include_router(sanctuary_router)
+    app.include_router(species_router)
     app.include_router(internal_moderation_router)
     app.include_router(internal_inat_router)
     return app
