@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -60,7 +61,11 @@ def _user_row() -> models.User:
     )
 
 
-def _obs_row(*, taxon_id: int | None = None) -> models.Observation:
+def _obs_row(
+    *,
+    taxon_id: int | None = None,
+    taxon_first_assigned_at: datetime | None = None,
+) -> models.Observation:
     obs = models.Observation(
         id=_OBS_ID,
         user_id=_USER_ID,
@@ -71,6 +76,7 @@ def _obs_row(*, taxon_id: int | None = None) -> models.Observation:
         taxon_id=taxon_id,
         species_name=None,
         place_name=None,
+        taxon_first_assigned_at=taxon_first_assigned_at,
     )
     return obs
 
@@ -361,8 +367,42 @@ def test_patch_new_taxon_dispatches_and_returns_rewards(
     ctx = dispatch_mock.await_args.args[0]
     assert ctx.observation is obs
     assert obs.dispatched_at is not None
+    # The write-once marker rode the same commit as the taxon itself.
+    assert obs.taxon_first_assigned_at is not None
     # Two commits: the field patch, then the dispatched_at stamp.
     assert fake_session.commit.await_count == 2
+
+
+def test_patch_clear_then_repick_does_not_dispatch_again(
+    monkeypatch: pytest.MonkeyPatch,
+    patch_client: TestClient,
+    fake_session: AsyncMock,
+) -> None:
+    """The write-once marker closes the clear-and-repick loophole: a
+    taxonless observation that HAS dispatched before (taxon assigned,
+    then cleared via raw API) must not dispatch a second time with a
+    different taxon -- one photo earns one round of rewards."""
+    _stub_token_verifier(monkeypatch)
+    _wire_session(
+        fake_session,
+        user=_user_row(),
+        obs=_obs_row(
+            taxon_id=None,
+            taxon_first_assigned_at=datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC),
+        ),
+        species_cache_hit=_cached_species(),
+    )
+    dispatch_mock = AsyncMock(return_value=[])
+    monkeypatch.setattr("app.api.routes.observations.dispatch", dispatch_mock)
+
+    response = patch_client.patch(
+        f"/v1/observations/{_OBS_ID}",
+        json={"taxon_id": 99999},
+        headers={"Authorization": "Bearer fake"},
+    )
+    assert response.status_code == 200
+    assert response.json()["rewards"] == []
+    dispatch_mock.assert_not_awaited()
 
 
 def test_patch_same_taxon_id_does_not_dispatch(

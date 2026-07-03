@@ -219,6 +219,10 @@ async def create_observation(
         taxon_id=payload.taxon_id,
         species_name=payload.species_name,
         place_name=payload.place_name,
+        # Created-with-taxon counts as the first assignment: the
+        # create-time dispatch runs with this taxon, so a later
+        # clear-and-repick must not dispatch again.
+        taxon_first_assigned_at=(datetime.now(UTC) if payload.taxon_id is not None else None),
     )
     session.add(observation)
     try:
@@ -535,16 +539,22 @@ async def patch_observation(
     if obs is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Observation not found")
 
-    # Detect the kid's FIRST species pick BEFORE applying fields -- this
-    # is what triggers the re-dispatch below. Only the None -> taxon
+    # Detect the kid's FIRST-EVER species pick BEFORE applying fields --
+    # this is what triggers the re-dispatch below. Only the None -> taxon
     # transition counts: corrections (A -> B) deliberately do NOT
     # re-dispatch, because DexHandler's first-find gate is per
     # (user, taxon), not per observation -- re-dispatching on every
     # transition would let one photo mint first_find / dex_count credit
     # for arbitrarily many species. Clearing the taxon (explicit null)
-    # is not a transition either.
+    # is not a transition either, and the write-once
+    # taxon_first_assigned_at marker means a clear-and-repick (null,
+    # then a new taxon -- raw-API only, the shipped UI has no such
+    # affordance) can never dispatch a second time.
     taxon_assigned = (
-        "taxon_id" in fields and fields["taxon_id"] is not None and obs.taxon_id is None
+        "taxon_id" in fields
+        and fields["taxon_id"] is not None
+        and obs.taxon_id is None
+        and obs.taxon_first_assigned_at is None
     )
 
     # Warm the species cache whenever it's needed: for the species_name
@@ -577,6 +587,17 @@ async def patch_observation(
 
     for key, value in fields.items():
         setattr(obs, key, value)
+
+    if taxon_assigned:
+        # Stamp the write-once marker in the SAME commit as the taxon
+        # itself, and clear dispatched_at (still stamped by the
+        # create-time dispatch): if the process dies before the
+        # re-dispatch below runs, the nightly replay (dispatched_at IS
+        # NULL) recovers the kid's credit instead of it being lost
+        # forever behind the marker. A successful dispatch re-stamps
+        # dispatched_at immediately.
+        obs.taxon_first_assigned_at = datetime.now(UTC)
+        obs.dispatched_at = None
 
     await session.commit()
     await session.refresh(obs)
