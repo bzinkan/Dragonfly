@@ -83,6 +83,25 @@ async def replay(session: AsyncSession) -> int:
         )
         try:
             await dispatch(ctx, HANDLERS)
+            # dispatch() never raises for handler failures (per-handler
+            # catch-alls), so an unconditional stamp would permanently
+            # end retries for an observation whose Sanctuary write
+            # failed transiently -- and replay is the ONLY delivery
+            # path for contributions repaired by migration 20260703_0009.
+            # Leave the row eligible when world reported failure (or an
+            # identified observation somehow has no world result);
+            # handlers are per-observation idempotent, so re-running is
+            # safe.
+            world_result = ctx.results.get("world")
+            world_failed = world_result is None or bool(world_result.state.get("error"))
+            if world_failed and observation.taxon_id is not None:
+                failed += 1
+                log.warning(
+                    "dispatcher_replay.world_failed_still_eligible",
+                    observation_id=observation.id,
+                )
+                await session.commit()
+                continue
             observation.dispatched_at = datetime.now(UTC)
             await session.commit()
             replayed += 1
