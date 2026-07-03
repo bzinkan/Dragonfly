@@ -302,6 +302,23 @@ def test_photo_url_404_when_photo_missing(
     assert response.status_code == 404
 
 
+def test_photo_url_404_when_photo_deleted(
+    monkeypatch: pytest.MonkeyPatch,
+    photos_client: TestClient,
+    fake_session: AsyncMock,
+) -> None:
+    """Rejected photos never get working URLs, even for their owner --
+    the client-side 'Photo removed' state is backed server-side."""
+    _stub_token_verifier(monkeypatch)
+    _wire_photo_url(
+        fake_session,
+        user=_user_row(),
+        photo=_photo_row(owner=_USER_ID, status="deleted"),
+    )
+    response = photos_client.get("/v1/photos/x/url", headers={"Authorization": "Bearer fake"})
+    assert response.status_code == 404
+
+
 def test_photo_url_owner_caller_returns_signed_url(
     monkeypatch: pytest.MonkeyPatch,
     photos_client: TestClient,

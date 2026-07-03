@@ -1,4 +1,5 @@
 import { router, Stack, useLocalSearchParams } from "expo-router";
+import { useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -16,6 +17,7 @@ import { queryClient } from "@/src/api/queryClient";
 import {
   galleryCaption,
   isAwaitingModeration,
+  isUrlUsable,
   photoDisplayMode,
 } from "@/src/observation/galleryLogic";
 import { usePhotoUrl } from "@/src/observation/usePhotoUrl";
@@ -122,22 +124,36 @@ function DetailPhoto({
   checking: boolean;
 }) {
   const urlQuery = usePhotoUrl(photoId, true);
+  // One silent re-mint on image-load failure (moderation may have moved
+  // the blob since the URL was minted), then a tappable placeholder.
+  const [loadRetried, setLoadRetried] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
 
-  if (urlQuery.isPending) {
+  if (urlQuery.isError || loadFailed) {
     return (
-      <View style={styles.photoPlaceholder}>
-        <ActivityIndicator />
-      </View>
+      <Pressable
+        style={styles.photoPlaceholder}
+        onPress={() => {
+          setLoadFailed(false);
+          setLoadRetried(false);
+          void urlQuery.refetch();
+        }}
+      >
+        <Text style={styles.placeholderGlyph}>🌿</Text>
+        <Text style={styles.placeholderText}>
+          Couldn&apos;t load the photo. Tap to try again.
+        </Text>
+      </Pressable>
     );
   }
 
-  if (urlQuery.isError || !urlQuery.data) {
+  // Pending, or a cache hit whose SAS already expired (this screen often
+  // opens off a Home tab that sat past the 5-min TTL) -- wait for the
+  // background re-mint instead of handing <Image> a 403.
+  if (urlQuery.isPending || !isUrlUsable(urlQuery.data.expires_at)) {
     return (
       <View style={styles.photoPlaceholder}>
-        <Text style={styles.placeholderGlyph}>🌿</Text>
-        <Text style={styles.placeholderText}>
-          Couldn&apos;t load the photo. Check your connection and try again.
-        </Text>
+        <ActivityIndicator />
       </View>
     );
   }
@@ -148,6 +164,16 @@ function DetailPhoto({
         source={{ uri: urlQuery.data.url }}
         style={styles.photo}
         resizeMode="cover"
+        onError={() => {
+          if (!loadRetried) {
+            setLoadRetried(true);
+            void queryClient.invalidateQueries({
+              queryKey: ["photo-url", photoId],
+            });
+          } else {
+            setLoadFailed(true);
+          }
+        }}
       />
       {checking && (
         <Text style={styles.checkingNote}>

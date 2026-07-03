@@ -164,6 +164,12 @@ async def photo_get_url(
     ).scalar_one_or_none()
     if photo is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+    if photo.status == "deleted":
+        # Rejected photos are gone from every legitimate surface (the kid
+        # gallery renders "removed", teacher review drops resolved items)
+        # and the blob may already be purged -- don't mint working URLs
+        # for them. 404 like missing.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
 
     if not await _intersecting_groups(
         session, caller_user_id=user_row.id, photo_owner_id=photo.user_id

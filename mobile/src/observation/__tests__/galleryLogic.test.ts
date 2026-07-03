@@ -1,6 +1,7 @@
 import {
   galleryCaption,
   isAwaitingModeration,
+  isUrlUsable,
   photoDisplayMode,
 } from "@/src/observation/galleryLogic";
 
@@ -33,6 +34,24 @@ describe("isAwaitingModeration", () => {
     expect(isAwaitingModeration("clean")).toBe(false);
     expect(isAwaitingModeration("quarantine")).toBe(false);
     expect(isAwaitingModeration("deleted")).toBe(false);
+  });
+});
+
+describe("isUrlUsable", () => {
+  it("accepts a URL with comfortable life left", () => {
+    expect(isUrlUsable(new Date(Date.now() + 4 * 60 * 1000).toISOString())).toBe(true);
+  });
+
+  it("rejects a URL inside the 30s safety margin", () => {
+    expect(isUrlUsable(new Date(Date.now() + 10_000).toISOString())).toBe(false);
+  });
+
+  it("rejects an already-expired URL", () => {
+    expect(isUrlUsable(new Date(Date.now() - 1000).toISOString())).toBe(false);
+  });
+
+  it("rejects garbage timestamps (NaN comparison is false)", () => {
+    expect(isUrlUsable("not-a-date")).toBe(false);
   });
 });
 
