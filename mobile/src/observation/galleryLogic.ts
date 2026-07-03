@@ -42,3 +42,12 @@ export function isAwaitingModeration(photoStatus: string): boolean {
 export function galleryCaption(speciesName: string | null): string {
   return speciesName ?? "Mystery find";
 }
+
+/**
+ * True while a signed URL is safe to hand to <Image>. 30s margin: a URL
+ * used right at the SAS edge 403s mid-download. Callers fall back to the
+ * loading placeholder when false -- the background refetch re-mints.
+ */
+export function isUrlUsable(expiresAt: string): boolean {
+  return Date.parse(expiresAt) - 30_000 > Date.now();
+}

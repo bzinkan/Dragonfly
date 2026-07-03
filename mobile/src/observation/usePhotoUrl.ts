@@ -8,6 +8,14 @@ import { getPhotoUrl } from "@/src/api/photos";
  * and scrolling back to a card within the window reuses the same URL
  * (which also lets the native image cache hit instead of refetching
  * bytes -- the SAS query string is part of the cache key).
+ *
+ * refetchInterval keeps long-mounted screens honest: gcTime only bounds
+ * UNOBSERVED queries, and RN has no window-focus refetch, so a Home tab
+ * left open would otherwise hold a URL past expiry forever. The interval
+ * only fires for observed (visible) queries, so cost stays bounded.
+ * Callers must still gate rendering on isUrlUsable(expires_at) -- a
+ * cache hit can be already-expired at mount, and the swap-in of fresh
+ * data is a background refetch.
  */
 export function usePhotoUrl(photoId: string, enabled: boolean) {
   return useQuery({
@@ -16,6 +24,8 @@ export function usePhotoUrl(photoId: string, enabled: boolean) {
     enabled,
     staleTime: 4 * 60 * 1000,
     gcTime: 5 * 60 * 1000,
-    retry: 1,
+    refetchInterval: 4 * 60 * 1000,
+    // No retry override: inherit the client default, which already
+    // retries network/5xx and skips 4xx.
   });
 }

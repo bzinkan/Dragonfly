@@ -109,17 +109,26 @@ class BlobSignedUrlGenerator:
         self._account_endpoint = account_endpoint
         self._credential = DefaultAzureCredential()
         self._service = BlobServiceClient(account_url=account_endpoint, credential=self._credential)
+        self._udk_cache: tuple[Any, datetime] | None = None
 
     def _user_delegation_key(self, lifetime: timedelta) -> Any:
-        # Issue a fresh user-delegation key for each SAS mint. Cheap to
-        # mint (one AAD call) and pinning per-request avoids cross-request
-        # lifetime leaks. Later we can cache for 50min if SAS minting
-        # becomes hot.
-        start = datetime.now(UTC)
-        return self._service.get_user_delegation_key(
-            key_start_time=start,
-            key_expiry_time=start + lifetime + timedelta(minutes=5),
+        # Cached ~1h: SAS minting became hot once the gallery started
+        # requesting a signed GET per photo per page (each key mint is an
+        # AAD round-trip). The key is reused only while it still outlives
+        # the requested SAS lifetime plus a clock-skew margin, so every
+        # minted SAS expires before its signing key does.
+        now = datetime.now(UTC)
+        if self._udk_cache is not None:
+            key, key_expiry = self._udk_cache
+            if key_expiry - now > lifetime + timedelta(minutes=5):
+                return key
+        key_expiry = now + timedelta(hours=1)
+        key = self._service.get_user_delegation_key(
+            key_start_time=now,
+            key_expiry_time=key_expiry,
         )
+        self._udk_cache = (key, key_expiry)
+        return key
 
     def generate_put_url(
         self,

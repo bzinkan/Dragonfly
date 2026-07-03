@@ -1,5 +1,5 @@
 import { router } from "expo-router";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -13,9 +13,11 @@ import DesktopContainer from "@/components/DesktopContainer";
 import { Text, View } from "@/components/Themed";
 import { ApiError } from "@/src/api/client";
 import type { ObservationListItem } from "@/src/api/observations";
+import { queryClient } from "@/src/api/queryClient";
 import {
   galleryCaption,
   isAwaitingModeration,
+  isUrlUsable,
   photoDisplayMode,
 } from "@/src/observation/galleryLogic";
 import { useMyObservations } from "@/src/observation/useMyObservations";
@@ -28,6 +30,10 @@ export default function HomeScreen() {
 
   const onRefresh = useCallback(() => {
     void query.refetch();
+    // The thumbnails are separate ["photo-url", id] queries; without this
+    // an errored thumb survives pull-to-refresh (only active ones matter
+    // -- off-screen queries refetch on their own remount).
+    void queryClient.refetchQueries({ queryKey: ["photo-url"], type: "active" });
   }, [query]);
 
   if (query.isPending) {
@@ -150,21 +156,36 @@ function GalleryThumb({
   checking: boolean;
 }) {
   const urlQuery = usePhotoUrl(photoId, true);
+  // One silent re-mint when the image bytes fail to load (typically the
+  // moderation worker moved the blob out from under a cached URL); after
+  // that, show the placeholder instead of error-looping.
+  const [loadRetried, setLoadRetried] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
 
-  if (urlQuery.isPending) {
+  if (urlQuery.isError || loadFailed) {
+    // URL mint or image load failed (offline, blob missing). Tappable
+    // placeholder; pull-to-refresh also retries active photo-url queries.
     return (
-      <View style={styles.thumbPlaceholder}>
-        <ActivityIndicator />
-      </View>
+      <Pressable
+        style={styles.thumbPlaceholder}
+        onPress={() => {
+          setLoadFailed(false);
+          setLoadRetried(false);
+          void urlQuery.refetch();
+        }}
+      >
+        <Text style={styles.placeholderGlyph}>🌿</Text>
+        <Text style={styles.placeholderText}>Tap to retry</Text>
+      </Pressable>
     );
   }
 
-  if (urlQuery.isError || !urlQuery.data) {
-    // URL mint failed (offline, blob missing). Placeholder, not an error
-    // banner -- pull-to-refresh retries the whole grid.
+  // Pending, or a cache hit whose SAS already expired (the background
+  // refetch is re-minting) -- never hand an expired URL to <Image>.
+  if (urlQuery.isPending || !isUrlUsable(urlQuery.data.expires_at)) {
     return (
       <View style={styles.thumbPlaceholder}>
-        <Text style={styles.placeholderGlyph}>🌿</Text>
+        <ActivityIndicator />
       </View>
     );
   }
@@ -175,6 +196,16 @@ function GalleryThumb({
         source={{ uri: urlQuery.data.url }}
         style={styles.thumb}
         resizeMode="cover"
+        onError={() => {
+          if (!loadRetried) {
+            setLoadRetried(true);
+            void queryClient.invalidateQueries({
+              queryKey: ["photo-url", photoId],
+            });
+          } else {
+            setLoadFailed(true);
+          }
+        }}
       />
       {checking && (
         <View style={styles.checkingBadge}>
@@ -211,6 +242,10 @@ const styles = StyleSheet.create({
   },
   card: {
     flex: 1,
+    // Without the cap, a lone card in the last row of an odd-length list
+    // flexes to the full row width (giant square). ~6px wider than paired
+    // cards because of the 12px gap; imperceptible.
+    maxWidth: "50%",
     marginBottom: 16,
   },
   thumbWrap: {
