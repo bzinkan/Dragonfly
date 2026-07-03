@@ -164,8 +164,12 @@ The Phase 2 MVP is intentionally narrow.
 - **Six deepening thresholds per zone, per kid** (section 7): 1 / 3 /
   5 / 10 / 20 / 50 moderation-passed observations matched to that
   zone.
-- **Coarse iconic_taxon unlocks** — every observation lights up
-  something in the matching zone, even an obscure beetle.
+- **Coarse iconic_taxon unlocks** — every *identified* observation
+  lights up something in the matching zone, even an obscure beetle.
+  Sanctuary participation begins at identification (decision
+  2026-07-03): an observation with no `taxon_id` contributes nothing
+  until the kid picks a species, at which point the taxon-time
+  re-dispatch makes the full contribution (zone, unlocks, cameos).
 - **Two new dispatcher reward types**: `world_unlock` and
   `world_evolution` (section 8). No other Sanctuary-specific reward
   types.
@@ -291,13 +295,23 @@ Flavor: built spaces — sidewalks, parks, walls, eaves.
 
 ### elsewhere
 
-Flavor: the catch-all for taxa that don't fit the six above, and for
-observations whose iconic_taxon is missing or unrecognized.
+Flavor: the catch-all for *identified* taxa that don't fit the six
+above.
 
-- Anything not mapped above (e.g. `Protozoa`, `Chromista`, unknown).
-- Also receives observations whose iconic_taxon could not be
-  resolved at submission time; these still light *something* up so
-  the kid is never punished for the taxonomy backend's gaps.
+- Anything not mapped above (e.g. `Protozoa`, `Chromista`).
+- Also receives identified observations whose iconic_taxon could not
+  be resolved (species-cache gap): these still light *something* up
+  so the kid is never punished for the taxonomy backend's gaps.
+- Observations with **no taxon at all** ("mystery finds") do NOT
+  contribute here or anywhere -- Sanctuary participation begins at
+  identification (decision 2026-07-03). `WorldHandler` skips them
+  entirely; the contribution happens when the species pick triggers
+  the taxon-time re-dispatch. A mystery find that is never identified
+  never contributes (the gallery/journal still shows it, and
+  identifying it later from the observation detail screen recovers
+  the full contribution). Note: a manually *named* find (free-text
+  species, no taxon) is also a non-contributor until a taxon is
+  resolved for it.
 
 A single observation may light up **one primary zone** (highest-
 priority match) and at most one **overlay** (urban). The mapping
