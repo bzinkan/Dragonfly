@@ -126,12 +126,12 @@ def photos_client(
     yield from _build_client(fake_session, signer=stub_signer)
 
 
-def _user_row() -> models.User:
+def _user_row(role: str = "kid") -> models.User:
     return models.User(
         id=_USER_ID,
         firebase_uid=_FIREBASE_UID,
-        role="kid",
-        display_name="Kid Name",
+        role=role,
+        display_name="Kid Name" if role == "kid" else "Adult Name",
     )
 
 
@@ -255,21 +255,28 @@ def _wire_photo_url(
     *,
     user: models.User | None,
     photo: models.Photo | None,
-    membership_pairs: list[tuple[str, str]] | None = None,
+    membership_rows: list[tuple[str, str, str]] | None = None,
 ) -> None:
-    """Wire user lookup -> photo lookup -> (optional) memberships join."""
+    """Wire user lookup -> photo lookup -> (optional) memberships join.
+
+    `membership_rows` are (user_id, group_id, role) triples -- the role
+    matters for non-clean photos, where the caller's side of the shared
+    group must be an adult membership. The memberships result is staged
+    whenever the caller isn't the owner; role-gate rejections that fire
+    before the query simply leave it unconsumed.
+    """
     user_result = MagicMock()
     user_result.scalar_one_or_none = MagicMock(return_value=user)
     photo_result = MagicMock()
     photo_result.scalar_one_or_none = MagicMock(return_value=photo)
     memberships_result = MagicMock()
-    memberships_result.all = MagicMock(return_value=membership_pairs or [])
+    memberships_result.all = MagicMock(return_value=membership_rows or [])
 
     side_effects: list[object] = [user_result]
     if user is not None:
         side_effects.append(photo_result)
         if photo is not None and photo.user_id != user.id:
-            # _intersecting_groups runs only when caller != owner
+            # _shares_group runs only when caller != owner
             side_effects.append(memberships_result)
 
     fake_session.execute = AsyncMock(side_effect=side_effects)
@@ -344,24 +351,156 @@ def test_photo_url_404_when_no_group_overlap(
         fake_session,
         user=_user_row(),
         photo=_photo_row(owner="someone-else"),
-        membership_pairs=[(_USER_ID, "g1"), ("someone-else", "g2")],
+        membership_rows=[(_USER_ID, "g1", "kid"), ("someone-else", "g2", "kid")],
     )
     response = photos_client.get("/v1/photos/x/url", headers={"Authorization": "Bearer fake"})
     assert response.status_code == 404
 
 
-def test_photo_url_adult_in_same_group_returns_url(
+def test_photo_url_group_mate_sees_clean_photo(
     monkeypatch: pytest.MonkeyPatch,
     photos_client: TestClient,
     fake_session: AsyncMock,
 ) -> None:
-    """Different owner BUT shared group -> signed URL returned."""
+    """Different owner BUT shared group -> signed URL returned for
+    moderation-passed photos (any membership role)."""
     _stub_token_verifier(monkeypatch)
     _wire_photo_url(
         fake_session,
         user=_user_row(),
-        photo=_photo_row(owner="someone-else"),
-        membership_pairs=[(_USER_ID, "shared"), ("someone-else", "shared")],
+        photo=_photo_row(owner="someone-else", status="clean"),
+        membership_rows=[(_USER_ID, "shared", "kid"), ("someone-else", "shared", "kid")],
+    )
+    response = photos_client.get("/v1/photos/x/url", headers={"Authorization": "Bearer fake"})
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("photo_status", ["pending", "quarantine"])
+def test_photo_url_kid_group_mate_blocked_from_unmoderated(
+    monkeypatch: pytest.MonkeyPatch,
+    photos_client: TestClient,
+    fake_session: AsyncMock,
+    photo_status: str,
+) -> None:
+    """Non-clean photos of OTHERS are adult-review material: a kid
+    group-mate must never mint a URL for another kid's unmoderated or
+    quarantined photo."""
+    _stub_token_verifier(monkeypatch)
+    _wire_photo_url(
+        fake_session,
+        user=_user_row(role="kid"),
+        photo=_photo_row(owner="someone-else", status=photo_status),
+        membership_rows=[(_USER_ID, "shared", "kid"), ("someone-else", "shared", "kid")],
+    )
+    response = photos_client.get("/v1/photos/x/url", headers={"Authorization": "Bearer fake"})
+    assert response.status_code == 404
+
+
+def test_photo_url_adult_reviewer_sees_quarantined(
+    monkeypatch: pytest.MonkeyPatch,
+    photos_client: TestClient,
+    fake_session: AsyncMock,
+) -> None:
+    """The review-queue trust model: a parent/teacher with an ADULT-role
+    membership in the shared group can mint URLs for quarantined photos."""
+    _stub_token_verifier(monkeypatch)
+    _wire_photo_url(
+        fake_session,
+        user=_user_row(role="parent"),
+        photo=_photo_row(owner="someone-else", status="quarantine"),
+        membership_rows=[
+            (_USER_ID, "shared", "parent"),
+            ("someone-else", "shared", "kid"),
+        ],
+    )
+    response = photos_client.get("/v1/photos/x/url", headers={"Authorization": "Bearer fake"})
+    assert response.status_code == 200
+
+
+def test_photo_url_adult_with_kid_membership_blocked_from_quarantined(
+    monkeypatch: pytest.MonkeyPatch,
+    photos_client: TestClient,
+    fake_session: AsyncMock,
+) -> None:
+    """users.role alone is not enough: the caller's membership in the
+    SHARED group must itself be adult-role (an adult who joined some
+    group as a kid-role member is not that group's reviewer)."""
+    _stub_token_verifier(monkeypatch)
+    _wire_photo_url(
+        fake_session,
+        user=_user_row(role="parent"),
+        photo=_photo_row(owner="someone-else", status="quarantine"),
+        membership_rows=[
+            (_USER_ID, "shared", "kid"),
+            ("someone-else", "shared", "kid"),
+        ],
+    )
+    response = photos_client.get("/v1/photos/x/url", headers={"Authorization": "Bearer fake"})
+    assert response.status_code == 404
+
+
+def test_photo_url_owner_sees_own_quarantined_photo(
+    monkeypatch: pytest.MonkeyPatch,
+    photos_client: TestClient,
+    fake_session: AsyncMock,
+) -> None:
+    """Kids always see their OWN photos in any non-deleted status --
+    the gallery's 'being checked' state depends on it."""
+    _stub_token_verifier(monkeypatch)
+    _wire_photo_url(
+        fake_session,
+        user=_user_row(role="kid"),
+        photo=_photo_row(owner=_USER_ID, status="quarantine"),
+    )
+    response = photos_client.get("/v1/photos/x/url", headers={"Authorization": "Bearer fake"})
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("photo_status", ["pending", "quarantine"])
+def test_photo_url_adult_membership_elsewhere_does_not_unlock_shared_group(
+    monkeypatch: pytest.MonkeyPatch,
+    photos_client: TestClient,
+    fake_session: AsyncMock,
+    photo_status: str,
+) -> None:
+    """Mutation-proofing the per-group binding: an adult-role membership
+    in an UNRELATED group must not unlock non-clean photos in a group
+    the caller only joined as a kid-role member. A regressed 'any adult
+    membership anywhere + any shared group' check passes every other
+    test in this file; this one pins the binding."""
+    _stub_token_verifier(monkeypatch)
+    _wire_photo_url(
+        fake_session,
+        user=_user_row(role="parent"),
+        photo=_photo_row(owner="someone-else", status=photo_status),
+        membership_rows=[
+            (_USER_ID, "other-group", "parent"),
+            (_USER_ID, "shared", "kid"),
+            ("someone-else", "shared", "kid"),
+        ],
+    )
+    response = photos_client.get("/v1/photos/x/url", headers={"Authorization": "Bearer fake"})
+    assert response.status_code == 404
+
+
+def test_photo_url_adult_shared_membership_with_kid_membership_elsewhere(
+    monkeypatch: pytest.MonkeyPatch,
+    photos_client: TestClient,
+    fake_session: AsyncMock,
+) -> None:
+    """Inverse of the binding test: the adult-role membership IS in the
+    shared group, so review access works even though the caller is a
+    kid-role member somewhere else."""
+    _stub_token_verifier(monkeypatch)
+    _wire_photo_url(
+        fake_session,
+        user=_user_row(role="teacher"),
+        photo=_photo_row(owner="someone-else", status="quarantine"),
+        membership_rows=[
+            (_USER_ID, "shared", "teacher"),
+            (_USER_ID, "other-group", "kid"),
+            ("someone-else", "shared", "kid"),
+        ],
     )
     response = photos_client.get("/v1/photos/x/url", headers={"Authorization": "Bearer fake"})
     assert response.status_code == 200

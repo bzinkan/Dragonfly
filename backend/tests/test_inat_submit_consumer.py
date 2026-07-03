@@ -320,3 +320,24 @@ async def test_consume_no_op_when_service_bus_disabled() -> None:
         max_messages=10,
     )
     assert processed == 0
+
+
+async def test_consume_no_op_when_submit_flag_disabled() -> None:
+    """COPPA posture (Option B): messages already sitting in the queue
+    must not submit after the flag is flipped off. The guard runs before
+    any Azure import or receive loop."""
+    from admin.inat_submit_consumer import consume
+
+    settings = Settings(
+        env="local",
+        service_bus_namespace="example.servicebus.windows.net",
+        inat_submit_enabled=False,
+    )
+    processed = await consume(
+        settings,
+        MagicMock(),  # type: ignore[arg-type]
+        _StubStorage(),  # type: ignore[arg-type]
+        AsyncMock(),
+        max_messages=10,
+    )
+    assert processed == 0

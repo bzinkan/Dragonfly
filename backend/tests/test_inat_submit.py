@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 import httpx
@@ -50,6 +51,37 @@ async def test_happy_path(client: httpx.AsyncClient) -> None:
     assert result.inat_uuid == _DRAGONFLY_OBS_ID
     assert obs_route.called
     assert photo_route.called
+
+
+@respx.mock
+async def test_payload_rounds_coords_and_sets_geoprivacy(client: httpx.AsyncClient) -> None:
+    """Child-location privacy posture: coordinates leave our system
+    rounded to ~1.1 km AND flagged geoprivacy=obscured. Pin the exact
+    JSON so neither layer can silently regress."""
+    obs_route = respx.post("https://api.inaturalist.org/v1/observations").mock(
+        return_value=httpx.Response(200, json={"id": 1, "uuid": _DRAGONFLY_OBS_ID})
+    )
+    respx.post("https://api.inaturalist.org/v1/observation_photos").mock(
+        return_value=httpx.Response(200, json={"id": 2})
+    )
+
+    await submit_observation_to_inat(
+        client,
+        dragonfly_observation_id=_DRAGONFLY_OBS_ID,
+        photo_bytes=b"jpeg",
+        latitude=39.123456,
+        longitude=-84.567891,
+        observed_on=_OBSERVED_ON,
+        taxon_id=12345,
+    )
+
+    body = json.loads(obs_route.calls[0].request.content)
+    observation = body["observation"]
+    assert observation["latitude"] == 39.12
+    assert observation["longitude"] == -84.57
+    assert observation["geoprivacy"] == "obscured"
+    # Full-precision coordinates never appear anywhere in the payload.
+    assert "39.123456" not in obs_route.calls[0].request.content.decode()
 
 
 @respx.mock
