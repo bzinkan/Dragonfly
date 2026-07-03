@@ -3,10 +3,11 @@
 Expo (React Native) app for Dragonfly. iOS, Android, and a thin web build for the
 parent-consent / teacher dashboard surface (per `docs/mobile.md`).
 
-Phase 6+ surface: Field Journal tab (route `index`) lists the signed-in user's observations
-(read-only in Phase 1: kid-authored journal notes would require an ADR
-first -- moderation / no-kid-free-text invariants)
-(`GET /v1/observations/me`), Observe tab is the camera capture + submit flow,
+Phase 6+ surface: Field Journal tab (route `index`) lists the signed-in
+user's observations (`GET /v1/observations/me`). The Field Journal is
+read-only: kid-authored journal notes would need an ADR first
+(moderation / no-kid-free-text invariants). Observe tab is the camera
+capture + submit flow,
 Dex / Expeditions placeholder + real Expeditions tab, and Sanctuary tab
 renders the kid's living-diorama from `GET /v1/sanctuary/me` (MVP with
 placeholder art -- see `docs/sanctuary.md` section 10). The Sanctuary tab
@@ -19,7 +20,7 @@ the dev bearer-token shortcut + build info + the
 Adult tools section (review queue link).
 
 **Web build is the adult-console surface only** (per `docs/mobile.md`):
-`npm run web` shows Home + Settings only -- Observe / Dex / Expeditions /
+`npm run web` shows the Field Journal + Settings only -- Observe / Dex / Expeditions /
 Sanctuary are hidden from the nav since those are kid-phone surfaces. The review queue is
 reachable from Settings the same way on both platforms. The kid capture flow
 isn't there because: (a) docs/mobile.md is explicit that web isn't the kid
@@ -52,7 +53,7 @@ mobile/
   app.config.ts          # env-switched Expo config (replaces app.json)
   eas.json               # development / preview / production build profiles
   app/                   # Expo Router file-based routes
-    (tabs)/              # bottom tab nav: Home, Observe, Dex, Expeditions, Sanctuary, Settings
+    (tabs)/              # bottom tab nav: Journal, Observe, Dex, Expeditions, Sanctuary, Settings
     observe-submit.tsx   # stack-pushed submit screen after camera capture
   src/
     api/                 # client + typed endpoint wrappers + queryClient

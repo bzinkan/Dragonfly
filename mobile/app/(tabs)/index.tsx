@@ -53,7 +53,7 @@ export default function FieldJournalScreen() {
       <DesktopContainer>
         <View style={styles.center}>
           <Text style={styles.heading}>
-            {isUnauthed ? "Not signed in" : "Couldn't open your field journal"}
+            {isUnauthed ? "Not signed in" : "Couldn't open your Field Journal"}
           </Text>
           <Text style={styles.body}>
             {isUnauthed
@@ -72,7 +72,7 @@ export default function FieldJournalScreen() {
     return (
       <DesktopContainer>
         <View style={styles.center}>
-          <Text style={styles.heading}>Your field journal is empty</Text>
+          <Text style={styles.heading}>Your Field Journal is empty</Text>
           <Text style={styles.body}>
             Tap the Observe tab to log your first discovery.
           </Text>
