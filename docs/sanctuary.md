@@ -317,6 +317,19 @@ A single observation may light up **one primary zone** (highest-
 priority match) and at most one **overlay** (urban). The mapping
 table is the source of truth; the database is a materialized view.
 
+### when contributions happen
+
+Sanctuary participation begins at identification (decision
+2026-07-03). `WorldHandler` skips observations whose `taxon_id` is
+NULL — no contribution row, no zone counts. The live mobile flow
+creates observations taxonless and assigns the species via PATCH;
+that taxon-time re-dispatch makes the full contribution in one shot
+(zone routing, coarse/charismatic unlocks with the same dispatch's
+first-find state, threshold evolutions). An observation created WITH
+a taxon contributes at create time, exactly as before. A mystery
+find that is never identified never contributes; identifying it later
+from the observation detail screen recovers the full contribution.
+
 ---
 
 ## 6. Unlock types
