@@ -32,6 +32,17 @@ async def get_taxon(client: httpx.AsyncClient, taxon_id: int) -> TaxonInfo | Non
 
     if res.status_code == 404:
         return None
+    if res.status_code in (401, 403, 429):
+        # Auth/rate problems are OUR outage, not the taxon's absence --
+        # same convention as cv.py. Callers degrade (facts_available
+        # false / species_name left as-is) instead of treating the
+        # taxon as nonexistent.
+        log.warning(
+            "inat.taxa.degraded",
+            taxon_id=taxon_id,
+            status=res.status_code,
+        )
+        raise InatUnavailable(f"iNat taxa auth/rate error: {res.status_code}")
     if res.status_code >= 500:
         raise InatUnavailable(f"iNat taxa server error: {res.status_code}")
     if res.status_code >= 400:

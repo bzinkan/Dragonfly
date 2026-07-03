@@ -226,6 +226,58 @@ def test_facts_from_payload_minimal_row_is_all_none() -> None:
     assert facts.facts_available is True
 
 
+def test_facts_422_on_out_of_range_taxon_id(
+    monkeypatch: pytest.MonkeyPatch,
+    species_client: TestClient,
+    fake_session: AsyncMock,
+) -> None:
+    """Unbounded ids overflow the asyncpg int4 bind -> must 422, not 500."""
+    _stub_token_verifier(monkeypatch)
+    response = species_client.get(
+        "/v1/species/99999999999999",
+        headers={"Authorization": "Bearer fake"},
+    )
+    assert response.status_code == 422
+    response = species_client.get(
+        "/v1/species/0",
+        headers={"Authorization": "Bearer fake"},
+    )
+    assert response.status_code == 422
+
+
+def test_facts_from_payload_never_synthesizes_markup() -> None:
+    """Escaped markup must not survive the strip: a single
+    strip-then-unescape pass would turn &lt;script&gt; into literal tags."""
+    facts = facts_from_payload(
+        _TAXON_ID,
+        {"wikipedia_summary": "&lt;script&gt;alert(1)&lt;/script&gt;Cardinals sing."},
+    )
+    assert facts.summary is not None
+    assert "<" not in facts.summary
+    assert ">" not in facts.summary
+    assert facts.summary == "alert(1)Cardinals sing."
+
+    # Double-escaped input needs a second round; still no markup out.
+    facts = facts_from_payload(
+        _TAXON_ID,
+        {"wikipedia_summary": "&amp;lt;b&amp;gt;bold claim&amp;lt;/b&amp;gt;"},
+    )
+    assert facts.summary is not None
+    assert "<" not in facts.summary
+
+
+def test_facts_from_payload_wikipedia_url_allowlist() -> None:
+    def url_for(url: str) -> str | None:
+        return facts_from_payload(_TAXON_ID, {"wikipedia_url": url}).wikipedia_url
+
+    assert url_for("https://en.wikipedia.org/wiki/Northern_cardinal") is not None
+    assert url_for("https://wikipedia.org/wiki/Bird") is not None
+    assert url_for("http://en.wikipedia.org/wiki/Bird") is None  # not https
+    assert url_for("https://evil.example.com/wiki/Bird") is None
+    assert url_for("https://notwikipedia.org/wiki/Bird") is None
+    assert url_for("javascript:alert(1)") is None
+
+
 def test_facts_from_payload_rejects_malformed_fields() -> None:
     facts = facts_from_payload(
         _TAXON_ID,

@@ -186,6 +186,19 @@ async def test_get_taxon_returns_none_on_empty_results(client: httpx.AsyncClient
     assert await get_taxon(client, 1) is None
 
 
+@respx.mock
+@pytest.mark.parametrize("status", [401, 403, 429])
+async def test_get_taxon_raises_on_auth_or_rate_limit(
+    client: httpx.AsyncClient, status: int
+) -> None:
+    """Auth/rate problems are OUR outage, not the taxon's absence --
+    callers must degrade (facts_available=false, species_name as-is)
+    rather than treat the taxon as nonexistent."""
+    respx.get("https://api.inaturalist.org/v1/taxa/1").mock(return_value=httpx.Response(status))
+    with pytest.raises(InatUnavailable):
+        await get_taxon(client, 1)
+
+
 # ---------------------------------------------------------------------------
 # get_species_counts
 # ---------------------------------------------------------------------------

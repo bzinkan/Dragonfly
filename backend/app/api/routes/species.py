@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import html
 import re
+from typing import Annotated
+from urllib.parse import urlparse
 
 import structlog
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Path, status
 from pydantic import BaseModel
 
 from app.core.auth import CurrentUserDep, resolve_current_user_row
@@ -51,10 +53,25 @@ class SpeciesFactsResponse(BaseModel):
 
 
 def _plain_text(value: object) -> str | None:
-    """Strip tags + unescape entities from iNat's HTML-ish summary."""
+    """Strip tags + unescape entities to a fixpoint.
+
+    The summary is world-editable Wikipedia content mirrored by iNat, so
+    entity-escaped markup (`&lt;script&gt;`, or double-escaped variants)
+    must never survive into the plain-text contract -- a single
+    strip-then-unescape pass would synthesize literal tags from escaped
+    ones. Input that never stabilizes is dropped outright.
+    """
     if not isinstance(value, str):
         return None
-    text = html.unescape(_TAG_RE.sub("", value)).strip()
+    text = value
+    for _ in range(5):
+        stripped = html.unescape(_TAG_RE.sub("", text))
+        if stripped == text:
+            break
+        text = stripped
+    else:
+        return None
+    text = text.strip()
     return text or None
 
 
@@ -76,6 +93,25 @@ def _conservation_status(payload: dict[str, object]) -> str | None:
     return name if isinstance(name, str) and name else None
 
 
+def _wikipedia_url(payload: dict[str, object]) -> str | None:
+    """Only ever hand the client a real https Wikipedia link.
+
+    The payload is world-editable upstream; anything that isn't
+    `https://*.wikipedia.org` is dropped rather than passed through to a
+    surface that might one day render it tappable.
+    """
+    url = _str_field(payload, "wikipedia_url")
+    if url is None:
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        return None
+    host = parsed.netloc.lower()
+    if host == "wikipedia.org" or host.endswith(".wikipedia.org"):
+        return url
+    return None
+
+
 def facts_from_payload(taxon_id: int, payload: dict[str, object]) -> SpeciesFactsResponse:
     """Pure extraction from a raw iNat `/taxa/{id}` result dict.
 
@@ -89,7 +125,7 @@ def facts_from_payload(taxon_id: int, payload: dict[str, object]) -> SpeciesFact
         rank=_str_field(payload, "rank"),
         iconic_taxon=_str_field(payload, "iconic_taxon_name"),
         summary=_plain_text(payload.get("wikipedia_summary")),
-        wikipedia_url=_str_field(payload, "wikipedia_url"),
+        wikipedia_url=_wikipedia_url(payload),
         observations_worldwide=_int_field(payload, "observations_count"),
         conservation_status=_conservation_status(payload),
         facts_available=True,
@@ -98,7 +134,10 @@ def facts_from_payload(taxon_id: int, payload: dict[str, object]) -> SpeciesFact
 
 @router.get("/{taxon_id}", response_model=SpeciesFactsResponse)
 async def get_species_facts(
-    taxon_id: int,
+    # int32-bounded: an unbounded int overflows the asyncpg bind on the
+    # Integer PK and 500s instead of 422ing. ge=1 matches every other
+    # user-supplied taxon_id in the codebase.
+    taxon_id: Annotated[int, Path(ge=1, le=2_147_483_647)],
     current_user: CurrentUserDep,
     session: DbSessionDep,
     inat_client: InatClientDep,

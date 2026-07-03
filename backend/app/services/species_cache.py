@@ -125,8 +125,9 @@ async def get_source_payload(
 
     Cache-first; on miss delegates to `get_or_fill` (which stores the raw
     payload) and re-reads the row. Returns None when the taxon doesn't
-    exist on iNat. Raises `InatUnavailable` (from `get_taxon`) when iNat
-    is unreachable and the cache is empty -- callers degrade gracefully.
+    exist on iNat (404/malformed). Raises `InatUnavailable` (from
+    `get_taxon`) when iNat is unreachable, unauthorized, or rate-limiting
+    and the cache is empty -- callers degrade gracefully.
     """
     row = (
         await session.execute(
