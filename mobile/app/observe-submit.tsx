@@ -206,7 +206,7 @@ export default function ObserveSubmitScreen() {
     clearDraft();
     // Invalidate here (not just in the modal handlers) -- most kids
     // never see the Sanctuary reveal, and the expedition step counts
-    // on the tab are stale the moment a step completes. The Home list
+    // on the tab are stale the moment a step completes. The Field Journal
     // caches for 30s; without its invalidation the fresh observation
     // doesn't show up until a pull-to-refresh. Sanctuary contributions
     // happen at identification (the pick that just landed), so its

@@ -3,7 +3,9 @@
 Expo (React Native) app for Dragonfly. iOS, Android, and a thin web build for the
 parent-consent / teacher dashboard surface (per `docs/mobile.md`).
 
-Phase 6+ surface: Home tab lists the signed-in user's observations
+Phase 6+ surface: Field Journal tab (route `index`) lists the signed-in user's observations
+(read-only in Phase 1: kid-authored journal notes would require an ADR
+first -- moderation / no-kid-free-text invariants)
 (`GET /v1/observations/me`), Observe tab is the camera capture + submit flow,
 Dex / Expeditions placeholder + real Expeditions tab, and Sanctuary tab
 renders the kid's living-diorama from `GET /v1/sanctuary/me` (MVP with

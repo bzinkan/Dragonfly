@@ -183,7 +183,9 @@ The Phase 2 MVP is intentionally narrow.
 - **Tap-to-inspect** on each unlocked element with author-time blurb
   copy.
 - **A simple journal/timeline** showing the order in which elements
-  appeared, private to the kid.
+  appeared, private to the kid. (Kid-facing label: **"Story"** -- the
+  Field Journal tab owns the "Journal" name; the API field stays
+  `journal`.)
 
 ### explicitly deferred
 
@@ -307,7 +309,7 @@ above.
   identification (decision 2026-07-03). `WorldHandler` skips them
   entirely; the contribution happens when the species pick triggers
   the taxon-time re-dispatch. A mystery find that is never identified
-  never contributes (the gallery/journal still shows it, and
+  never contributes (the Field Journal still shows it, and
   identifying it later from the observation detail screen recovers
   the full contribution). Note: a manually *named* find (free-text
   species, no taxon) is also a non-contributor until a taxon is
@@ -686,7 +688,7 @@ alongside the existing tables (final shape is
   the same `observation_id` cannot insert twice.
 - `sanctuary_events` — append-only audit log of celebration-worthy
   rows (world unlocks, world evolutions, relationship moments, tiny
-  surprises). Backs the per-zone journal/timeline in §10.
+  surprises). Backs the per-zone journal/timeline (kid-facing label: "Story") in §10.
 
 Content (`content/sanctuary/` JSON, validated by the Pydantic
 schema in PR #96) is **not** mirrored into a Postgres table in this
@@ -963,7 +965,7 @@ diorama:
 All copy comes from the API response (which in turn comes from
 authored `content/sanctuary/` JSON). No client-fabricated
 motivational copy beyond panel headers ("Relationships", "Tiny
-surprises", "Quiet corners", "Journal"). No social buttons, no
+surprises", "Quiet corners", "Story"). No social buttons, no
 share, no location, no streak / FOMO language.
 
 ### MVP tab shipped (placeholder art)
@@ -1044,7 +1046,7 @@ there" without being told what species count as which thing —
 preserving the surprise of real discovery. Never reveals the answer.
 Never reveals a precise location.
 
-### journal / timeline
+### journal / timeline (kid-facing label: "Story")
 
 A scrollable per-zone timeline of the kid's own unlocks and
 threshold crossings, sourced from `sanctuary_elements` and

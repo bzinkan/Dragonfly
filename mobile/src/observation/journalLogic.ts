@@ -1,5 +1,5 @@
 /**
- * Pure display rules for the Home gallery. Kept out of the component so
+ * Pure display rules for the Field Journal. Kept out of the component so
  * jest can pin the status -> presentation mapping without a renderer.
  *
  * `photo_status` comes from the joined Photo row on GET /v1/observations/me
@@ -14,7 +14,7 @@ export function photoDisplayMode(photoStatus: string): PhotoDisplayMode {
   switch (photoStatus) {
     case "clean":
     case "pending":
-      // The kid's own gallery may show their photo before moderation
+      // The kid's own Field Journal may show their photo before moderation
       // lands -- it is only ever shown to its owner here. The list
       // endpoint is /me-scoped, and group-visible surfaces (leaderboards
       // etc.) don't render photos.
@@ -24,7 +24,7 @@ export function photoDisplayMode(photoStatus: string): PhotoDisplayMode {
     case "deleted":
       return "removed";
     default:
-      // Unknown/future status: never crash the gallery; treat it like a
+      // Unknown/future status: never crash the Field Journal; treat it like a
       // photo we can't show yet.
       return "reviewing";
   }
@@ -39,7 +39,7 @@ export function isAwaitingModeration(photoStatus: string): boolean {
 
 /** Card caption. Kids often skip the species pick; "Mystery find" reads
  * better than a null. */
-export function galleryCaption(speciesName: string | null): string {
+export function journalCaption(speciesName: string | null): string {
   return speciesName ?? "Mystery find";
 }
 
