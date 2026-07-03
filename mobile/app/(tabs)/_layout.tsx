@@ -34,8 +34,10 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: "Home",
-          tabBarIcon: ({ color }) => <TabBarIcon name="home" color={color} />,
+          // Header says the full name; the tab bar keeps the short one.
+          title: "Field Journal",
+          tabBarLabel: "Journal",
+          tabBarIcon: ({ color }) => <TabBarIcon name="sticky-note" color={color} />,
         }}
       />
       <Tabs.Screen

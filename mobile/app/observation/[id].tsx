@@ -21,11 +21,11 @@ import {
 } from "@/src/api/observations";
 import { queryClient } from "@/src/api/queryClient";
 import {
-  galleryCaption,
+  journalCaption,
   isAwaitingModeration,
   isUrlUsable,
   photoDisplayMode,
-} from "@/src/observation/galleryLogic";
+} from "@/src/observation/journalLogic";
 import {
   conservationLabel,
   factsAreEmpty,
@@ -35,12 +35,12 @@ import { usePhotoUrl } from "@/src/observation/usePhotoUrl";
 import { useSpeciesFacts } from "@/src/observation/useSpeciesFacts";
 
 /**
- * Full-size view of one observation, opened from the Home gallery.
+ * Full-size view of one observation, opened from the Field Journal.
  *
  * Data comes straight out of the ["observations","me"] infinite-query
- * cache -- the gallery just rendered this item, so a second fetch would
+ * cache -- the Field Journal just rendered this item, so a second fetch would
  * be pure latency. Deep links to ids that aren't cached get a gentle
- * bounce back to Home instead of a spinner that can't resolve.
+ * bounce back to the Field Journal instead of a spinner that can't resolve.
  */
 function findCachedObservation(id: string): ObservationListItem | null {
   const data = queryClient.getQueryData<{
@@ -73,7 +73,7 @@ export default function ObservationDetailScreen() {
       <View style={styles.center}>
         <Stack.Screen options={{ title: "Observation" }} />
         <Text style={styles.body}>
-          Couldn&apos;t find that observation. Open it from your Home list.
+          Couldn&apos;t find that entry. Open it from your Field Journal.
         </Text>
         <Pressable
           style={[styles.button, styles.buttonGhost]}
@@ -109,7 +109,7 @@ export default function ObservationDetailScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Stack.Screen options={{ title: galleryCaption(effectiveSpecies) }} />
+      <Stack.Screen options={{ title: journalCaption(effectiveSpecies) }} />
 
       {mode === "image" ? (
         <DetailPhoto
@@ -129,7 +129,7 @@ export default function ObservationDetailScreen() {
         </View>
       )}
 
-      <Text style={styles.species}>{galleryCaption(effectiveSpecies)}</Text>
+      <Text style={styles.species}>{journalCaption(effectiveSpecies)}</Text>
 
       {/* Rewards from an identify-right-here PATCH: dispatcher-authored
           copy, same philosophy as the submit screen's celebration card. */}
@@ -211,7 +211,7 @@ function DetailPhoto({
   }
 
   // Pending, or a cache hit whose SAS already expired (this screen often
-  // opens off a Home tab that sat past the 5-min TTL) -- wait for the
+  // opens off a Field Journal tab that sat past the 5-min TTL) -- wait for the
   // background re-mint instead of handing <Image> a 403.
   if (urlQuery.isPending || !isUrlUsable(urlQuery.data.expires_at)) {
     return (

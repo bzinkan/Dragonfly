@@ -15,15 +15,15 @@ import { ApiError } from "@/src/api/client";
 import type { ObservationListItem } from "@/src/api/observations";
 import { queryClient } from "@/src/api/queryClient";
 import {
-  galleryCaption,
+  journalCaption,
   isAwaitingModeration,
   isUrlUsable,
   photoDisplayMode,
-} from "@/src/observation/galleryLogic";
+} from "@/src/observation/journalLogic";
 import { useMyObservations } from "@/src/observation/useMyObservations";
 import { usePhotoUrl } from "@/src/observation/usePhotoUrl";
 
-export default function HomeScreen() {
+export default function FieldJournalScreen() {
   const query = useMyObservations();
 
   const items = query.data?.pages.flatMap((p) => p.items) ?? [];
@@ -53,7 +53,7 @@ export default function HomeScreen() {
       <DesktopContainer>
         <View style={styles.center}>
           <Text style={styles.heading}>
-            {isUnauthed ? "Not signed in" : "Couldn't load observations"}
+            {isUnauthed ? "Not signed in" : "Couldn't open your Field Journal"}
           </Text>
           <Text style={styles.body}>
             {isUnauthed
@@ -72,9 +72,9 @@ export default function HomeScreen() {
     return (
       <DesktopContainer>
         <View style={styles.center}>
-          <Text style={styles.heading}>No observations yet</Text>
+          <Text style={styles.heading}>Your Field Journal is empty</Text>
           <Text style={styles.body}>
-            Tap the Observe tab to capture your first photo.
+            Tap the Observe tab to log your first discovery.
           </Text>
         </View>
       </DesktopContainer>
@@ -92,7 +92,7 @@ export default function HomeScreen() {
         refreshControl={
           <RefreshControl refreshing={query.isRefetching} onRefresh={onRefresh} />
         }
-        renderItem={({ item }) => <GalleryCard item={item} />}
+        renderItem={({ item }) => <JournalCard item={item} />}
         ListFooterComponent={
           query.hasNextPage ? (
             <Pressable
@@ -111,7 +111,7 @@ export default function HomeScreen() {
   );
 }
 
-function GalleryCard({ item }: { item: ObservationListItem }) {
+function JournalCard({ item }: { item: ObservationListItem }) {
   const mode = photoDisplayMode(item.photo_status);
   const ts = new Date(item.created_at);
 
@@ -121,7 +121,7 @@ function GalleryCard({ item }: { item: ObservationListItem }) {
       onPress={() => router.push(`/observation/${item.id}`)}
     >
       {mode === "image" ? (
-        <GalleryThumb
+        <JournalThumb
           photoId={item.photo_id}
           checking={isAwaitingModeration(item.photo_status)}
         />
@@ -138,7 +138,7 @@ function GalleryCard({ item }: { item: ObservationListItem }) {
         </View>
       )}
       <Text style={styles.species} numberOfLines={1}>
-        {galleryCaption(item.species_name)}
+        {journalCaption(item.species_name)}
       </Text>
       <Text style={styles.meta} numberOfLines={1}>
         {ts.toLocaleDateString()}
@@ -148,7 +148,7 @@ function GalleryCard({ item }: { item: ObservationListItem }) {
   );
 }
 
-function GalleryThumb({
+function JournalThumb({
   photoId,
   checking,
 }: {

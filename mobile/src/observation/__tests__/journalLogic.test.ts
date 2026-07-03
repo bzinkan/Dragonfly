@@ -1,9 +1,9 @@
 import {
-  galleryCaption,
+  journalCaption,
   isAwaitingModeration,
   isUrlUsable,
   photoDisplayMode,
-} from "@/src/observation/galleryLogic";
+} from "@/src/observation/journalLogic";
 
 describe("photoDisplayMode", () => {
   it("shows the image for clean photos", () => {
@@ -55,12 +55,12 @@ describe("isUrlUsable", () => {
   });
 });
 
-describe("galleryCaption", () => {
+describe("journalCaption", () => {
   it("uses the species name when picked", () => {
-    expect(galleryCaption("Northern Cardinal")).toBe("Northern Cardinal");
+    expect(journalCaption("Northern Cardinal")).toBe("Northern Cardinal");
   });
 
   it("falls back to Mystery find when the kid skipped", () => {
-    expect(galleryCaption(null)).toBe("Mystery find");
+    expect(journalCaption(null)).toBe("Mystery find");
   });
 });

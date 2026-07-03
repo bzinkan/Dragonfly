@@ -174,7 +174,7 @@ export default function SanctuaryScreen() {
           <MysteryCuesPanel cues={data.mystery_cues} />
         ) : null}
         {data.recent_events.length > 0 || data.journal.length > 0 ? (
-          <JournalPanel
+          <StoryPanel
             recentEvents={data.recent_events}
             journal={data.journal}
           />
@@ -552,7 +552,7 @@ function MysteryCuesPanel({ cues }: { cues: SanctuaryMysteryCueDto[] }) {
   );
 }
 
-function JournalPanel({
+function StoryPanel({
   recentEvents,
   journal,
 }: {
@@ -584,7 +584,7 @@ function JournalPanel({
 
   return (
     <View style={styles.panel}>
-      <Text style={styles.panelTitle}>Journal</Text>
+      <Text style={styles.panelTitle}>Story</Text>
       {entries.map((entry) => (
         <View key={entry.key} style={styles.journalRow}>
           <Text style={styles.journalRowTitle}>{entry.title}</Text>

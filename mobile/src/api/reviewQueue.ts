@@ -37,6 +37,6 @@ export function rejectReview(id: string): Promise<ResolveResponse> {
   });
 }
 
-// Photo URL fetching moved to the shared module (the kid gallery uses it
+// Photo URL fetching moved to the shared module (the Field Journal uses it
 // too); re-exported here so review-queue call sites keep working.
 export { getPhotoUrl, type PhotoUrlResponse } from "@/src/api/photos";

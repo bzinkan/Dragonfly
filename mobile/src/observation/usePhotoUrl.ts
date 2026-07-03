@@ -10,7 +10,7 @@ import { getPhotoUrl } from "@/src/api/photos";
  * bytes -- the SAS query string is part of the cache key).
  *
  * refetchInterval keeps long-mounted screens honest: gcTime only bounds
- * UNOBSERVED queries, and RN has no window-focus refetch, so a Home tab
+ * UNOBSERVED queries, and RN has no window-focus refetch, so a Field Journal tab
  * left open would otherwise hold a URL past expiry forever. The interval
  * only fires for observed (visible) queries, so cost stays bounded.
  * Callers must still gate rendering on isUrlUsable(expires_at) -- a
