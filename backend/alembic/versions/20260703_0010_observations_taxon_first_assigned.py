@@ -1,6 +1,6 @@
 """Write-once first-taxon marker on observations.
 
-Revision ID: 20260703_0009
+Revision ID: 20260703_0010
 
 The taxon-time re-dispatch previously gated only on the None -> taxon
 transition plus a dex-mint probe, so a raw-API clear-and-repick
@@ -23,8 +23,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "20260703_0009"
-down_revision = "20260702_0008"
+revision = "20260703_0010"
+down_revision = "20260703_0009"
 branch_labels = None
 depends_on = None
 

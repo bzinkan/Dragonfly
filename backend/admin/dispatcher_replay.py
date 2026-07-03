@@ -36,8 +36,12 @@ from app.dispatcher.types import Context
 
 log = structlog.get_logger()
 
-# Skip observations younger than this -- avoids racing a request that's
-# still mid-create. 2 minutes is plenty for the worst-case dispatcher run.
+# Skip observations touched within this window -- avoids racing a request
+# that's still mid-create OR a first-taxon PATCH that just cleared
+# dispatched_at and is about to run its own dispatch (keyed to updated_at,
+# not created_at: the live flow assigns the taxon minutes-to-days after
+# create, so a created_at grace would never shield the PATCH window).
+# 2 minutes is plenty for the worst-case dispatcher run.
 _GRACE_WINDOW = timedelta(minutes=2)
 
 # Cap a single replay invocation. Phase 11 scale is tiny; this is mostly
@@ -56,7 +60,7 @@ async def replay(session: AsyncSession) -> int:
             .join(models.Photo, models.Observation.photo_id == models.Photo.id)
             .where(
                 models.Observation.dispatched_at.is_(None),
-                models.Observation.created_at < cutoff,
+                models.Observation.updated_at < cutoff,
             )
             .order_by(models.Observation.created_at)
             .limit(_MAX_PER_RUN)
