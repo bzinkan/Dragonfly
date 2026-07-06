@@ -139,8 +139,13 @@ const config: ExpoConfig = {
       ? ["android.permission.ACCESS_COARSE_LOCATION"]
       : undefined,
     blockedPermissions: isPlayInternal
-      ? ["android.permission.ACCESS_FINE_LOCATION"]
-      : undefined,
+      ? [
+          "android.permission.ACCESS_FINE_LOCATION",
+          // expo-audio is playback-only here (Sanctuary soundscapes,
+          // ADR 0012); a kids app must never carry a mic permission.
+          "android.permission.RECORD_AUDIO",
+        ]
+      : ["android.permission.RECORD_AUDIO"],
     adaptiveIcon: {
       foregroundImage: "./assets/images/adaptive-icon.png",
       backgroundColor: "#ffffff",
@@ -176,6 +181,14 @@ const config: ExpoConfig = {
       {
         locationAlwaysAndWhenInUsePermission:
           "Dragonfly uses your location to remember where you spotted each species.",
+      },
+    ],
+    [
+      "expo-audio",
+      {
+        // Playback-only (Sanctuary soundscapes). No recording anywhere
+        // in the app, so no microphone permission on either platform.
+        microphonePermission: false,
       },
     ],
   ],
