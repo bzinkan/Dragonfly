@@ -202,6 +202,12 @@ const config: ExpoConfig = {
     firebase: env.firebase,
     entra: env.entra,
     sanctuaryDiorama: SANCTUARY_DIORAMA,
+    // Links this project to the existing EAS project (account
+    // dragonflybrian) -- same id the sanctuary-3d dev client used, so
+    // cloud builds reuse the established keystore and build history.
+    eas: {
+      projectId: "7dab1a21-6bd3-489d-86b7-59cf336fdb67",
+    },
   },
 };
 
