@@ -21,7 +21,9 @@ const extra = Constants.expoConfig?.extra as
 /** Build-time flag value (stable for the life of the binary). */
 export const SANCTUARY_DIORAMA_BUILD_FLAG = extra?.sanctuaryDiorama === true;
 
-function useScreenReaderEnabled(): boolean {
+/** Live TalkBack/VoiceOver state (also drives the diorama's on-screen
+ * accessibility proxies, so it is exported for the render layer). */
+export function useScreenReaderEnabled(): boolean {
   const [enabled, setEnabled] = useState(false);
   useEffect(() => {
     let mounted = true;
@@ -40,7 +42,7 @@ function useScreenReaderEnabled(): boolean {
   return enabled;
 }
 
-/** True when the Sanctuary tab should render the diorama. D7 consumes this from the Sanctuary screen; nothing calls it yet. */
+/** True when the Sanctuary tab should render the diorama (D7 tab swap). */
 export function useSanctuaryDioramaFlag(): boolean {
   const screenReaderEnabled = useScreenReaderEnabled();
   const simpleViewPreferred = useSanctuaryDioramaPrefs((s) => s.simpleView);

@@ -2,12 +2,23 @@
  * Camera framings for the two diorama modes: the whole-archipelago vista
  * and the single-island dive. A framing names the canvas point to center
  * in the viewport and the zoom to show it at; the render layer animates
- * between framings (D6) but never computes them -- these stay pure and
+ * between framings but never computes them -- these stay pure and
  * unit-tested.
+ *
+ * D7: the dive zoom is DERIVED, not authored. On device (D4 finding c)
+ * fixed per-zone zooms left small islands swimming in sky and big ones
+ * cropped; deriving the scale from the painted plateau width guarantees
+ * every dive fills the same fraction of the screen regardless of the
+ * island's vista scale.
  */
 
 import type { SanctuaryZoneId } from "@/src/api/sanctuary";
-import { ISLAND_SLOTS, VISTA_CANVAS } from "@/src/sanctuary/diorama/vistaLayout";
+import { ISLAND_ART_HALF_WIDTH } from "@/src/sanctuary/diorama/artFit";
+import {
+  ISLAND_SLOTS,
+  REFERENCE_SCREEN_WIDTH,
+  VISTA_CANVAS,
+} from "@/src/sanctuary/diorama/vistaLayout";
 
 /** A camera target: center this canvas point at this zoom. */
 export type Framing = {
@@ -16,17 +27,21 @@ export type Framing = {
   scale: number;
 };
 
-/** Zoom applied when diving into an island (unless overridden below). */
-export const DEFAULT_DIVE_SCALE = 2.4;
+/**
+ * A dive frames the painted island plateau across this fraction of the
+ * screen width (Brian's art direction: ~85-90%).
+ */
+export const DIVE_FILL_FRACTION = 0.875;
 
 /**
- * Per-zone dive-zoom overrides. Small or sparse islands zoom in harder so
- * a dive always fills the screen with the island, not empty sky.
+ * Dive zoom for a zone: the scale at which the island's painted plateau
+ * (2 x ISLAND_ART_HALF_WIDTH x islandScale canvas units) spans
+ * DIVE_FILL_FRACTION of the reference screen.
  */
-const DIVE_SCALE_OVERRIDES: Partial<Record<SanctuaryZoneId, number>> = {
-  // The elsewhere islet is authored small (islandScale 0.55): lean in.
-  elsewhere: 3.2,
-};
+export function diveScaleFor(zoneId: SanctuaryZoneId): number {
+  const plateau = 2 * ISLAND_ART_HALF_WIDTH * ISLAND_SLOTS[zoneId].islandScale;
+  return (DIVE_FILL_FRACTION * REFERENCE_SCREEN_WIDTH) / plateau;
+}
 
 /** The vista framing: whole canvas centered at 1:1 zoom. */
 export function vistaFraming(): Framing {
@@ -43,6 +58,6 @@ export function zoneFraming(zoneId: SanctuaryZoneId): Framing {
   return {
     x: slot.x,
     y: slot.y,
-    scale: DIVE_SCALE_OVERRIDES[zoneId] ?? DEFAULT_DIVE_SCALE,
+    scale: diveScaleFor(zoneId),
   };
 }
