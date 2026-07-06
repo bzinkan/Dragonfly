@@ -21,6 +21,7 @@
  */
 
 import type { SanctuaryZoneId } from "@/src/api/sanctuary";
+import { ISLAND_ART_HALF_WIDTH } from "@/src/sanctuary/diorama/artFit";
 import { parallaxFor, type IslandSlot } from "@/src/sanctuary/diorama/vistaLayout";
 import type { IslandPlan, VistaPlan } from "@/src/sanctuary/diorama/vistaPlan";
 
@@ -44,9 +45,11 @@ export type Hit =
 
 /**
  * Island tap radius in island-local canvas units (uniform before
- * islandScale; covers the element spiral plus the dressing skirt).
+ * islandScale). Derived from the painted plateau half-width (D4 finding
+ * d: the drawn island edge must be tappable -- the old authored 36 left
+ * the outer plateau dead to taps).
  */
-export const ISLAND_HIT_RADIUS = 36;
+export const ISLAND_HIT_RADIUS = ISLAND_ART_HALF_WIDTH;
 
 /** Half-extent of a silhouette marker's implicit tap square. */
 export const SILHOUETTE_HIT_HALF = 28;

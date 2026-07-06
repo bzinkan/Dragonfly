@@ -1,6 +1,8 @@
+import { ISLAND_ART_HALF_WIDTH } from "@/src/sanctuary/diorama/artFit";
 import { makeSampleSnapshot } from "@/src/sanctuary/diorama/dev/sampleSnapshot";
 import {
   hitTest,
+  ISLAND_HIT_RADIUS,
   islandLocalFromScreen,
   screenFromIslandLocal,
   type DioramaViewport,
@@ -50,15 +52,36 @@ describe("hitTest -- vista mode", () => {
 
   it("applies each island's parallax factor to the pan", () => {
     const viewport: DioramaViewport = { viewX: 0, viewY: 0, viewScale: 1, panX: 200 };
-    // woodland: slot (180, 200), back band (parallax 0.35)
-    // anchor = (180 - 200 * 0.35, 200) = (110, 200)
-    expect(hitTest(vista, viewport, { x: 110, y: 200 }, "vista", null)).toEqual({
+    // woodland: slot (420, 210), back band (parallax 0.35)
+    // anchor = (420 - 200 * 0.35, 210) = (350, 210)
+    expect(hitTest(vista, viewport, { x: 350, y: 210 }, "vista", null)).toEqual({
       type: "island",
       zoneId: "woodland",
     });
-    // Where woodland WOULD sit if it wrongly panned 1:1 (180 - 200 = -20):
+    // Where woodland WOULD sit if it wrongly panned 1:1 (420 - 200 = 220):
     // nothing lives there, so the tap must miss.
-    expect(hitTest(vista, viewport, { x: -20, y: 200 }, "vista", null)).toBeNull();
+    expect(hitTest(vista, viewport, { x: 220, y: 210 }, "vista", null)).toBeNull();
+  });
+
+  it("the painted plateau edge is tappable (radius = art half-width)", () => {
+    // D4 finding d: ISLAND_HIT_RADIUS derives from the drawn layer extent.
+    expect(ISLAND_HIT_RADIUS).toBeCloseTo(ISLAND_ART_HALF_WIDTH, 10);
+    const meadow = islandOf("meadow");
+    // A tap exactly on the plateau's right edge still hits the island...
+    const onEdge = screenFromIslandLocal("meadow", meadow.slot, IDENTITY, {
+      x: ISLAND_HIT_RADIUS,
+      y: 0,
+    });
+    expect(hitTest(vista, IDENTITY, onEdge, "vista", null)).toEqual({
+      type: "island",
+      zoneId: "meadow",
+    });
+    // ...and a tap just beyond it does not resolve to meadow.
+    const offEdge = screenFromIslandLocal("meadow", meadow.slot, IDENTITY, {
+      x: ISLAND_HIT_RADIUS + 5,
+      y: 0,
+    });
+    expect(hitTest(vista, IDENTITY, offEdge, "vista", null)).toBeNull();
   });
 
   it("dormant islands are tappable too (mystery-cue taps)", () => {
