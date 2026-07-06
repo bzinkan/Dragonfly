@@ -375,6 +375,60 @@
       "title": "RelationshipMoment",
       "type": "object"
     },
+    "SanctuarySouvenir": {
+      "description": "A small keepsake placed in the Sanctuary when an expedition completes.\n\nDerived at READ time (ADR 0012): ``GET /v1/sanctuary/me`` joins the\nkid's completed ``expedition_progress`` rows to these authored entries.\nNo new tables, no new writer, no dispatcher change.\n\n``expedition_id`` names an expedition under ``content/expeditions/``.\nIt is format-checked here but NOT resolved against expedition content\n-- expeditions live outside the sanctuary tree, and a deployed backend\nmay carry progress rows for expeditions whose souvenir has not been\nauthored yet (or vice versa). The cross-file existence check lives in\n``scripts/validate_content.py``, which sees both trees.",
+      "properties": {
+        "detail": {
+          "maxLength": 180,
+          "minLength": 1,
+          "title": "Detail",
+          "type": "string"
+        },
+        "expedition_id": {
+          "title": "Expedition Id",
+          "type": "string"
+        },
+        "icon": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Icon",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 60,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "zone": {
+          "enum": [
+            "meadow",
+            "woodland",
+            "pond",
+            "sky",
+            "soil",
+            "urban",
+            "elsewhere"
+          ],
+          "title": "Zone",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "expedition_id",
+        "zone",
+        "icon",
+        "title",
+        "detail"
+      ],
+      "title": "SanctuarySouvenir",
+      "type": "object"
+    },
     "SanctuaryZone": {
       "description": "One sanctuary zone (meadow, woodland, pond, sky, soil, urban, elsewhere).",
       "properties": {
@@ -612,6 +666,13 @@
         "$ref": "#/$defs/Soundscape"
       },
       "title": "Soundscapes",
+      "type": "array"
+    },
+    "souvenirs": {
+      "items": {
+        "$ref": "#/$defs/SanctuarySouvenir"
+      },
+      "title": "Souvenirs",
       "type": "array"
     },
     "tiny_surprises": {
