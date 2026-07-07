@@ -63,10 +63,7 @@ jobs:
       - name: Run Alembic migrations
         run: |
           set -euo pipefail
-          az containerapp exec \
-            --name "${AZURE_CONTAINER_APP}" \
-            --resource-group "${AZURE_RESOURCE_GROUP}" \
-            --command "/app/.venv/bin/alembic upgrade head"
+          script -q -e -c "az containerapp exec --name \"${AZURE_CONTAINER_APP}\" --resource-group \"${AZURE_RESOURCE_GROUP}\" --command \"/app/.venv/bin/alembic upgrade head\"" /dev/null
 
       - name: Smoke probes
         run: |
