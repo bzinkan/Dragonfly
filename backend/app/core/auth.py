@@ -552,39 +552,42 @@ def _dev_auth_allowed(settings: Settings) -> bool:
 
 async def _ensure_dev_auth_subject(session: AsyncSession, settings: Settings) -> None:
     """Ensure the development bypass user can write normal observation rows."""
-    user, group, membership = await _load_dev_auth_subject(session, settings)
-    if user is None:
-        session.add(
-            models.User(
-                id=settings.dev_auth_user_id,
-                firebase_uid=None,
-                role="kid",
-                display_name=settings.dev_auth_display_name,
-                age_band="dev",
-            )
-        )
-
-    if group is None:
-        session.add(
-            models.Group(
-                id=settings.dev_auth_group_id,
-                name=settings.dev_auth_group_name,
-                join_code="DEV001",
-                owner_user_id=settings.dev_auth_user_id,
-            )
-        )
-
-    if membership is None:
-        session.add(
-            models.Membership(
-                id=settings.dev_auth_membership_id,
-                user_id=settings.dev_auth_user_id,
-                group_id=settings.dev_auth_group_id,
-                role="kid",
-            )
-        )
-
     try:
+        user, group, membership = await _load_dev_auth_subject(session, settings)
+        if user is None:
+            session.add(
+                models.User(
+                    id=settings.dev_auth_user_id,
+                    firebase_uid=None,
+                    role="kid",
+                    display_name=settings.dev_auth_display_name,
+                    age_band="dev",
+                )
+            )
+            await session.flush()
+
+        if group is None:
+            session.add(
+                models.Group(
+                    id=settings.dev_auth_group_id,
+                    name=settings.dev_auth_group_name,
+                    join_code="DEV001",
+                    owner_user_id=settings.dev_auth_user_id,
+                )
+            )
+            await session.flush()
+
+        if membership is None:
+            session.add(
+                models.Membership(
+                    id=settings.dev_auth_membership_id,
+                    user_id=settings.dev_auth_user_id,
+                    group_id=settings.dev_auth_group_id,
+                    role="kid",
+                )
+            )
+            await session.flush()
+
         await session.commit()
     except IntegrityError:
         await session.rollback()

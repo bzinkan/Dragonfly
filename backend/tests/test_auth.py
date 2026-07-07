@@ -35,6 +35,7 @@ def _wire_empty_dev_auth_bootstrap(fake_session: AsyncMock) -> None:
         side_effect=[no_user_result, no_group_result, no_membership_result]
     )
     fake_session.add = MagicMock()
+    fake_session.flush = AsyncMock()
     fake_session.commit = AsyncMock()
 
 
@@ -77,6 +78,7 @@ def test_me_uses_dev_auth_bypass_without_bearer(fake_session: AsyncMock) -> None
     assert body["role"] == "kid"
     assert body["group_id"] == "01J0GROUPID00000000000ULID"
     assert fake_session.add.call_count == 3
+    assert fake_session.flush.await_count == 3
     fake_session.commit.assert_awaited_once()
 
 
@@ -114,6 +116,7 @@ def test_me_tolerates_parallel_dev_auth_bootstrap_conflict(fake_session: AsyncMo
         ]
     )
     fake_session.add = MagicMock()
+    fake_session.flush = AsyncMock()
     fake_session.commit = AsyncMock(
         side_effect=IntegrityError("INSERT", {}, Exception("duplicate key"))
     )
