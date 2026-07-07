@@ -24,6 +24,8 @@ from app.core.config import Settings, get_request_settings
 from app.core.storage import SignedUrlGeneratorDep
 from app.db import models
 from app.db.session import DbSessionDep
+from app.inat.client import InatClientDep, InatUnavailable
+from app.inat.cv import score_image
 
 router = APIRouter(prefix="/v1/photos", tags=["photos"])
 
@@ -120,6 +122,22 @@ class PhotoUrlResponse(BaseModel):
     expires_at: datetime
 
 
+class CvSuggestionDTO(BaseModel):
+    taxon_id: int
+    common_name: str | None
+    scientific_name: str | None
+    score: float
+
+
+class PhotoIdentifyResponse(BaseModel):
+    """Top-K iNat CV suggestions for a pending photo."""
+
+    photo_id: str
+    suggestions: list[CvSuggestionDTO]
+    cv_unavailable: bool = False
+    no_matches: bool = False
+
+
 async def _intersecting_groups(
     session: AsyncSession, *, caller_user_id: str, photo_owner_id: str
 ) -> bool:
@@ -171,3 +189,81 @@ async def photo_get_url(
         expires_in=_PHOTO_GET_TTL,
     )
     return PhotoUrlResponse(photo_id=photo.id, url=url, expires_at=expires_at)
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/photos/{photo_id}/identify -- pre-save iNat CV suggestions
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{photo_id}/identify", response_model=PhotoIdentifyResponse)
+async def identify_photo(
+    photo_id: str,
+    current_user: CurrentUserDep,
+    session: DbSessionDep,
+    inat_client: InatClientDep,
+    storage: SignedUrlGeneratorDep,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+) -> PhotoIdentifyResponse:
+    user_row = await resolve_current_user_row(session, current_user)
+
+    # Owner check stays in the WHERE clause, so wrong-owner IDs look
+    # identical to missing IDs.
+    photo = (
+        await session.execute(
+            select(models.Photo).where(
+                models.Photo.id == photo_id,
+                models.Photo.user_id == user_row.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if photo is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+    if photo.status != "pending":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Photo is in status {photo.status}, not pending",
+        )
+
+    if not settings.inat_oauth_token:
+        log.info(
+            "observations.identify.cv_unavailable_no_token",
+            photo_id=photo_id,
+            pre_save=True,
+        )
+        return PhotoIdentifyResponse(photo_id=photo_id, suggestions=[], cv_unavailable=True)
+
+    image_bytes = storage.fetch_object_bytes(bucket=photo.bucket, object_name=photo.object_name)
+
+    try:
+        suggestions = await score_image(inat_client, image_bytes=image_bytes, top_k=3)
+    except InatUnavailable as exc:
+        log.warning(
+            "observations.identify.cv_unavailable",
+            photo_id=photo_id,
+            pre_save=True,
+            reason=str(exc),
+        )
+        return PhotoIdentifyResponse(photo_id=photo_id, suggestions=[], cv_unavailable=True)
+
+    no_matches = len(suggestions) == 0
+    log.info(
+        "observations.identify.scored",
+        photo_id=photo_id,
+        pre_save=True,
+        suggestion_count=len(suggestions),
+        no_matches=no_matches,
+    )
+    return PhotoIdentifyResponse(
+        photo_id=photo_id,
+        suggestions=[
+            CvSuggestionDTO(
+                taxon_id=s.taxon_id,
+                common_name=s.common_name,
+                scientific_name=s.scientific_name,
+                score=s.score,
+            )
+            for s in suggestions
+        ],
+        no_matches=no_matches,
+    )

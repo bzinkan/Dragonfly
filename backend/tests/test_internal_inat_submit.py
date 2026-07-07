@@ -74,7 +74,7 @@ def _photo_row(status: str = "clean") -> models.Photo:
     return models.Photo(
         id=_PHOTO_ID,
         user_id="user-id",
-        bucket="dragonfly-photos-test",
+        bucket="hinterland-photos-test",
         object_name=f"observations/{_PHOTO_ID}.jpg",
         status=status,
         content_type="image/jpeg",

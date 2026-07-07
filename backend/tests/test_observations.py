@@ -7,9 +7,11 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.routes import observations as observations_routes
 from app.core.config import Settings
 from app.db import models
 from app.db.session import get_db_session
+from app.dispatcher.types import Context
 from app.main import create_app
 from tests.helpers.auth import stub_token_verifier
 
@@ -63,7 +65,7 @@ def _photo_row(status: str = "pending") -> models.Photo:
     return models.Photo(
         id=_PHOTO_ID,
         user_id=_USER_ID,
-        bucket="dragonfly-photos-test",
+        bucket="hinterland-photos-test",
         object_name=f"pending/{_PHOTO_ID}.jpg",
         status=status,
         content_type="image/jpeg",
@@ -267,6 +269,131 @@ def test_create_happy_path(
     fake_session.commit.assert_awaited_once()
 
 
+def test_create_fills_species_name_from_local_cache_when_taxon_selected(
+    monkeypatch: pytest.MonkeyPatch,
+    observations_client: TestClient,
+    fake_session: AsyncMock,
+) -> None:
+    _stub_token_verifier(monkeypatch)
+
+    user_result = MagicMock()
+    user_result.scalar_one_or_none = MagicMock(return_value=_user_row())
+    photo_result = MagicMock()
+    photo_result.scalar_one_or_none = MagicMock(return_value=_photo_row())
+    cache_result = MagicMock()
+    cache_result.scalar_one_or_none = MagicMock(
+        return_value=models.SpeciesCache(
+            taxon_id=555,
+            scientific_name="Acer rubrum",
+            common_name="Red Maple",
+            iconic_taxon="Plantae",
+            source_payload={},
+        )
+    )
+    membership_result = MagicMock()
+    membership_result.scalar_one_or_none = MagicMock(return_value="01J0MEMBERID0000000000ULID")
+    group_result = MagicMock()
+    group_result.scalar_one_or_none = MagicMock(
+        return_value=models.Group(
+            id=_GROUP_ID,
+            name="Backyard Club",
+            join_code="ABC123",
+            owner_user_id=_USER_ID,
+        )
+    )
+
+    fake_session.execute = AsyncMock(
+        side_effect=[
+            user_result,
+            photo_result,
+            cache_result,
+            membership_result,
+            group_result,
+        ]
+    )
+    fake_session.add = MagicMock()
+    fake_session.commit = AsyncMock()
+    fake_session.refresh = AsyncMock()
+
+    async def fake_dispatch(ctx: Context, handlers: object) -> list[object]:
+        assert ctx.observation.taxon_id == 555
+        assert ctx.observation.species_name == "Red Maple"
+        return []
+
+    monkeypatch.setattr(observations_routes, "dispatch", fake_dispatch)
+
+    response = observations_client.post(
+        "/v1/observations",
+        json={
+            "photo_id": _PHOTO_ID,
+            "latitude": 39.1031,
+            "longitude": -84.5120,
+            "taxon_id": 555,
+        },
+        headers={"Authorization": "Bearer fake"},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["taxon_id"] == 555
+    assert body["species_name"] == "Red Maple"
+
+
+def test_create_manual_species_saves_without_taxon_rewards(
+    monkeypatch: pytest.MonkeyPatch,
+    observations_client: TestClient,
+    fake_session: AsyncMock,
+) -> None:
+    _stub_token_verifier(monkeypatch)
+
+    user_result = MagicMock()
+    user_result.scalar_one_or_none = MagicMock(return_value=_user_row())
+    photo_result = MagicMock()
+    photo_result.scalar_one_or_none = MagicMock(return_value=_photo_row())
+    membership_result = MagicMock()
+    membership_result.scalar_one_or_none = MagicMock(return_value="01J0MEMBERID0000000000ULID")
+    group_result = MagicMock()
+    group_result.scalar_one_or_none = MagicMock(
+        return_value=models.Group(
+            id=_GROUP_ID,
+            name="Backyard Club",
+            join_code="ABC123",
+            owner_user_id=_USER_ID,
+        )
+    )
+
+    fake_session.execute = AsyncMock(
+        side_effect=[user_result, photo_result, membership_result, group_result]
+    )
+    fake_session.add = MagicMock()
+    fake_session.commit = AsyncMock()
+    fake_session.refresh = AsyncMock()
+
+    async def fake_dispatch(ctx: Context, handlers: object) -> list[object]:
+        assert ctx.observation.taxon_id is None
+        assert ctx.observation.species_name == "Mystery green sprout"
+        return []
+
+    monkeypatch.setattr(observations_routes, "dispatch", fake_dispatch)
+
+    response = observations_client.post(
+        "/v1/observations",
+        json={
+            "photo_id": _PHOTO_ID,
+            "latitude": 39.1031,
+            "longitude": -84.5120,
+            "species_name": "Mystery green sprout",
+        },
+        headers={"Authorization": "Bearer fake"},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["taxon_id"] is None
+    assert body["species_name"] == "Mystery green sprout"
+    assert body["rewards"] == []
+
+
 # ---------------------------------------------------------------------------
 # GET /v1/observations/me
 # ---------------------------------------------------------------------------
@@ -281,7 +408,7 @@ def _obs_with_photo(
     photo = models.Photo(
         id=f"PHOTO{obs_id[:21]}",
         user_id=_USER_ID,
-        bucket="dragonfly-photos-test",
+        bucket="hinterland-photos-test",
         object_name=f"pending/{obs_id}.jpg",
         status="pending",
         content_type="image/jpeg",

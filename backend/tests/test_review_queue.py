@@ -116,7 +116,7 @@ def _photo_row(status: str = "quarantine") -> models.Photo:
     return models.Photo(
         id=_PHOTO_ID,
         user_id=_KID_ID,
-        bucket="dragonfly-photos-test",
+        bucket="hinterland-photos-test",
         object_name=f"quarantine/{_PHOTO_ID}.jpg",
         status=status,
         content_type="image/jpeg",
@@ -395,13 +395,13 @@ def test_approve_happy_path_moves_photo_back_and_marks_review(
     # Photo was moved quarantine -> observations
     assert storage.copy_calls == [
         (
-            "dragonfly-photos-test",
+            "hinterland-photos-test",
             f"quarantine/{_PHOTO_ID}.jpg",
-            "dragonfly-photos-test",
+            "hinterland-photos-test",
             f"observations/{_PHOTO_ID}.jpg",
         )
     ]
-    assert storage.delete_calls == [("dragonfly-photos-test", f"quarantine/{_PHOTO_ID}.jpg")]
+    assert storage.delete_calls == [("hinterland-photos-test", f"quarantine/{_PHOTO_ID}.jpg")]
     assert photo.status == "clean"
     assert photo.object_name == f"observations/{_PHOTO_ID}.jpg"
     assert review.status == "approved"
@@ -428,7 +428,7 @@ def test_approve_happy_path_option_b_skips_outbox(
     """Option B default (`inat_submit_enabled=False`): the approve handler
     still flips observation.moderation_status='clean', but writes NO
     `inat_submit_outbox` row and attempts NO Service Bus enqueue. The
-    observation stays inside Dragonfly until the kid claims it via the
+    observation stays inside Hinterland until the kid claims it via the
     Phase 3 age-13 flow."""
     _stub_token_verifier(monkeypatch)
 

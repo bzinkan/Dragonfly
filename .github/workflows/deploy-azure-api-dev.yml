@@ -11,10 +11,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AZURE_RESOURCE_GROUP: dragonfly-dev-rg
-  AZURE_ACR_NAME: dragonflyacrdev
-  AZURE_CONTAINER_APP: dragonfly-api
-  IMAGE_REPOSITORY: dragonfly-api
+  AZURE_RESOURCE_GROUP: hinterland-dev-rg
+  AZURE_ACR_NAME: hinterlandacrdev
+  AZURE_CONTAINER_APP: hinterland-api
+  IMAGE_REPOSITORY: hinterland-api
 
 jobs:
   deploy:
@@ -55,7 +55,10 @@ jobs:
           az containerapp update \
             --name "${AZURE_CONTAINER_APP}" \
             --resource-group "${AZURE_RESOURCE_GROUP}" \
-            --image "${IMAGE}"
+            --image "${IMAGE}" \
+            --set-env-vars \
+              HINTERLAND_DEV_AUTH_ENABLED=true \
+              HINTERLAND_DEV_AUTH_TOKEN=hinterland-dev-bypass
 
       - name: Run Alembic migrations
         run: |
@@ -77,15 +80,18 @@ jobs:
           echo "API_BASE_URL=${API_BASE_URL}" >> "${GITHUB_ENV}"
           curl --fail --silent --show-error "${API_BASE_URL}/health"
           curl --fail --silent --show-error "${API_BASE_URL}/ready"
-          curl --fail --silent --show-error "${API_BASE_URL}/.well-known/dragonfly-kid-jwks.json"
+          curl --fail --silent --show-error "${API_BASE_URL}/.well-known/hinterland-kid-jwks.json"
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer hinterland-dev-bypass" \
+            "${API_BASE_URL}/v1/me"
 
       - name: Authenticated parent/kid smoke
         env:
-          DRAGONFLY_SMOKE_ENTRA_BEARER: ${{ secrets.DRAGONFLY_SMOKE_ENTRA_BEARER }}
+          HINTERLAND_SMOKE_ENTRA_BEARER: ${{ secrets.HINTERLAND_SMOKE_ENTRA_BEARER }}
         run: |
           set -euo pipefail
-          if [ -z "${DRAGONFLY_SMOKE_ENTRA_BEARER:-}" ]; then
-            echo "DRAGONFLY_SMOKE_ENTRA_BEARER is not configured; skipping authenticated smoke."
+          if [ -z "${HINTERLAND_SMOKE_ENTRA_BEARER:-}" ]; then
+            echo "HINTERLAND_SMOKE_ENTRA_BEARER is not configured; skipping authenticated smoke."
             exit 0
           fi
-          DRAGONFLY_API_BASE_URL="${API_BASE_URL}" python scripts/smoke_azure_parent_kid.py
+          HINTERLAND_API_BASE_URL="${API_BASE_URL}" python scripts/smoke_azure_parent_kid.py

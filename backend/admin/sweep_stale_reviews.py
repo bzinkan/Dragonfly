@@ -15,7 +15,7 @@ decrement mirrors what the manual reject endpoint
 (POST /v1/review-queue/{id}/reject) does.
 
 Run as a Cloud Run Job triggered by Cloud Scheduler nightly. Spec
-mirrors the dragonfly-cleanup-smoke-nightly cron in
+mirrors the hinterland-cleanup-smoke-nightly cron in
 infra-gcp/main.tf; document the new cron in runbook follow-up.
 """
 

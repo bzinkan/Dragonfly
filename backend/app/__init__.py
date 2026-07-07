@@ -1,1 +1,1 @@
-"""Dragonfly backend application."""
+"""The Hinterland Guide backend application."""

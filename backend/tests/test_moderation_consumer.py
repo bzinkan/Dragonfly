@@ -59,7 +59,7 @@ def test_parse_falls_back_to_url_when_subject_missing() -> None:
             "subject": "",
             "data": {
                 "url": (
-                    f"https://dragonflyphotosdev.blob.core.windows.net/{_BUCKET}/{_OBJECT_NAME}"
+                    f"https://hinterlandphotosdev.blob.core.windows.net/{_BUCKET}/{_OBJECT_NAME}"
                 ),
             },
         }

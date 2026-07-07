@@ -24,6 +24,74 @@ def test_me_requires_bearer_token(client: TestClient) -> None:
     assert response.json()["error"]["message"] == "Missing bearer token"
 
 
+def _wire_empty_dev_auth_bootstrap(fake_session: AsyncMock) -> None:
+    no_user_result = MagicMock()
+    no_user_result.scalar_one_or_none = MagicMock(return_value=None)
+    no_group_result = MagicMock()
+    no_group_result.scalar_one_or_none = MagicMock(return_value=None)
+    no_membership_result = MagicMock()
+    no_membership_result.scalar_one_or_none = MagicMock(return_value=None)
+    fake_session.execute = AsyncMock(
+        side_effect=[no_user_result, no_group_result, no_membership_result]
+    )
+    fake_session.add = MagicMock()
+    fake_session.commit = AsyncMock()
+
+
+def test_me_uses_dev_auth_bypass_without_bearer(fake_session: AsyncMock) -> None:
+    app = create_app(
+        Settings(env="local", app_version="test", dev_auth_enabled=True)
+    )
+
+    async def override() -> AsyncIterator[AsyncSession]:
+        yield fake_session
+
+    app.dependency_overrides[get_db_session] = override
+    _wire_empty_dev_auth_bootstrap(fake_session)
+
+    with TestClient(app) as test_client:
+        response = test_client.get("/v1/me")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["uid"] == "01J0KIDID0000000000000ULID"
+    assert body["role"] == "kid"
+    assert body["group_id"] == "01J0GROUPID00000000000ULID"
+    assert fake_session.add.call_count == 3
+    fake_session.commit.assert_awaited_once()
+
+
+def test_me_rejects_missing_dev_auth_bearer_outside_local() -> None:
+    app = create_app(Settings(env="dev", app_version="test", dev_auth_enabled=True))
+
+    with TestClient(app) as test_client:
+        response = test_client.get("/v1/me")
+
+    assert response.status_code == 401
+    assert response.json()["error"]["message"] == "Missing bearer token"
+
+
+def test_me_uses_dev_auth_bypass_token(fake_session: AsyncMock) -> None:
+    app = create_app(
+        Settings(env="local", app_version="test", dev_auth_enabled=True)
+    )
+
+    async def override() -> AsyncIterator[AsyncSession]:
+        yield fake_session
+
+    app.dependency_overrides[get_db_session] = override
+    _wire_empty_dev_auth_bootstrap(fake_session)
+
+    with TestClient(app) as test_client:
+        response = test_client.get(
+            "/v1/me",
+            headers={"Authorization": "Bearer hinterland-dev-bypass"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["kid_id"] == "01J0KIDID0000000000000ULID"
+
+
 def test_me_returns_current_firebase_user(
     client: TestClient,
     monkeypatch,
@@ -262,7 +330,7 @@ def test_kid_exchange_happy_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Valid handoff JWT -> 200 with a fresh session JWT and the kid user."""
-    if not hasattr(auth_routes_module, "verify_dragonfly_jwt"):
+    if not hasattr(auth_routes_module, "verify_kid_jwt"):
         pytest.skip("kid-exchange route not present yet")
 
     exp_unix = int((datetime.now(UTC) + timedelta(minutes=15)).timestamp())
@@ -276,14 +344,14 @@ def test_kid_exchange_happy_path(
             "jti": "01HANDOFFJTI00000000000000",
             "exp": exp_unix,
             "iat": exp_unix - 900,
-            "iss": "https://api.dragonfly-app.net",
-            "aud": "dragonfly-api",
+            "iss": "https://api.thehinterlandguide.app",
+            "aud": "hinterland-api",
             "group_id": "g1",
             "parent_id": "p1",
             "token_type": "handoff",
         }
 
-    monkeypatch.setattr(auth_routes_module, "verify_dragonfly_jwt", fake_verify)
+    monkeypatch.setattr(auth_routes_module, "verify_kid_jwt", fake_verify)
     monkeypatch.setattr(
         auth_routes_module,
         "mint_session_token",
@@ -320,20 +388,20 @@ def test_kid_exchange_rejects_replayed_jti(
     the route maps it to 409. 401 would be wrong -- the token itself is
     not invalid; it's just already been spent.
     """
-    if not hasattr(auth_routes_module, "verify_dragonfly_jwt"):
+    if not hasattr(auth_routes_module, "verify_kid_jwt"):
         pytest.skip("kid-exchange route not present yet")
 
     exp_unix = int((datetime.now(UTC) + timedelta(minutes=15)).timestamp())
     monkeypatch.setattr(
         auth_routes_module,
-        "verify_dragonfly_jwt",
+        "verify_kid_jwt",
         lambda token, *, settings, expected_token_type=None: {
             "sub": "01J0KIDEXCHANGEID0000000UL",
             "jti": "01HANDOFFJTI00000000000000",
             "exp": exp_unix,
             "iat": exp_unix - 900,
-            "iss": "https://api.dragonfly-app.net",
-            "aud": "dragonfly-api",
+            "iss": "https://api.thehinterlandguide.app",
+            "aud": "hinterland-api",
             "group_id": "g1",
             "parent_id": "p1",
             "token_type": "handoff",
@@ -359,17 +427,17 @@ def test_kid_exchange_rejects_invalid_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A handoff JWT failing signature/expiry/audience -> 401."""
-    if not hasattr(auth_routes_module, "verify_dragonfly_jwt"):
+    if not hasattr(auth_routes_module, "verify_kid_jwt"):
         pytest.skip("kid-exchange route not present yet")
-    if not hasattr(auth_routes_module, "InvalidDragonflyJwt"):
-        pytest.skip("InvalidDragonflyJwt not present yet")
+    if not hasattr(auth_routes_module, "InvalidKidJwt"):
+        pytest.skip("InvalidKidJwt not present yet")
 
-    invalid_exc = auth_routes_module.InvalidDragonflyJwt("Expired handoff token")
+    invalid_exc = auth_routes_module.InvalidKidJwt("Expired handoff token")
 
     def fake_verify(token: str, *, settings: Settings, expected_token_type: str | None = None):
         raise invalid_exc
 
-    monkeypatch.setattr(auth_routes_module, "verify_dragonfly_jwt", fake_verify)
+    monkeypatch.setattr(auth_routes_module, "verify_kid_jwt", fake_verify)
 
     response = kid_exchange_client.post(
         "/v1/auth/kid-exchange",
@@ -383,7 +451,7 @@ def test_kid_exchange_rejects_invalid_token(
 def test_kid_jwks_endpoint_returns_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """GET /.well-known/dragonfly-kid-jwks.json returns the published JWKS."""
+    """GET /.well-known/hinterland-kid-jwks.json returns the published JWKS."""
     if not hasattr(auth_routes_module, "public_jwks"):
         pytest.skip("public_jwks not present yet")
 
@@ -396,7 +464,38 @@ def test_kid_jwks_endpoint_returns_keys(
                     "kty": "RSA",
                     "use": "sig",
                     "alg": "RS256",
-                    "kid": "k1-2026-06",
+                    "kid": "k1-2026-07",
+                    "n": "AAAA",
+                    "e": "AQAB",
+                }
+            ]
+        },
+    )
+
+    app = create_app(Settings(env="local", app_version="test"))
+    with TestClient(app) as test_client:
+        response = test_client.get("/.well-known/hinterland-kid-jwks.json")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "keys" in body
+    assert body["keys"][0]["kid"] == "k1-2026-07"
+
+
+def test_legacy_kid_jwks_endpoint_remains_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Dragonfly-era JWKS URL remains as a transition alias."""
+    monkeypatch.setattr(
+        auth_routes_module,
+        "public_jwks",
+        lambda settings: {
+            "keys": [
+                {
+                    "kty": "RSA",
+                    "use": "sig",
+                    "alg": "RS256",
+                    "kid": "k1-2026-07",
                     "n": "AAAA",
                     "e": "AQAB",
                 }
@@ -409,6 +508,4 @@ def test_kid_jwks_endpoint_returns_keys(
         response = test_client.get("/.well-known/dragonfly-kid-jwks.json")
 
     assert response.status_code == 200
-    body = response.json()
-    assert "keys" in body
-    assert body["keys"][0]["kid"] == "k1-2026-06"
+    assert response.json()["keys"][0]["kid"] == "k1-2026-07"

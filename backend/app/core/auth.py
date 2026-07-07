@@ -5,13 +5,13 @@ Phase 6a replaces the single Firebase verifier with two parallel paths:
 * **Entra ID adults** -- access tokens minted by Microsoft Entra External ID
   for parents and teachers. Verified via JWKS using PyJWT against the
   configured tenant + audience.
-* **Dragonfly RS256 kids** -- session JWTs minted by this backend's own
+* **Hinterland RS256 kids** -- session JWTs minted by this backend's own
   ``kid_jwt`` module. Verified with the public PEM loaded from Azure Key
   Vault.
 
 The verifier dispatches based on the unverified ``iss`` claim. Adult tokens
 land in :func:`app.core.entra.verify_entra_id_token`; kid tokens land in
-:func:`app.core.kid_jwt.verify_dragonfly_jwt`. Either way the user must
+:func:`app.core.kid_jwt.verify_kid_jwt`. Either way the user must
 exist in the local ``users`` table and must not be disabled, both of which
 are checked via :func:`get_user_with_claims` (a 30-second TTL cache so the
 hot path is at most one Postgres round-trip per cache miss).
@@ -36,10 +36,11 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt.exceptions import InvalidTokenError, PyJWKClientError
 from pydantic import BaseModel
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_request_settings
-from app.core.kid_jwt import InvalidDragonflyJwt, verify_dragonfly_jwt
+from app.core.kid_jwt import InvalidKidJwt, verify_kid_jwt
 from app.db import models
 from app.db.session import get_db_session
 
@@ -51,8 +52,8 @@ _USER_ROLES = set(get_args(UserRole))
 bearer_scheme = HTTPBearer(auto_error=False)
 
 # Path discriminator surfaced by ``verify_bearer_token`` -- "entra" for
-# adult MSAL tokens, "dragonfly" for kid RS256 session tokens.
-TokenPath = Literal["entra", "dragonfly"]
+# adult MSAL tokens, "kid" for Hinterland RS256 kid session tokens.
+TokenPath = Literal["entra", "kid"]
 
 
 class CurrentUser(BaseModel):
@@ -61,7 +62,7 @@ class CurrentUser(BaseModel):
     Field semantics:
 
     * ``uid``       -- the local ``users.id`` (ULID) for resolved Entra /
-                       Dragonfly tokens. For legacy stub tokens used in
+                       Hinterland tokens. For legacy stub tokens used in
                        tests, this stays the raw stub uid.
     * ``email``     -- present for Entra adults; ``None`` for kids.
     * ``role``      -- ``parent`` / ``teacher`` / ``kid`` / ``admin``.
@@ -189,25 +190,25 @@ def _verify_entra_inline(token: str, settings: Settings) -> dict[str, object]:
     return cast(dict[str, object], decoded)
 
 
-def _verify_dragonfly(token: str, settings: Settings) -> dict[str, object]:
-    """Verify a Dragonfly RS256 kid session JWT."""
+def _verify_kid_session(token: str, settings: Settings) -> dict[str, object]:
+    """Verify a Hinterland RS256 kid session JWT."""
     try:
-        claims = verify_dragonfly_jwt(token, settings=settings, expected_token_type="session")
-    except InvalidDragonflyJwt as exc:
+        claims = verify_kid_jwt(token, settings=settings, expected_token_type="session")
+    except InvalidKidJwt as exc:
         raise InvalidAuthToken(str(exc)) from exc
     return cast(dict[str, object], dict(claims))
 
 
 def verify_bearer_token(token: str, settings: Settings) -> tuple[TokenPath, dict[str, object]]:
-    """Dispatch a bearer token to either the Entra or Dragonfly verifier.
+    """Dispatch a bearer token to either the Entra or kid JWT verifier.
 
     The unverified ``iss`` claim selects the path. Either of:
 
     * exact match against ``settings.entra_issuer``, OR
     * a ``https://login.microsoftonline.com/{tenant}/v2.0`` prefix
 
-    routes to the Entra verifier. The Dragonfly path requires ``iss ==
-    settings.dragonfly_jwt_issuer`` (default ``https://api.dragonfly-app.net``).
+    routes to the Entra verifier. The kid JWT path requires ``iss ==
+    settings.kid_jwt_issuer`` (default ``https://api.thehinterlandguide.app``).
 
     Returns ``(path, verified_claims)``. Raises :class:`InvalidAuthToken`
     on any failure mode (malformed token, unknown issuer, signature, etc.)
@@ -219,8 +220,8 @@ def verify_bearer_token(token: str, settings: Settings) -> tuple[TokenPath, dict
     if iss == settings.entra_issuer or iss.startswith("https://login.microsoftonline.com/"):
         return ("entra", _verify_entra(token, settings))
 
-    if iss == settings.dragonfly_jwt_issuer:
-        return ("dragonfly", _verify_dragonfly(token, settings))
+    if iss == settings.kid_jwt_issuer:
+        return ("kid", _verify_kid_session(token, settings))
 
     raise InvalidAuthToken(f"Unrecognized token issuer: {iss}")
 
@@ -273,7 +274,7 @@ async def _query_user_with_claims(
     session: AsyncSession,
     *,
     entra_oid: str | None,
-    dragonfly_sub: str | None,
+    kid_sub: str | None,
     legacy_uid: str | None,
 ) -> CachedUserClaims | None:
     """Fetch a users row + primary group_id from Postgres in a single round-trip.
@@ -287,8 +288,8 @@ async def _query_user_with_claims(
     user_q = select(models.User)
     if entra_oid is not None:
         user_q = user_q.where(models.User.entra_oid == entra_oid)
-    elif dragonfly_sub is not None:
-        user_q = user_q.where(models.User.id == dragonfly_sub)
+    elif kid_sub is not None:
+        user_q = user_q.where(models.User.id == kid_sub)
     elif legacy_uid is not None:
         # Legacy fallback: stub tokens carry the firebase_uid as ``uid``.
         # TODO(phase-10): drop this branch once all callers carry oid/sub.
@@ -323,7 +324,7 @@ async def get_user_with_claims(
     settings: Settings,
     *,
     entra_oid: str | None = None,
-    dragonfly_sub: str | None = None,
+    kid_sub: str | None = None,
     legacy_uid: str | None = None,
 ) -> CachedUserClaims | None:
     """Resolve a users row + role + primary group_id with a 30s TTL cache.
@@ -336,8 +337,8 @@ async def get_user_with_claims(
     cache = _get_cache(settings)
     if entra_oid is not None:
         key: tuple[str, str] = ("entra", entra_oid)
-    elif dragonfly_sub is not None:
-        key = ("sub", dragonfly_sub)
+    elif kid_sub is not None:
+        key = ("sub", kid_sub)
     elif legacy_uid is not None:
         key = ("legacy", legacy_uid)
     else:
@@ -350,7 +351,7 @@ async def get_user_with_claims(
     resolved = await _query_user_with_claims(
         session,
         entra_oid=entra_oid,
-        dragonfly_sub=dragonfly_sub,
+        kid_sub=kid_sub,
         legacy_uid=legacy_uid,
     )
     if resolved is not None:
@@ -362,7 +363,7 @@ def bust_user_cache(
     user_id: str,
     *,
     entra_oid: str | None = None,
-    dragonfly_sub: str | None = None,
+    kid_sub: str | None = None,
     legacy_uid: str | None = None,
     settings: Settings | None = None,
 ) -> None:
@@ -377,8 +378,8 @@ def bust_user_cache(
         return
     if entra_oid is not None:
         _claim_cache.pop(("entra", entra_oid), None)
-    if dragonfly_sub is not None:
-        _claim_cache.pop(("sub", dragonfly_sub), None)
+    if kid_sub is not None:
+        _claim_cache.pop(("sub", kid_sub), None)
     if legacy_uid is not None:
         _claim_cache.pop(("legacy", legacy_uid), None)
 
@@ -392,7 +393,7 @@ def _is_stub_claims(claims: dict[str, object]) -> bool:
     """Return True for the claims shapes produced by the test stub helper.
 
     The stub returns dicts without ``oid`` (real Entra claim) or
-    ``token_type`` (real Dragonfly claim) -- both are present on every
+    ``token_type`` (real kid-session claim) -- both are present on every
     legitimate verified token. When neither is present we short-circuit
     to ``current_user_from_claims`` and skip the DB lookup, which keeps
     the existing 9 test files' AsyncMock sessions usable as-is.
@@ -453,7 +454,7 @@ async def get_current_user(
 
     1. 401 if no ``Authorization: Bearer ...`` header.
     2. Dispatch via :func:`verify_bearer_token` to either the Entra or
-       Dragonfly verifier; 401 on any verification failure.
+       kid JWT verifier; 401 on any verification failure.
     3. **Test-compat shortcut**: if the verifier returns a claims dict
        lacking both ``oid`` and ``token_type`` (the shape produced by
        ``tests.helpers.auth.stub_token_verifier``), skip the DB lookup
@@ -465,6 +466,19 @@ async def get_current_user(
     5. ``users.disabled_at`` non-null -> 403 on both paths.
     """
     del request  # request context is propagated via FastAPI internals.
+    if _dev_auth_allowed(settings) and (
+        (credentials is None and settings.env == "local")
+        or (credentials is not None and credentials.credentials == settings.dev_auth_token)
+    ):
+        await _ensure_dev_auth_subject(session, settings)
+        return CurrentUser(
+            uid=settings.dev_auth_user_id,
+            email=None,
+            role="kid",
+            group_id=settings.dev_auth_group_id,
+            kid_id=settings.dev_auth_user_id,
+        )
+
     if credentials is None:
         raise _http_401("Missing bearer token")
 
@@ -481,8 +495,8 @@ async def get_current_user(
 
     if path == "entra":
         return await _resolve_entra(raw_claims, session, settings)
-    if path == "dragonfly":
-        return await _resolve_dragonfly(raw_claims, session, settings)
+    if path == "kid":
+        return await _resolve_kid(raw_claims, session, settings)
     raise _http_401("Unrecognized token path")  # pragma: no cover
 
 
@@ -504,7 +518,7 @@ async def _resolve_entra(
     return _overlay_claims(cached, raw_claims)
 
 
-async def _resolve_dragonfly(
+async def _resolve_kid(
     raw_claims: dict[str, object],
     session: AsyncSession,
     settings: Settings,
@@ -513,7 +527,7 @@ async def _resolve_dragonfly(
     if sub is None:
         raise _http_401("Kid session token missing sub claim")
 
-    cached = await get_user_with_claims(session, settings, dragonfly_sub=sub)
+    cached = await get_user_with_claims(session, settings, kid_sub=sub)
     if cached is None:
         raise _http_401("Kid session references missing user")
     if cached.disabled:
@@ -532,6 +546,67 @@ async def _resolve_dragonfly(
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
 
 
+def _dev_auth_allowed(settings: Settings) -> bool:
+    return settings.dev_auth_enabled and settings.env != "prod"
+
+
+async def _ensure_dev_auth_subject(session: AsyncSession, settings: Settings) -> None:
+    """Ensure the development bypass user can write normal observation rows."""
+    user = (
+        await session.execute(
+            select(models.User).where(models.User.id == settings.dev_auth_user_id)
+        )
+    ).scalar_one_or_none()
+    if user is None:
+        session.add(
+            models.User(
+                id=settings.dev_auth_user_id,
+                firebase_uid=None,
+                role="kid",
+                display_name=settings.dev_auth_display_name,
+                age_band="dev",
+            )
+        )
+
+    group = (
+        await session.execute(
+            select(models.Group).where(models.Group.id == settings.dev_auth_group_id)
+        )
+    ).scalar_one_or_none()
+    if group is None:
+        session.add(
+            models.Group(
+                id=settings.dev_auth_group_id,
+                name=settings.dev_auth_group_name,
+                join_code="DEV001",
+                owner_user_id=settings.dev_auth_user_id,
+            )
+        )
+
+    membership = (
+        await session.execute(
+            select(models.Membership).where(
+                models.Membership.user_id == settings.dev_auth_user_id,
+                models.Membership.group_id == settings.dev_auth_group_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if membership is None:
+        session.add(
+            models.Membership(
+                id=settings.dev_auth_membership_id,
+                user_id=settings.dev_auth_user_id,
+                group_id=settings.dev_auth_group_id,
+                role="kid",
+            )
+        )
+
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+
+
 async def resolve_current_user_row(
     session: AsyncSession,
     current_user: CurrentUser,
@@ -541,7 +616,7 @@ async def resolve_current_user_row(
 ) -> models.User:
     """Return the canonical ``users`` row for an authenticated request.
 
-    Real Entra and Dragonfly tokens resolve ``CurrentUser.uid`` to the local
+    Real Entra and Hinterland tokens resolve ``CurrentUser.uid`` to the local
     ``users.id``. Legacy tests and rollback paths may still present a Firebase
     uid or raw Entra oid, so this helper keeps those fallbacks in one place
     while preferring the local id path.

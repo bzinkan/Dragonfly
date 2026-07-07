@@ -8,7 +8,7 @@ worker:
     writes an `inat_submit_outbox` row in the same transaction
         -> after commit, enqueue `{ observation_id }` to Service Bus
            queue `inat-submit`
-        -> `dragonfly-inat-submit-worker` Container App (KEDA-scaled)
+        -> `hinterland-inat-submit-worker` Container App (KEDA-scaled)
            dequeues and calls
            `app.inat.submit.submit_observation_to_inat(...)` directly
            under managed identity.
@@ -112,7 +112,7 @@ async def submit(
     try:
         result = await submit_observation_to_inat(
             inat_client,
-            dragonfly_observation_id=obs.id,
+            observation_id=obs.id,
             photo_bytes=image_bytes,
             latitude=obs.latitude,
             longitude=obs.longitude,

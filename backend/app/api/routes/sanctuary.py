@@ -155,7 +155,7 @@ class SanctuaryEventDTO(BaseModel):
 
 
 class SanctuaryGuideMessageDTO(BaseModel):
-    speaker: Literal["dragonfly"] = "dragonfly"
+    speaker: Literal["guide"] = "guide"
     text: str
 
 

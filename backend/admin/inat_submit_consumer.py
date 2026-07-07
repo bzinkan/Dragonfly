@@ -18,7 +18,8 @@ Production path under ADR 0010:
 The worker authenticates to Service Bus via the Container App's
 user-assigned managed identity (`DefaultAzureCredential` on Container
 Apps falls through to UAMI); the iNat HTTP client uses the bearer
-token from `DRAGONFLY_INAT_OAUTH_TOKEN` (Key Vault secret).
+token from `HINTERLAND_INAT_OAUTH_TOKEN` (Key Vault secret, with the
+legacy `DRAGONFLY_` fallback still accepted by Settings during transition).
 
 Invocation::
 
@@ -185,7 +186,7 @@ async def process_one(
     try:
         result = await submit_observation_to_inat(
             inat_client,
-            dragonfly_observation_id=obs.id,
+            observation_id=obs.id,
             photo_bytes=image_bytes,
             latitude=obs.latitude,
             longitude=obs.longitude,

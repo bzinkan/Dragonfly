@@ -27,7 +27,7 @@ from app.inat.enqueue import InatEnqueueResult, enqueue_inat_submit
 _OBS_ID = "01J0OBSID00000000000000ULID"
 
 
-def _settings_with_sb(*, namespace: str = "dragonfly-sb-test.servicebus.windows.net") -> Settings:
+def _settings_with_sb(*, namespace: str = "hinterland-sb-test.servicebus.windows.net") -> Settings:
     return Settings(env="local", service_bus_namespace=namespace)
 
 

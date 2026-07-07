@@ -23,14 +23,14 @@ def client(settings: Settings) -> httpx.AsyncClient:
     return build_inat_client(settings)
 
 
-_DRAGONFLY_OBS_ID = "01J0OBSID00000000000000ULID"
+_OBS_ID = "01J0OBSID00000000000000ULID"
 _OBSERVED_ON = datetime(2026, 5, 10, 12, 0, 0, tzinfo=UTC)
 
 
 @respx.mock
 async def test_happy_path(client: httpx.AsyncClient) -> None:
     obs_route = respx.post("https://api.inaturalist.org/v1/observations").mock(
-        return_value=httpx.Response(200, json={"id": 9876543, "uuid": _DRAGONFLY_OBS_ID})
+        return_value=httpx.Response(200, json={"id": 9876543, "uuid": _OBS_ID})
     )
     photo_route = respx.post("https://api.inaturalist.org/v1/observation_photos").mock(
         return_value=httpx.Response(200, json={"id": 12345})
@@ -38,7 +38,7 @@ async def test_happy_path(client: httpx.AsyncClient) -> None:
 
     result = await submit_observation_to_inat(
         client,
-        dragonfly_observation_id=_DRAGONFLY_OBS_ID,
+        observation_id=_OBS_ID,
         photo_bytes=b"jpeg",
         latitude=39.1,
         longitude=-84.5,
@@ -47,7 +47,7 @@ async def test_happy_path(client: httpx.AsyncClient) -> None:
         species_guess="Northern Cardinal",
     )
     assert result.inat_observation_id == 9876543
-    assert result.inat_uuid == _DRAGONFLY_OBS_ID
+    assert result.inat_uuid == _OBS_ID
     assert obs_route.called
     assert photo_route.called
 
@@ -58,7 +58,7 @@ async def test_handles_results_wrapped_response(client: httpx.AsyncClient) -> No
     respx.post("https://api.inaturalist.org/v1/observations").mock(
         return_value=httpx.Response(
             200,
-            json={"results": [{"id": 4242, "uuid": _DRAGONFLY_OBS_ID}]},
+            json={"results": [{"id": 4242, "uuid": _OBS_ID}]},
         )
     )
     respx.post("https://api.inaturalist.org/v1/observation_photos").mock(
@@ -66,7 +66,7 @@ async def test_handles_results_wrapped_response(client: httpx.AsyncClient) -> No
     )
     result = await submit_observation_to_inat(
         client,
-        dragonfly_observation_id=_DRAGONFLY_OBS_ID,
+        observation_id=_OBS_ID,
         photo_bytes=b"jpeg",
         latitude=39.1,
         longitude=-84.5,
@@ -81,7 +81,7 @@ async def test_observation_create_5xx_raises_unavailable(client: httpx.AsyncClie
     with pytest.raises(InatUnavailable):
         await submit_observation_to_inat(
             client,
-            dragonfly_observation_id=_DRAGONFLY_OBS_ID,
+            observation_id=_OBS_ID,
             photo_bytes=b"jpeg",
             latitude=39.1,
             longitude=-84.5,
@@ -95,7 +95,7 @@ async def test_observation_create_401_raises_unavailable(client: httpx.AsyncClie
     with pytest.raises(InatUnavailable):
         await submit_observation_to_inat(
             client,
-            dragonfly_observation_id=_DRAGONFLY_OBS_ID,
+            observation_id=_OBS_ID,
             photo_bytes=b"jpeg",
             latitude=39.1,
             longitude=-84.5,
@@ -113,7 +113,7 @@ async def test_observation_create_4xx_raises_unavailable(client: httpx.AsyncClie
     with pytest.raises(InatUnavailable):
         await submit_observation_to_inat(
             client,
-            dragonfly_observation_id=_DRAGONFLY_OBS_ID,
+            observation_id=_OBS_ID,
             photo_bytes=b"jpeg",
             latitude=39.1,
             longitude=-84.5,
@@ -129,7 +129,7 @@ async def test_observation_create_transport_error(client: httpx.AsyncClient) -> 
     with pytest.raises(InatUnavailable):
         await submit_observation_to_inat(
             client,
-            dragonfly_observation_id=_DRAGONFLY_OBS_ID,
+            observation_id=_OBS_ID,
             photo_bytes=b"jpeg",
             latitude=39.1,
             longitude=-84.5,
@@ -148,7 +148,7 @@ async def test_photo_upload_5xx_raises_unavailable(client: httpx.AsyncClient) ->
     with pytest.raises(InatUnavailable):
         await submit_observation_to_inat(
             client,
-            dragonfly_observation_id=_DRAGONFLY_OBS_ID,
+            observation_id=_OBS_ID,
             photo_bytes=b"jpeg",
             latitude=39.1,
             longitude=-84.5,
@@ -164,7 +164,7 @@ async def test_observation_create_no_id_in_response_raises(client: httpx.AsyncCl
     with pytest.raises(InatUnavailable):
         await submit_observation_to_inat(
             client,
-            dragonfly_observation_id=_DRAGONFLY_OBS_ID,
+            observation_id=_OBS_ID,
             photo_bytes=b"jpeg",
             latitude=39.1,
             longitude=-84.5,

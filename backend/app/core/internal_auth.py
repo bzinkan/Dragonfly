@@ -1,6 +1,6 @@
 """Google OIDC auth for the `/internal/*` routes -- TRANSITIONAL.
 
-ADR 0010 moves Dragonfly's runtime to Azure. The production async
+ADR 0010 moves the runtime to Azure. The production async
 delivery path is now Event Grid -> Service Bus -> Container Apps
 workers calling service functions directly under managed identity;
 the `/internal/*` HTTP routes (see `internal_moderation.py` and
@@ -16,8 +16,9 @@ functional so existing operator tooling keeps working.
 
 Local dev opts out so the smoke scripts + moderation processor unit
 tests don't need a Google identity. The opt-out is the `env == "local"`
-default; explicit `DRAGONFLY_INTERNAL_OIDC_REQUIRED=true|false` wins
-in either direction. See `Settings.require_internal_oidc` in
+default; explicit `HINTERLAND_INTERNAL_OIDC_REQUIRED=true|false` wins
+in either direction, with `DRAGONFLY_` retained as a transition fallback.
+See `Settings.require_internal_oidc` in
 `app/core/config.py` for the resolution rule.
 
 The actual signature verification is delegated to

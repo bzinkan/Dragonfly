@@ -3,7 +3,7 @@
 Mocks the SQLAlchemy session + the enqueue helper. The cron-side
 plumbing (Container Apps Job + scheduler) lives in PR 5 infra-azure
 scripts and is verified via the Stream D smoke (`az containerapp
-job start --name dragonfly-inat-outbox-replay`).
+job start --name hinterland-inat-outbox-replay`).
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from app.inat.enqueue import InatEnqueueResult
 def _settings_with_sb() -> Settings:
     return Settings(
         env="local",
-        service_bus_namespace="dragonfly-sb-test.servicebus.windows.net",
+        service_bus_namespace="hinterland-sb-test.servicebus.windows.net",
     )
 
 

@@ -1,12 +1,13 @@
-"""Cloud Run Job entry point for nightly rarity refresh.
+"""Container Apps Job entry point for nightly rarity refresh.
 
 Same image + invocation pattern as cleanup_smoke_users:
 
     python -m admin.rarity_refresh
 
-Runtime config: same `DRAGONFLY_DATABASE_*` env as the API, plus
-`DRAGONFLY_INAT_OAUTH_TOKEN` (without it the iNat calls 401 and every
-region is skipped -- safe but useless).
+Runtime config: same `HINTERLAND_DATABASE_*` env as the API, plus
+`HINTERLAND_INAT_OAUTH_TOKEN` (with `DRAGONFLY_*` fallback still accepted
+during transition). Without an iNat token the calls 401 and every region
+is skipped -- safe but useless.
 """
 
 from __future__ import annotations

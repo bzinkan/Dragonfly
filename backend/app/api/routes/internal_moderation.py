@@ -6,7 +6,7 @@ call this HTTP route:
     Blob `pending/<id>.jpg` finalize
         -> Event Grid system topic
         -> Service Bus queue `moderation-pending`
-        -> `dragonfly-moderation-worker` Container App (KEDA-scaled)
+        -> `hinterland-moderation-worker` Container App (KEDA-scaled)
         -> `app.moderation.processor.process_pending_photo(...)` direct
            service call under managed identity (no HTTP hop, no /internal
            round trip).

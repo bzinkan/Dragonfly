@@ -80,9 +80,9 @@ def _settings_dev_oidc_on() -> Settings:
     return Settings(
         env="dev",
         app_version="test",
-        internal_oidc_audience="https://api.dragonfly-app.net",
+        internal_oidc_audience="https://api.thehinterlandguide.app",
         internal_oidc_allowed_service_accounts=[
-            "worker@dragonflyapp-495423.iam.gserviceaccount.com"
+            "worker@hinterland-test.invalid"
         ],
     )
 
@@ -240,7 +240,7 @@ def test_token_missing_email_is_401(monkeypatch: pytest.MonkeyPatch) -> None:
         # a verified token without an email claim at all.
         return {
             "sub": "1234567890",
-            "aud": "https://api.dragonfly-app.net",
+            "aud": "https://api.thehinterlandguide.app",
             "email_verified": True,
             "iss": "https://accounts.google.com",
         }
@@ -262,9 +262,9 @@ def test_token_missing_email_is_401(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_unallowed_service_account_is_403(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake(_: str, __: str) -> dict[str, Any]:
         return {
-            "email": "attacker@dragonflyapp-495423.iam.gserviceaccount.com",
+            "email": "attacker@hinterland-test.invalid",
             "email_verified": True,
-            "aud": "https://api.dragonfly-app.net",
+            "aud": "https://api.thehinterlandguide.app",
             "iss": "https://accounts.google.com",
         }
 
@@ -287,7 +287,7 @@ def test_unexpected_issuer_is_401(monkeypatch: pytest.MonkeyPatch) -> None:
 
     def fake(_: str, audience: str) -> dict[str, Any]:
         return {
-            "email": "worker@dragonflyapp-495423.iam.gserviceaccount.com",
+            "email": "worker@hinterland-test.invalid",
             "email_verified": True,
             "aud": audience,
             # Wrong issuer (could be MS Entra, another Google KMS tenant, etc.)
@@ -367,22 +367,22 @@ def test_verifier_library_missing_is_503(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_allowlist_case_insensitive(monkeypatch: pytest.MonkeyPatch) -> None:
     """Mixed-case allowlist entries do not silently 403 the legitimate caller.
 
-    Operator pastes 'Worker@Dragonfly.iam.gserviceaccount.com' into the
+    Operator pastes 'Worker@HINTERLAND-TEST.invalid' into the
     env var; Google reports the SA email lowercased. The dependency
     normalizes both sides so the call succeeds.
     """
     s = Settings(
         env="dev",
         app_version="test",
-        internal_oidc_audience="https://api.dragonfly-app.net",
+        internal_oidc_audience="https://api.thehinterlandguide.app",
         internal_oidc_allowed_service_accounts=[
-            "Worker@DRAGONFLYAPP-495423.iam.gserviceaccount.com",
+            "Worker@HINTERLAND-TEST.invalid",
         ],
     )
 
     def fake(_: str, audience: str) -> dict[str, Any]:
         return {
-            "email": "worker@dragonflyapp-495423.iam.gserviceaccount.com",
+            "email": "worker@hinterland-test.invalid",
             "email_verified": True,
             "aud": audience,
             "iss": "https://accounts.google.com",
@@ -408,7 +408,7 @@ def test_allowed_service_account_passes(monkeypatch: pytest.MonkeyPatch) -> None
         captured["token"] = token
         captured["audience"] = audience
         return {
-            "email": "worker@dragonflyapp-495423.iam.gserviceaccount.com",
+            "email": "worker@hinterland-test.invalid",
             "email_verified": True,
             "aud": audience,
             "iss": "https://accounts.google.com",
@@ -425,7 +425,7 @@ def test_allowed_service_account_passes(monkeypatch: pytest.MonkeyPatch) -> None
         assert response.status_code == 200
         assert response.json()["ok"] == "true"
         # The verifier was called with the configured audience.
-        assert captured["audience"] == "https://api.dragonfly-app.net"
+        assert captured["audience"] == "https://api.thehinterlandguide.app"
         assert captured["token"] == "fake.token.here"
     finally:
         client.close()
@@ -459,7 +459,7 @@ def test_empty_allowlist_returns_503() -> None:
     s = Settings(
         env="dev",
         app_version="test",
-        internal_oidc_audience="https://api.dragonfly-app.net",
+        internal_oidc_audience="https://api.thehinterlandguide.app",
     )
     client_iter = _build_client(s)
     client = next(client_iter)
@@ -613,7 +613,7 @@ def test_internal_moderation_local_skips_auth_check(
         response = client.post(
             "/internal/moderation/process",
             json={
-                "bucket": "dragonfly-photos-test",
+                "bucket": "hinterland-photos-test",
                 "object_name": "pending/missing.jpg",
             },
         )
@@ -638,7 +638,7 @@ def test_internal_principal_carries_claims(monkeypatch: pytest.MonkeyPatch) -> N
 
     def fake(_: str, audience: str) -> dict[str, Any]:
         return {
-            "email": "worker@dragonflyapp-495423.iam.gserviceaccount.com",
+            "email": "worker@hinterland-test.invalid",
             "aud": audience,
             "iss": "https://accounts.google.com",
             "sub": "123",
@@ -663,7 +663,7 @@ def test_internal_principal_carries_claims(monkeypatch: pytest.MonkeyPatch) -> N
             headers={"Authorization": "Bearer fake.token.here"},
         )
     assert response.status_code == 200
-    assert response.json()["email"] == "worker@dragonflyapp-495423.iam.gserviceaccount.com"
+    assert response.json()["email"] == "worker@hinterland-test.invalid"
     assert captured and captured[0] is not None
-    assert captured[0].audience == "https://api.dragonfly-app.net"
+    assert captured[0].audience == "https://api.thehinterlandguide.app"
     assert captured[0].claims["sub"] == "123"

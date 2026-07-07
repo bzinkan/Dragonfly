@@ -1,4 +1,4 @@
-"""Submit a clean Dragonfly observation to iNaturalist.
+"""Submit a clean Hinterland observation to iNaturalist.
 
 iNat's v1 API needs a two-call dance: create the observation, then attach
 the photo. Both happen in this function so the caller (Cloud Tasks task
@@ -34,7 +34,7 @@ class InatSubmitResult:
 async def submit_observation_to_inat(
     inat_client: httpx.AsyncClient,
     *,
-    dragonfly_observation_id: str,
+    observation_id: str,
     photo_bytes: bytes,
     latitude: float,
     longitude: float,
@@ -43,11 +43,11 @@ async def submit_observation_to_inat(
     species_guess: str | None = None,
 ) -> InatSubmitResult:
     """Push the observation + photo to iNaturalist."""
-    # Step 1: create the observation. Use Dragonfly's id as the iNat
+    # Step 1: create the observation. Use our local id as the iNat
     # uuid -- gives idempotency for free under Cloud Tasks redelivery.
     obs_payload: dict[str, object] = {
         "observation": {
-            "uuid": dragonfly_observation_id,
+            "uuid": observation_id,
             "latitude": latitude,
             "longitude": longitude,
             "observed_on_string": observed_on.isoformat(),
@@ -93,7 +93,7 @@ async def submit_observation_to_inat(
     inat_observation_id: int = raw_id
 
     # Step 2: attach the photo via /v1/observation_photos.
-    files = {"file": (f"{dragonfly_observation_id}.jpg", photo_bytes, "image/jpeg")}
+    files = {"file": (f"{observation_id}.jpg", photo_bytes, "image/jpeg")}
     data = {"observation_photo[observation_id]": str(inat_observation_id)}
     try:
         photo_res = await inat_client.post(
@@ -124,10 +124,10 @@ async def submit_observation_to_inat(
 
     log.info(
         "inat.submit.complete",
-        dragonfly_observation_id=dragonfly_observation_id,
+        observation_id=observation_id,
         inat_observation_id=inat_observation_id,
     )
     return InatSubmitResult(
         inat_observation_id=inat_observation_id,
-        inat_uuid=dragonfly_observation_id,
+        inat_uuid=observation_id,
     )

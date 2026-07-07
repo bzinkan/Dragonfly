@@ -30,6 +30,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 from ulid import ULID
 
 from app.core.auth import CurrentUserDep, resolve_current_user_row
@@ -118,6 +119,19 @@ class ObservationResponse(BaseModel):
         )
 
 
+async def _cached_species_display_name(
+    session: AsyncSession, taxon_id: int
+) -> str | None:
+    cached = (
+        await session.execute(
+            select(models.SpeciesCache).where(models.SpeciesCache.taxon_id == taxon_id)
+        )
+    ).scalar_one_or_none()
+    if cached is None:
+        return None
+    return cached.common_name or cached.scientific_name
+
+
 @router.post(
     "",
     response_model=ObservationResponse,
@@ -157,6 +171,10 @@ async def create_observation(
             detail=f"Photo is in status {photo.status}, not pending",
         )
 
+    species_name = payload.species_name
+    if payload.taxon_id is not None and species_name is None:
+        species_name = await _cached_species_display_name(session, payload.taxon_id)
+
     # Atomic counter bump on the membership row. If the user isn't in this
     # group, RETURNING comes back empty and we 403 before inserting the
     # observation row.
@@ -189,7 +207,7 @@ async def create_observation(
         longitude=payload.longitude,
         geohash4=geohash4,
         taxon_id=payload.taxon_id,
-        species_name=payload.species_name,
+        species_name=species_name,
         place_name=payload.place_name,
     )
     session.add(observation)
@@ -358,6 +376,7 @@ class IdentifyResponse(BaseModel):
     observation_id: str
     suggestions: list[CvSuggestionDTO]
     cv_unavailable: bool = False
+    no_matches: bool = False
 
 
 @router.post("/{observation_id}/identify", response_model=IdentifyResponse)
@@ -417,10 +436,12 @@ async def identify_observation(
             cv_unavailable=True,
         )
 
+    no_matches = len(suggestions) == 0
     log.info(
         "observations.identify.scored",
         observation_id=observation_id,
         suggestion_count=len(suggestions),
+        no_matches=no_matches,
     )
     return IdentifyResponse(
         observation_id=observation_id,
@@ -433,6 +454,7 @@ async def identify_observation(
             )
             for s in suggestions
         ],
+        no_matches=no_matches,
     )
 
 

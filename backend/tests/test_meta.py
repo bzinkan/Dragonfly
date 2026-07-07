@@ -80,7 +80,7 @@ def test_v1_meta_returns_versioned_api_metadata(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert response.json() == {
-        "name": "Dragonfly API",
+        "name": "The Hinterland Guide API",
         "env": "local",
         "version": "test",
     }

@@ -17,7 +17,7 @@ from app.main import create_app
 from app.moderation.provider import ModerationResult, ModerationUnavailable
 
 _PHOTO_ID = "01J0PHOTOID00000000000ULID"
-_BUCKET = "dragonfly-photos-test"
+_BUCKET = "hinterland-photos-test"
 _OBJECT_NAME = f"pending/{_PHOTO_ID}.jpg"
 
 
