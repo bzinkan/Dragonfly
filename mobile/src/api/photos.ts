@@ -26,6 +26,7 @@ export type PhotoIdentifyResponse = {
   photo_id: string;
   suggestions: CvSuggestion[];
   cv_unavailable: boolean;
+  fallback_unavailable?: boolean;
   no_matches: boolean;
 };
 

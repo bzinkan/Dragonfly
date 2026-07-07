@@ -28,6 +28,11 @@ from app.db import models
 from app.db.session import DbSessionDep
 from app.inat.client import InatClientDep, InatUnavailable
 from app.inat.cv import score_image
+from app.organism_fallback import (
+    OrganismFallbackDep,
+    OrganismFallbackUnavailable,
+    SuggestionSource,
+)
 
 router = APIRouter(prefix="/v1/photos", tags=["photos"])
 
@@ -130,10 +135,11 @@ class PhotoUrlResponse(BaseModel):
 
 
 class CvSuggestionDTO(BaseModel):
-    taxon_id: int
+    taxon_id: int | None = None
     common_name: str | None
     scientific_name: str | None
     score: float
+    source: SuggestionSource = "inat"
 
 
 class PhotoIdentifyResponse(BaseModel):
@@ -147,6 +153,7 @@ class PhotoIdentifyResponse(BaseModel):
     photo_id: str
     suggestions: list[CvSuggestionDTO]
     cv_unavailable: bool = False
+    fallback_unavailable: bool = False
     no_matches: bool = False
 
 
@@ -249,6 +256,7 @@ async def identify_photo(
     current_user: CurrentUserDep,
     session: DbSessionDep,
     inat_client: InatClientDep,
+    organism_fallback: OrganismFallbackDep,
     storage: SignedUrlGeneratorDep,
     settings: Annotated[Settings, Depends(get_request_settings)],
 ) -> PhotoIdentifyResponse:
@@ -272,9 +280,8 @@ async def identify_photo(
             detail=f"Photo is in status {photo.status}, not pending",
         )
 
-    # No iNat token configured (dev / expired daily token) -> immediate
-    # fallback. The kid can still type an ID or skip before final save.
-    if not settings.inat_oauth_token:
+    should_try_fallback = settings.organism_fallback_provider != "noop"
+    if not settings.inat_oauth_token and not should_try_fallback:
         log.info(
             "observations.identify.cv_unavailable_no_token",
             photo_id=photo_id,
@@ -284,35 +291,93 @@ async def identify_photo(
 
     image_bytes = storage.fetch_object_bytes(bucket=photo.bucket, object_name=photo.object_name)
 
-    try:
-        suggestions = await score_image(inat_client, image_bytes=image_bytes, top_k=3)
-    except InatUnavailable as exc:
-        log.warning(
-            "observations.identify.cv_unavailable",
+    suggestions = []
+    cv_unavailable = False
+    if settings.inat_oauth_token:
+        try:
+            suggestions = await score_image(inat_client, image_bytes=image_bytes, top_k=3)
+        except InatUnavailable as exc:
+            cv_unavailable = True
+            log.warning(
+                "observations.identify.cv_unavailable",
+                photo_id=photo_id,
+                pre_save=True,
+                reason=str(exc),
+            )
+    else:
+        cv_unavailable = True
+        log.info(
+            "observations.identify.cv_unavailable_no_token",
             photo_id=photo_id,
             pre_save=True,
-            reason=str(exc),
         )
-        return PhotoIdentifyResponse(photo_id=photo_id, suggestions=[], cv_unavailable=True)
 
-    no_matches = len(suggestions) == 0
+    if suggestions:
+        log.info(
+            "observations.identify.scored",
+            photo_id=photo_id,
+            pre_save=True,
+            suggestion_count=len(suggestions),
+            no_matches=False,
+            fallback_used=False,
+        )
+        return PhotoIdentifyResponse(
+            photo_id=photo_id,
+            suggestions=[
+                CvSuggestionDTO(
+                    taxon_id=s.taxon_id,
+                    common_name=s.common_name,
+                    scientific_name=s.scientific_name,
+                    score=s.score,
+                    source="inat",
+                )
+                for s in suggestions
+            ],
+            cv_unavailable=cv_unavailable,
+            no_matches=False,
+        )
+
+    fallback_unavailable = False
+    fallback_suggestions = []
+    if should_try_fallback:
+        try:
+            fallback_suggestions = await organism_fallback.suggest(
+                image_bytes=image_bytes,
+                top_k=3,
+            )
+        except OrganismFallbackUnavailable as exc:
+            fallback_unavailable = True
+            log.warning(
+                "observations.identify.fallback_unavailable",
+                photo_id=photo_id,
+                pre_save=True,
+                reason=str(exc),
+            )
+
+    no_matches = len(fallback_suggestions) == 0
     log.info(
         "observations.identify.scored",
         photo_id=photo_id,
         pre_save=True,
-        suggestion_count=len(suggestions),
+        suggestion_count=len(fallback_suggestions),
         no_matches=no_matches,
+        fallback_used=bool(fallback_suggestions),
+        cv_unavailable=cv_unavailable,
+        fallback_unavailable=fallback_unavailable,
     )
     return PhotoIdentifyResponse(
         photo_id=photo_id,
         suggestions=[
             CvSuggestionDTO(
-                taxon_id=s.taxon_id,
+                taxon_id=None,
                 common_name=s.common_name,
                 scientific_name=s.scientific_name,
                 score=s.score,
+                source="fallback",
             )
-            for s in suggestions
+            for s in fallback_suggestions
         ],
+        cv_unavailable=cv_unavailable,
+        fallback_unavailable=fallback_unavailable,
         no_matches=no_matches,
     )

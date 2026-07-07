@@ -126,6 +126,16 @@ class Settings(BaseSettings):
     inat_oauth_token: str = ""
     inat_request_timeout_seconds: float = 8.0
 
+    # Optional non-LLM fallback when iNaturalist returns no usable species
+    # suggestions. This deliberately returns display-only organism labels
+    # (for example "Dog") without taxon IDs, so Dex/rarity rewards remain
+    # grounded in iNat taxa.
+    organism_fallback_provider: Literal["noop", "azure_vision"] = "noop"
+    organism_fallback_min_confidence: float = 0.55
+    azure_vision_endpoint: str = ""
+    azure_vision_key: str = ""
+    azure_vision_request_timeout_seconds: float = 8.0
+
     # Outbound iNat submission posture. Defaults to False per the
     # Option B decision (2026-06-04): Hinterland does NOT post kid
     # observations to iNaturalist while the kid is under 13 because

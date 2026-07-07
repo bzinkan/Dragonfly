@@ -23,6 +23,7 @@ Azure Container Apps: FastAPI / uvicorn
         +--> Azure Database for PostgreSQL Flexible Server
         +--> Azure Blob Storage (photos, SAS URLs)
         +--> iNaturalist API (CV + eventual project submit)
+        +--> Azure AI Vision (optional non-LLM organism fallback)
         +--> Azure AI Content Safety (async moderation provider)
         +--> Azure Monitor / Log Analytics
 ```
@@ -39,7 +40,9 @@ the adult generates from Classroom.
    `pending/<photo_id>.jpg` in the private photos container.
 3. Online clients call `POST /v1/photos/{photo_id}/identify` while the photo is
    still pending. iNaturalist CV returns top suggestions, `no_matches=true`, or
-   `cv_unavailable=true`; the kid can pick a suggestion, type a display-only
+   `cv_unavailable=true`. When configured, Azure AI Vision may provide
+   non-LLM, display-only fallback organism guesses such as "Dog" after iNat has
+   no usable suggestion; the kid can pick a suggestion, type a display-only
    name, or skip.
 4. Client calls `POST /v1/observations` with the stable observation shape and
    the chosen `taxon_id`/`species_name` when known.
@@ -103,7 +106,8 @@ truth. Postgres tables are materialized views synced by scripts/CI.
 
 | Dependency | Used For | Failure Mode |
 |---|---|---|
-| iNaturalist CV | Species suggestions before final save | Return `cv_unavailable=true`; kid can choose manually/skip. If iNat responds without usable organism suggestions, return `no_matches=true` |
+| iNaturalist CV | Species suggestions before final save | Return `cv_unavailable=true`; kid can choose manually/skip. If iNat responds without usable organism suggestions, try the optional non-LLM fallback, otherwise return `no_matches=true` |
+| Azure AI Vision organism fallback | Display-only organism guesses when iNat has no usable match | Return `fallback_unavailable=true` or `no_matches=true`; fallback picks save as manual `species_name` only and do not trigger taxon rewards |
 | iNaturalist submit | Science contribution | Queue/retry later; kid submission already succeeded |
 | Azure AI Content Safety | Photo moderation | Hold/retry pending; do not default-allow |
 | Reverse geocoding | Place names | No-op/cache miss is acceptable |
