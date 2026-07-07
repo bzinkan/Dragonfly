@@ -54,6 +54,10 @@ function findCachedObservation(id: string): ObservationListItem | null {
   return null;
 }
 
+function suggestionDisplayName(s: CvSuggestion): string | null {
+  return s.common_name ?? s.scientific_name ?? null;
+}
+
 export default function ObservationDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const item = typeof id === "string" ? findCachedObservation(id) : null;
@@ -141,7 +145,9 @@ export default function ObservationDetailScreen() {
               style={[styles.rewardRow, i > 0 && styles.rewardRowGap]}
             >
               <Text style={styles.rewardTitle}>{r.title}</Text>
-              {r.detail ? <Text style={styles.rewardDetail}>{r.detail}</Text> : null}
+              {r.detail ? (
+                <Text style={styles.rewardDetail}>{r.detail}</Text>
+              ) : null}
             </View>
           ))}
         </View>
@@ -150,7 +156,10 @@ export default function ObservationDetailScreen() {
       {effectiveTaxonId !== null ? (
         <SpeciesFactsCard taxonId={effectiveTaxonId} />
       ) : isMysteryFind ? (
-        <IdentifySection observationId={item.id} onIdentified={handleIdentified} />
+        <IdentifySection
+          observationId={item.id}
+          onIdentified={handleIdentified}
+        />
       ) : null}
 
       <Text style={styles.label}>When</Text>
@@ -263,7 +272,11 @@ function SpeciesFactsCard({ taxonId }: { taxonId: number }) {
       </View>
     );
   }
-  if (facts.isError || !facts.data.facts_available || factsAreEmpty(facts.data)) {
+  if (
+    facts.isError ||
+    !facts.data.facts_available ||
+    factsAreEmpty(facts.data)
+  ) {
     return null;
   }
 
@@ -284,10 +297,14 @@ function SpeciesFactsCard({ taxonId }: { taxonId: number }) {
       ) : null}
       {worldwide ? <Text style={styles.factRow}>🌍 {worldwide}</Text> : null}
       {conservation ? (
-        <Text style={styles.factRow}>💚 Conservation status: {conservation}</Text>
+        <Text style={styles.factRow}>
+          💚 Conservation status: {conservation}
+        </Text>
       ) : null}
       {facts.data.summary ? (
-        <Text style={styles.factsAttribution}>Facts from Wikipedia via iNaturalist</Text>
+        <Text style={styles.factsAttribution}>
+          Facts from Wikipedia via iNaturalist
+        </Text>
       ) : null}
     </View>
   );
@@ -335,7 +352,9 @@ function IdentifySection({
     }
   }
 
-  async function pick(payload: { taxon_id: number } | { species_name: string }) {
+  async function pick(
+    payload: { taxon_id: number } | { species_name: string },
+  ) {
     setPhase({ kind: "patching" });
     try {
       const obs = await patchObservation(observationId, payload);
@@ -396,18 +415,31 @@ function IdentifySection({
               Couldn&apos;t reach iNaturalist. Type your own below.
             </Text>
           )}
-          {phase.suggestions.map((s) => (
-            <Pressable
-              key={s.taxon_id}
-              style={styles.suggestion}
-              onPress={() => void pick({ taxon_id: s.taxon_id })}
-            >
-              <Text style={styles.suggestionName}>
-                {s.common_name ?? s.scientific_name ?? "Unknown taxon"}
-              </Text>
-              <Text style={styles.suggestionMeta}>{Math.round(s.score)}%</Text>
-            </Pressable>
-          ))}
+          {phase.suggestions.map((s) => {
+            const displayName = suggestionDisplayName(s);
+            const canPick = s.taxon_id !== null || displayName !== null;
+            return (
+              <Pressable
+                key={`${s.source ?? "inat"}-${s.taxon_id ?? displayName ?? s.score}`}
+                style={styles.suggestion}
+                disabled={!canPick}
+                onPress={() => {
+                  if (s.taxon_id !== null) {
+                    void pick({ taxon_id: s.taxon_id });
+                  } else if (displayName !== null) {
+                    void pick({ species_name: displayName });
+                  }
+                }}
+              >
+                <Text style={styles.suggestionName}>
+                  {displayName ?? "Unknown taxon"}
+                </Text>
+                <Text style={styles.suggestionMeta}>
+                  {Math.round(s.score)}%
+                </Text>
+              </Pressable>
+            );
+          })}
 
           {!showManualInput ? (
             <Pressable

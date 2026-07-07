@@ -86,7 +86,9 @@ export default function ObserveSubmitScreen() {
   const [locStatus, setLocStatus] = useState<
     "loading" | "ready" | "denied" | "error"
   >("loading");
-  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(
+    null,
+  );
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [manualSpecies, setManualSpecies] = useState("");
   const [showManualInput, setShowManualInput] = useState(false);
@@ -97,8 +99,12 @@ export default function ObserveSubmitScreen() {
   // the kid has picked an iNat suggestion, typed a name, or skipped.
   // Sanctuary rewards drive the reveal modal once we transition to
   // ``done``; expedition rewards drive the inline celebration card.
-  const [sanctuaryRewards, setSanctuaryRewards] = useState<ObservationReward[]>([]);
-  const [expeditionRewards, setExpeditionRewards] = useState<ObservationReward[]>([]);
+  const [sanctuaryRewards, setSanctuaryRewards] = useState<ObservationReward[]>(
+    [],
+  );
+  const [expeditionRewards, setExpeditionRewards] = useState<
+    ObservationReward[]
+  >([]);
   const [revealVisible, setRevealVisible] = useState(false);
   // Not state: progress is only read inside runSubmit/sendPatch, and a
   // re-render mid-pipeline must not reset it.
@@ -152,7 +158,11 @@ export default function ObserveSubmitScreen() {
   // ``revealVisible`` guards re-show on re-render. The kid dismisses
   // explicitly via "See Sanctuary" or "Done"; never auto-dismissed.
   useEffect(() => {
-    if (phase.kind === "done" && sanctuaryRewards.length > 0 && !revealVisible) {
+    if (
+      phase.kind === "done" &&
+      sanctuaryRewards.length > 0 &&
+      !revealVisible
+    ) {
       setRevealVisible(true);
     }
   }, [phase.kind, sanctuaryRewards.length, revealVisible]);
@@ -243,10 +253,11 @@ export default function ObserveSubmitScreen() {
   async function pickSuggestion(s: CvSuggestion) {
     if (phase.kind !== "picking") return;
     try {
-      await createFinalObservation({
-        taxon_id: s.taxon_id,
-        species_name: suggestionDisplayName(s),
-      });
+      await createFinalObservation(
+        s.taxon_id != null
+          ? { taxon_id: s.taxon_id }
+          : { species_name: suggestionDisplayName(s) },
+      );
     } catch (err) {
       setPhase({ kind: "error", message: errorMessage(err) });
     }
@@ -322,7 +333,8 @@ export default function ObserveSubmitScreen() {
           await putPhotoToSignedUrl(
             presigned.upload_url,
             displayPhoto.localUri,
-            presigned.required_headers ?? legacyPutHeaders(presigned.content_type),
+            presigned.required_headers ??
+              legacyPutHeaders(presigned.content_type),
           );
         } catch (err) {
           // 403 = storage rejected the SAS (expired server-side, or a
@@ -415,7 +427,10 @@ export default function ObserveSubmitScreen() {
           {expeditionRewards.map((r, i) => (
             <View
               key={`${r.type}-${i}`}
-              style={[styles.expeditionReward, i > 0 && styles.expeditionRewardGap]}
+              style={[
+                styles.expeditionReward,
+                i > 0 && styles.expeditionRewardGap,
+              ]}
             >
               <Text style={styles.expeditionRewardTitle}>{r.title}</Text>
               {r.detail ? (
@@ -458,7 +473,7 @@ export default function ObserveSubmitScreen() {
             )}
           {phase.suggestions.map((s) => (
             <Pressable
-              key={s.taxon_id}
+              key={`${s.source ?? "inat"}-${s.taxon_id ?? s.common_name ?? s.scientific_name}-${s.score}`}
               style={[styles.suggestion]}
               onPress={() => void pickSuggestion(s)}
             >

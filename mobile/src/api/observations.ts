@@ -88,7 +88,9 @@ export type Observation = {
   rewards?: ObservationReward[];
 };
 
-export function createObservation(payload: ObservationCreate): Promise<Observation> {
+export function createObservation(
+  payload: ObservationCreate,
+): Promise<Observation> {
   return apiRequest<Observation>("/v1/observations", {
     method: "POST",
     body: payload,
@@ -120,10 +122,11 @@ export function patchObservation(
 // ---------------------------------------------------------------------------
 
 export type CvSuggestion = {
-  taxon_id: number;
+  taxon_id: number | null;
   common_name: string | null;
   scientific_name: string | null;
   score: number;
+  source?: "inat" | "fallback";
 };
 
 export type IdentifyResponse = {
@@ -133,7 +136,9 @@ export type IdentifyResponse = {
   no_matches: boolean;
 };
 
-export function identifyObservation(observationId: string): Promise<IdentifyResponse> {
+export function identifyObservation(
+  observationId: string,
+): Promise<IdentifyResponse> {
   return apiRequest<IdentifyResponse>(
     `/v1/observations/${observationId}/identify`,
     { method: "POST" },

@@ -1,6 +1,6 @@
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
-from typing import cast
+from typing import Literal, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -14,6 +14,7 @@ from app.core.storage import SignedUrlGenerator
 from app.db import models
 from app.db.session import get_db_session
 from app.main import create_app
+from app.organism_fallback import OrganismFallbackSuggestion
 from tests.helpers.auth import stub_token_verifier
 
 _FIREBASE_UID = "firebase-kid-001"
@@ -98,6 +99,8 @@ def _build_client(
     *,
     signer: SignedUrlGenerator | None = None,
     inat_token: str = "test-token",
+    organism_fallback: object | None = None,
+    organism_fallback_provider: str = "noop",
 ) -> Iterator[TestClient]:
     app = create_app(
         Settings(
@@ -105,10 +108,15 @@ def _build_client(
             app_version="test",
             photos_bucket="dragonfly-photos-test",
             inat_oauth_token=inat_token,
+            organism_fallback_provider=cast(
+                Literal["noop", "azure_vision"], organism_fallback_provider
+            ),
         )
     )
     if signer is not None:
         app.state.signed_url_generator = signer
+    if organism_fallback is not None:
+        app.state.organism_fallback = organism_fallback
 
     async def override() -> AsyncIterator[AsyncSession]:
         yield fake_session
@@ -126,6 +134,21 @@ def fake_session() -> AsyncMock:
 @pytest.fixture
 def stub_signer() -> _StubSignedUrlGenerator:
     return _StubSignedUrlGenerator()
+
+
+class _StubOrganismFallback:
+    def __init__(self, suggestions: list[OrganismFallbackSuggestion]) -> None:
+        self.suggestions = suggestions
+        self.calls: list[bytes] = []
+
+    async def suggest(
+        self,
+        *,
+        image_bytes: bytes,
+        top_k: int = 3,
+    ) -> list[OrganismFallbackSuggestion]:
+        self.calls.append(image_bytes)
+        return self.suggestions[:top_k]
 
 
 @pytest.fixture
@@ -697,5 +720,94 @@ def test_photo_identify_returns_no_matches_for_empty_inat_response(
         assert response.status_code == 200
         body = response.json()
         assert body["cv_unavailable"] is False
+        assert body["no_matches"] is True
+        assert body["suggestions"] == []
+
+
+@respx.mock
+def test_photo_identify_uses_fallback_when_inat_has_no_matches(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_session: AsyncMock,
+    stub_signer: _StubSignedUrlGenerator,
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    _wire_photo_identify(fake_session, user=_user_row(), photo=_pending_photo_row())
+    respx.post("https://api.inaturalist.org/v1/computervision/score_image").mock(
+        return_value=httpx.Response(200, json={"results": []})
+    )
+    fallback = _StubOrganismFallback(
+        [
+            OrganismFallbackSuggestion(
+                common_name="Dog",
+                scientific_name="Canis familiaris",
+                score=94.0,
+            ),
+            OrganismFallbackSuggestion(
+                common_name="Mammal",
+                scientific_name=None,
+                score=86.5,
+            ),
+        ]
+    )
+    for client in _build_client(
+        fake_session,
+        signer=stub_signer,
+        organism_fallback=fallback,
+        organism_fallback_provider="azure_vision",
+    ):
+        response = client.post(
+            "/v1/photos/01J0PHOTOID00000000000ULID/identify",
+            headers={"Authorization": "Bearer fake"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["cv_unavailable"] is False
+        assert body["fallback_unavailable"] is False
+        assert body["no_matches"] is False
+        assert body["suggestions"] == [
+            {
+                "taxon_id": None,
+                "common_name": "Dog",
+                "scientific_name": "Canis familiaris",
+                "score": 94.0,
+                "source": "fallback",
+            },
+            {
+                "taxon_id": None,
+                "common_name": "Mammal",
+                "scientific_name": None,
+                "score": 86.5,
+                "source": "fallback",
+            },
+        ]
+        assert fallback.calls == [b"fake-jpeg-bytes"]
+
+
+@respx.mock
+def test_photo_identify_returns_no_matches_when_fallback_has_no_organism(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_session: AsyncMock,
+    stub_signer: _StubSignedUrlGenerator,
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    _wire_photo_identify(fake_session, user=_user_row(), photo=_pending_photo_row())
+    respx.post("https://api.inaturalist.org/v1/computervision/score_image").mock(
+        return_value=httpx.Response(200, json={"results": []})
+    )
+    fallback = _StubOrganismFallback([])
+    for client in _build_client(
+        fake_session,
+        signer=stub_signer,
+        organism_fallback=fallback,
+        organism_fallback_provider="azure_vision",
+    ):
+        response = client.post(
+            "/v1/photos/01J0PHOTOID00000000000ULID/identify",
+            headers={"Authorization": "Bearer fake"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["cv_unavailable"] is False
+        assert body["fallback_unavailable"] is False
         assert body["no_matches"] is True
         assert body["suggestions"] == []

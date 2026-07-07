@@ -44,6 +44,7 @@ from app.dispatcher.registry import HANDLERS
 from app.dispatcher.types import Context, Reward
 from app.inat.client import InatClientDep, InatUnavailable
 from app.inat.cv import score_image
+from app.organism_fallback import SuggestionSource
 from app.services import species_cache
 
 router = APIRouter(prefix="/v1/observations", tags=["observations"])
@@ -418,10 +419,11 @@ async def list_my_observations(
 
 
 class CvSuggestionDTO(BaseModel):
-    taxon_id: int
+    taxon_id: int | None = None
     common_name: str | None
     scientific_name: str | None
     score: float
+    source: SuggestionSource = "inat"
 
 
 class IdentifyResponse(BaseModel):
