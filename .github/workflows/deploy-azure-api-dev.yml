@@ -75,15 +75,30 @@ jobs:
             --output tsv)"
           API_BASE_URL="https://${FQDN}"
           echo "API_BASE_URL=${API_BASE_URL}" >> "${GITHUB_ENV}"
-          curl --fail --silent --show-error "${API_BASE_URL}/health"
-          curl --fail --silent --show-error "${API_BASE_URL}/ready"
-          curl --fail --silent --show-error "${API_BASE_URL}/.well-known/hinterland-kid-jwks.json"
-          curl --fail --silent --show-error \
-            --header "Authorization: Bearer hinterland-dev-bypass" \
-            "${API_BASE_URL}/v1/me"
-          curl --fail --silent --show-error \
-            --header "Authorization: Bearer hinterland-dev-bypass" \
-            "${API_BASE_URL}/v1/observations/me"
+          smoke_get() {
+            local path="$1"
+            shift
+            local status
+            local body
+            for attempt in 1 2 3 4 5; do
+              body="$(mktemp)"
+              status="$(curl --silent --show-error --output "${body}" --write-out "%{http_code}" "$@" "${API_BASE_URL}${path}" || true)"
+              cat "${body}"
+              rm -f "${body}"
+              echo
+              if [[ "${status}" == 2* ]]; then
+                return 0
+              fi
+              echo "Smoke probe ${path} failed with HTTP ${status} (attempt ${attempt}/5)."
+              sleep 5
+            done
+            return 1
+          }
+          smoke_get "/health"
+          smoke_get "/ready"
+          smoke_get "/.well-known/hinterland-kid-jwks.json"
+          smoke_get "/v1/me" --header "Authorization: Bearer hinterland-dev-bypass"
+          smoke_get "/v1/observations/me" --header "Authorization: Bearer hinterland-dev-bypass"
 
       - name: Authenticated parent/kid smoke
         env:
