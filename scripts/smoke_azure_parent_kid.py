@@ -163,14 +163,44 @@ def main() -> int:
     expect("/v1/auth/kid-exchange", status, payload)
     kid_session_token = payload["session_token"]
 
-    print("[7/7] GET /v1/me as kid...")
+    print("[7/8] GET /v1/me as kid...")
     status, payload = request("GET", "/v1/me", token=kid_session_token)
     expect("/v1/me", status, payload)
     assert payload["uid"] == kid_user_id, payload
     assert payload["role"] == "kid", payload
     assert payload["group_id"] == group_id, payload
 
-    print("\nALL CHECKS PASSED -- Azure parent/kid handoff flow works end-to-end.")
+    print("[8/8] GET /v1/expeditions/available as kid...")
+    deadline = time.time() + 90
+    last_status: int | None = None
+    last_payload: Any = None
+    while time.time() < deadline:
+        last_status, last_payload = request(
+            "GET",
+            "/v1/expeditions/available",
+            token=kid_session_token,
+        )
+        if last_status == 200:
+            items = last_payload.get("items") if isinstance(last_payload, dict) else None
+            if isinstance(items, list) and any(
+                isinstance(item, dict) and item.get("id") == "backyard_starter"
+                for item in items
+            ):
+                print("      starter expedition visible")
+                break
+        time.sleep(5)
+    else:
+        expect(
+            "/v1/expeditions/available",
+            last_status or 0,
+            last_payload,
+            expected_status=200,
+        )
+        print("\n[FAIL] /v1/expeditions/available: backyard_starter not visible")
+        print(f"  body: {json.dumps(last_payload, indent=2)[:1200]}")
+        return 2
+
+    print("\nALL CHECKS PASSED -- Azure parent/kid handoff + expedition content work.")
     return 0
 
 

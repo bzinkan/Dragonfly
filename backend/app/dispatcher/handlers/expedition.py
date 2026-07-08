@@ -8,10 +8,10 @@ matched steps. Per docs/dispatcher.md:
   first unmatched), but can advance MULTIPLE expeditions in one shot.
 - ExpeditionHandler runs AFTER DexHandler so `not_in_dex` matchers see
   the dex state before this observation's row was inserted.
-- Progress is scoped to (user, observation.group): an observation
-  submitted in group A can only advance expeditions started under
-  group A. Phase 1 users have a single group, so behavior is unchanged
-  today -- this is latent multi-group correctness.
+- Expedition progress is personal kid game progress. A kid's observation
+  may advance their active expeditions regardless of the group context that
+  originally created the progress row; `group_id` is retained as creation
+  context for audit/reporting.
 
 Completed steps are recorded as
 ``{"completed_at": <iso string>, "observation_id": <ulid>}`` (legacy
@@ -72,10 +72,6 @@ class ExpeditionHandler:
     name = "expedition"
 
     async def handle(self, ctx: Context) -> HandlerResult:
-        # group_id filter: an observation submitted in group A only
-        # advances expeditions started under group A (see module
-        # docstring).
-        #
         # with_for_update(of=progress): the restart endpoint and this
         # handler are both read-modify-write writers on
         # expedition_progress; the row lock closes the restart-vs-
@@ -91,7 +87,6 @@ class ExpeditionHandler:
                 )
                 .where(
                     models.ExpeditionProgress.user_id == ctx.user.id,
-                    models.ExpeditionProgress.group_id == ctx.observation.group_id,
                     models.ExpeditionProgress.completed_at.is_(None),
                     models.ExpeditionContent.archived.is_(False),
                 )

@@ -168,6 +168,18 @@ async def test_no_active_expeditions_returns_empty(fake_session: AsyncMock) -> N
     fake_session.commit.assert_not_called()
 
 
+async def test_active_progress_query_is_personal_not_group_scoped(
+    fake_session: AsyncMock,
+) -> None:
+    _wire_session(fake_session, progress_pairs=[])
+    handler = ExpeditionHandler()
+    await handler.handle(_ctx(fake_session))
+
+    stmt = str(fake_session.execute.await_args_list[0].args[0]).lower()
+    assert "expedition_progress.user_id" in stmt
+    assert "expedition_progress.group_id" not in stmt.split("where", maxsplit=1)[1]
+
+
 async def test_step_advances_when_match_succeeds(fake_session: AsyncMock) -> None:
     body = _expedition_body(
         exp_id="x",
@@ -430,6 +442,9 @@ async def test_radius_step_triggers_prior_observation_query(fake_session: AsyncM
     assert result.rewards == []
     # progress join + species cache + dex + the prior-obs scan.
     assert fake_session.execute.await_count == 4
+    prior_stmt = str(fake_session.execute.await_args_list[3].args[0]).lower()
+    assert "observations.user_id" in prior_stmt
+    assert "observations.group_id" not in prior_stmt
     fake_session.commit.assert_not_called()
 
 

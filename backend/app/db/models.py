@@ -16,6 +16,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -228,6 +229,12 @@ class ExpeditionProgress(TimestampMixin, Base):
     __tablename__ = "expedition_progress"
     __table_args__ = (
         UniqueConstraint("user_id", "expedition_id", name="uq_expedition_progress_user_exp"),
+        Index(
+            "uq_expedition_progress_user_focus",
+            "user_id",
+            unique=True,
+            postgresql_where=text("focused_at IS NOT NULL"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(26), primary_key=True)
@@ -236,6 +243,7 @@ class ExpeditionProgress(TimestampMixin, Base):
     expedition_id: Mapped[str] = mapped_column(ForeignKey("expedition_content.id"), nullable=False)
     completed_steps: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    focused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ReviewQueueItem(TimestampMixin, Base):

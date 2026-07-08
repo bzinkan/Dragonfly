@@ -79,20 +79,41 @@ jobs:
         # sync the previous image's content. (Use `job update`, not a
         # start-time --image override: start-time container overrides
         # replace the whole template, dropping env vars and command.)
-        # Tolerant of the job not existing yet (provisioned by
-        # infra-azure/phase-9-async-pipeline.sh).
         run: |
           set -euo pipefail
-          if az containerapp job update \
+          az containerapp job update \
             --name "${EXPEDITION_SYNC_JOB}" \
             --resource-group "${AZURE_RESOURCE_GROUP}" \
-            --image "${IMAGE}"; then
-            az containerapp job start \
+            --image "${IMAGE}"
+          EXECUTION_NAME="$(az containerapp job start \
+            --name "${EXPEDITION_SYNC_JOB}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query name \
+            --output tsv)"
+
+          for attempt in {1..60}; do
+            STATUS="$(az containerapp job execution show \
               --name "${EXPEDITION_SYNC_JOB}" \
-              --resource-group "${AZURE_RESOURCE_GROUP}"
-          else
-            echo "::warning::${EXPEDITION_SYNC_JOB} image update failed (not provisioned yet?). Provision the content sync job, then re-run this deploy to sync expedition content."
-          fi
+              --job-execution-name "${EXECUTION_NAME}" \
+              --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --query properties.status \
+              --output tsv)"
+            case "${STATUS}" in
+              Succeeded)
+                echo "Expedition content sync succeeded."
+                exit 0
+                ;;
+              Failed|Canceled)
+                echo "Expedition content sync ended with status ${STATUS}."
+                exit 1
+                ;;
+            esac
+            echo "Expedition content sync status: ${STATUS:-unknown}; waiting..."
+            sleep 10
+          done
+
+          echo "Expedition content sync did not finish in time."
+          exit 1
 
       - name: Smoke probes
         run: |

@@ -72,6 +72,11 @@ One JSON file per expedition, living in `content/expeditions/<tier>/<id>.json`. 
 
 Every step has a `match` block with a `kind` and kind-specific fields. When an observation comes in, `ExpeditionHandler` walks each of the user's active expeditions, finds the first incomplete step, and checks whether the observation satisfies that step's match. If it does, the step is marked complete. A single observation can complete at most one step per expedition but can progress multiple expeditions simultaneously.
 
+The phone highlights one focused incomplete expedition as the active quest, but
+that is a kid-facing game-flow choice rather than a dispatcher limit. Content
+authors should still assume an observation may quietly advance other started
+expeditions when their next steps also match.
+
 **Matching is deliberately simple.** The match language is a small declarative vocabulary interpreted by the matcher registry in `app/matchers/`, not a full expression engine. If a match you want to express can't be written with one of the kinds below, the answer is usually "add a new kind" (small, tested, reviewable) not "invent a DSL."
 
 ### Phase 1 match kinds

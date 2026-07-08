@@ -51,6 +51,17 @@ export function restartExpedition(
   });
 }
 
+export type FocusResponse = {
+  expedition_id: string;
+  focused_at: string;
+};
+
+export function focusExpedition(expeditionId: string): Promise<FocusResponse> {
+  return apiRequest<FocusResponse>(`/v1/expeditions/${expeditionId}/focus`, {
+    method: "POST",
+  });
+}
+
 export type StepProgress = {
   id: string;
   description: string;
@@ -66,6 +77,7 @@ export type ProgressItem = {
   outro: string;
   started_at: string;
   completed_at: string | null;
+  focused_at: string | null;
   completed_step_count: number;
   total_step_count: number;
   // Steps in content order (server sorts; the client never reorders).
@@ -73,6 +85,7 @@ export type ProgressItem = {
 };
 
 export type MyProgressResponse = {
+  active_expedition_id: string | null;
   items: ProgressItem[];
 };
 

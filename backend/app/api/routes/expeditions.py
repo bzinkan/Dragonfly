@@ -30,7 +30,7 @@ from typing import Annotated, Literal
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import desc, select
+from sqlalchemy import desc, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
@@ -104,18 +104,25 @@ class ProgressItem(BaseModel):
     outro: str
     started_at: datetime
     completed_at: datetime | None
+    focused_at: datetime | None
     completed_step_count: int
     total_step_count: int
     steps: list[StepProgress]
 
 
 class MyProgressResponse(BaseModel):
+    active_expedition_id: str | None
     items: list[ProgressItem]
 
 
 class StartResponse(BaseModel):
     expedition_id: str
     started_at: datetime
+
+
+class FocusResponse(BaseModel):
+    expedition_id: str
+    focused_at: datetime
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +196,51 @@ def _step_progress(step: Step, completed_value: object) -> StepProgress:
             hint=step.hint,
             completed_at=None,
         )
+
+
+def _completed_step_count(exp: Expedition, completed: dict[str, object]) -> int:
+    """Count completed keys that still exist in the current content body."""
+    return sum(1 for step in exp.steps if step.id in completed)
+
+
+async def _focus_progress(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    progress: models.ExpeditionProgress,
+    focused_at: datetime | None = None,
+) -> datetime:
+    """Set this progress row as the user's only focused expedition."""
+    focused_at = focused_at or datetime.now(UTC)
+    await session.execute(
+        update(models.ExpeditionProgress)
+        .where(
+            models.ExpeditionProgress.user_id == user_id,
+            models.ExpeditionProgress.id != progress.id,
+            models.ExpeditionProgress.focused_at.is_not(None),
+        )
+        .values(focused_at=None)
+    )
+    progress.focused_at = focused_at
+    return focused_at
+
+
+def _active_expedition_id(items: list[ProgressItem]) -> str | None:
+    focused = [
+        item
+        for item in items
+        if item.completed_at is None and item.focused_at is not None
+    ]
+    if focused:
+        focused.sort(
+            key=lambda item: item.focused_at or datetime.min.replace(tzinfo=UTC),
+            reverse=True,
+        )
+        return focused[0].expedition_id
+    for item in items:
+        if item.completed_at is None:
+            return item.expedition_id
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +367,7 @@ async def list_my_progress(
             intro = exp.intro
             outro = exp.outro
             steps = [_step_progress(step, completed.get(step.id)) for step in exp.steps]
+            completed_step_count = _completed_step_count(exp, completed)
         except Exception:
             log.warning("expeditions.me.bad_content", id=content.id)
             total_steps = 0
@@ -323,6 +376,7 @@ async def list_my_progress(
             intro = ""
             outro = ""
             steps = []
+            completed_step_count = 0
         items.append(
             ProgressItem(
                 expedition_id=progress.expedition_id,
@@ -332,13 +386,14 @@ async def list_my_progress(
                 outro=outro,
                 started_at=progress.created_at,
                 completed_at=progress.completed_at,
-                completed_step_count=len(completed),
+                focused_at=progress.focused_at,
+                completed_step_count=completed_step_count,
                 total_step_count=total_steps,
                 steps=steps,
             )
         )
 
-    return MyProgressResponse(items=items)
+    return MyProgressResponse(active_expedition_id=_active_expedition_id(items), items=items)
 
 
 # ---------------------------------------------------------------------------
@@ -417,6 +472,7 @@ async def start_expedition(
         completed_steps={},
     )
     session.add(progress)
+    await _focus_progress(session, user_id=user.id, progress=progress)
     try:
         await session.commit()
     except IntegrityError as exc:
@@ -509,6 +565,12 @@ async def restart_expedition(
     # started_at, list ordering, and funnel time-to-complete should all
     # measure the fresh attempt, not the abandoned one.
     progress.created_at = datetime.now(UTC)
+    await _focus_progress(
+        session,
+        user_id=user.id,
+        progress=progress,
+        focused_at=progress.created_at,
+    )
     await session.commit()
     await session.refresh(progress)
 
@@ -518,3 +580,46 @@ async def restart_expedition(
         user_id=user.id,
     )
     return StartResponse(expedition_id=expedition_id, started_at=progress.created_at)
+
+
+@router.post(
+    "/{expedition_id}/focus",
+    response_model=FocusResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def focus_expedition(
+    expedition_id: str,
+    current_user: CurrentUserDep,
+    session: DbSessionDep,
+    settings: Annotated[Settings, Depends(get_request_settings)],
+) -> FocusResponse:
+    """Make an already-started incomplete expedition the kid's active quest."""
+    user = await resolve_current_user_row(session, current_user)
+
+    progress = (
+        await session.execute(
+            select(models.ExpeditionProgress)
+            .where(
+                models.ExpeditionProgress.user_id == user.id,
+                models.ExpeditionProgress.expedition_id == expedition_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if progress is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expedition not started")
+    if progress.completed_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Completed expeditions cannot be focused",
+        )
+
+    focused_at = await _focus_progress(session, user_id=user.id, progress=progress)
+    await session.commit()
+
+    log.info(
+        "expeditions.focused",
+        expedition_id=expedition_id,
+        user_id=user.id,
+    )
+    return FocusResponse(expedition_id=expedition_id, focused_at=focused_at)

@@ -1,6 +1,8 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
+import FontAwesome from "@expo/vector-icons/FontAwesome";
 import * as ImageManipulator from "expo-image-manipulator";
 import { useFocusEffect, useIsFocused } from "@react-navigation/native";
+import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import {
@@ -13,6 +15,12 @@ import {
 } from "react-native";
 
 import { Text, View } from "@/components/Themed";
+import { listMyExpeditions, type ProgressItem } from "@/src/api/expeditions";
+import {
+  activeProgress,
+  nextObjective,
+  progressLabel,
+} from "@/src/expeditions/logic";
 import { useDraftStore } from "@/src/observation/draftStore";
 
 const MAX_EDGE_PX = 1600;
@@ -57,6 +65,11 @@ export default function ObserveScreen() {
   const [cameraSession, setCameraSession] = useState(0);
   const [zoom, setZoom] = useState(0);
   const setDraftPhoto = useDraftStore((s) => s.setPhoto);
+  const mission = useQuery({
+    queryKey: ["expeditions", "me"],
+    queryFn: listMyExpeditions,
+    retry: false,
+  });
 
   const setCameraZoom = useCallback((value: number) => {
     const next = clampZoom(value);
@@ -187,6 +200,11 @@ export default function ObserveScreen() {
   }
 
   const cameraActive = isFocused && cameraMounted;
+  const activeMission = activeProgress(
+    mission.data?.items ?? [],
+    mission.data?.active_expedition_id,
+  );
+  const objective = nextObjective(activeMission);
 
   return (
     <View style={styles.container}>
@@ -226,6 +244,9 @@ export default function ObserveScreen() {
         >
           <Text style={styles.zoomBadgeText}>{formatZoom(zoom)}</Text>
         </Pressable>
+      ) : null}
+      {cameraActive && activeMission && objective ? (
+        <MissionBanner mission={activeMission} objective={objective.description} />
       ) : null}
       <Pressable
         style={[styles.shutter, (busy || !cameraActive) && styles.shutterBusy]}
@@ -269,6 +290,33 @@ export default function ObserveScreen() {
         )}
       </Pressable>
     </View>
+  );
+}
+
+function MissionBanner({
+  mission,
+  objective,
+}: {
+  mission: ProgressItem;
+  objective: string;
+}) {
+  return (
+    <Pressable
+      style={styles.missionBanner}
+      onPress={() => router.push(`/expedition/${mission.expedition_id}`)}
+    >
+      <View style={styles.missionIcon}>
+        <FontAwesome name="flag" size={14} color="#0f172a" />
+      </View>
+      <View style={styles.missionBody}>
+        <Text style={styles.missionKicker}>{mission.title}</Text>
+        <Text style={styles.missionObjective} numberOfLines={2}>
+          {objective}
+        </Text>
+        <Text style={styles.missionProgress}>{progressLabel(mission)}</Text>
+      </View>
+      <FontAwesome name="chevron-right" size={13} color="#dbeafe" />
+    </Pressable>
   );
 }
 
@@ -335,6 +383,51 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 13,
     fontWeight: "700",
+  },
+  missionBanner: {
+    position: "absolute",
+    top: 18,
+    left: 14,
+    right: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: "rgba(15, 23, 42, 0.88)",
+    borderColor: "rgba(139, 220, 182, 0.55)",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  missionIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "#8bdcb6",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  missionBody: {
+    flex: 1,
+    backgroundColor: "transparent",
+  },
+  missionKicker: {
+    color: "#8bdcb6",
+    fontSize: 11,
+    fontWeight: "800",
+    textTransform: "uppercase",
+  },
+  missionObjective: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "700",
+    lineHeight: 18,
+    marginTop: 1,
+  },
+  missionProgress: {
+    color: "#cbd5e1",
+    fontSize: 11,
+    marginTop: 1,
   },
   shutterInner: {
     width: 56,

@@ -1,5 +1,6 @@
-import { router, Stack, useLocalSearchParams } from "expo-router";
+import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { router, Stack, useLocalSearchParams } from "expo-router";
 import {
   ActivityIndicator,
   Alert,
@@ -13,20 +14,31 @@ import { Text, View } from "@/components/Themed";
 import { ApiError } from "@/src/api/client";
 import {
   type StepProgress,
+  focusExpedition,
   listMyExpeditions,
   restartExpedition,
 } from "@/src/api/expeditions";
-import { nextIncompleteStep } from "@/src/expeditions/logic";
+import { nextObjective, progressLabel } from "@/src/expeditions/logic";
 
 export default function ExpeditionDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const queryClient = useQueryClient();
 
-  // Same query key as the Expeditions tab, so navigating here from the
-  // tab is a cache hit -- no second fetch for data we just rendered.
   const mine = useQuery({
     queryKey: ["expeditions", "me"],
     queryFn: listMyExpeditions,
+  });
+
+  const focus = useMutation({
+    mutationFn: focusExpedition,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["expeditions"] });
+    },
+    onError: (err) => {
+      const message =
+        err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
+      Alert.alert("Couldn't focus quest", message);
+    },
   });
 
   const restart = useMutation({
@@ -56,13 +68,16 @@ export default function ExpeditionDetailScreen() {
     return (
       <View style={styles.center}>
         <Stack.Screen options={{ title: "Expedition" }} />
+        <FontAwesome name="map-signs" size={28} color="#5fbf8f" />
         <Text style={styles.heading}>
-          {isUnauthed ? "Not signed in" : "Couldn't load expedition"}
+          {isUnauthed ? "Quest unavailable" : "Couldn't load expedition"}
         </Text>
         <Text style={styles.body}>
           {isUnauthed
-            ? "Open Settings and sign in, then come back."
-            : err.message}
+            ? "This dev build needs a session before the mission briefing can load."
+            : err instanceof Error
+              ? err.message
+              : String(err)}
         </Text>
         <Pressable
           style={[styles.button, styles.buttonGhost]}
@@ -82,7 +97,7 @@ export default function ExpeditionDetailScreen() {
         <Stack.Screen options={{ title: "Expedition" }} />
         <Text style={styles.heading}>Expedition not found</Text>
         <Text style={styles.body}>
-          We couldn't find that expedition. Head back and pick another one.
+          Head back to the quest board and pick another mission.
         </Text>
         <Pressable
           style={[styles.button, styles.buttonGhost]}
@@ -95,12 +110,21 @@ export default function ExpeditionDetailScreen() {
   }
 
   const isComplete = item.completed_at != null;
-  // Guard against a backend that predates the step-detail field --
-  // an older /me payload simply renders the header without steps.
+  const isActive = mine.data?.active_expedition_id === item.expedition_id;
+  const upNext = nextObjective(item);
   const steps = item.steps ?? [];
-  // No "Up next" highlight once the expedition is complete -- the banner
-  // + outro take over that slot.
-  const upNext = isComplete ? null : nextIncompleteStep(steps);
+
+  async function openCamera() {
+    if (!item || isComplete) return;
+    if (!isActive) {
+      try {
+        await focus.mutateAsync(item.expedition_id);
+      } catch {
+        return;
+      }
+    }
+    router.push("/observe");
+  }
 
   return (
     <ScrollView
@@ -113,37 +137,68 @@ export default function ExpeditionDetailScreen() {
       }
     >
       <Stack.Screen options={{ title: "Expedition" }} />
-      <Text style={styles.title}>{item.title}</Text>
-      {item.subtitle && <Text style={styles.subtitle}>{item.subtitle}</Text>}
-      <Text style={styles.intro}>{item.intro}</Text>
+      <View style={styles.hero}>
+        <View style={styles.heroTop}>
+          <FontAwesome
+            name={isComplete ? "trophy" : isActive ? "flag" : "map-signs"}
+            size={18}
+            color={isComplete ? "#f6c453" : "#8bdcb6"}
+          />
+          <Text style={styles.heroKicker}>
+            {isComplete ? "Trophy" : isActive ? "Active quest" : "Mission briefing"}
+          </Text>
+        </View>
+        <Text style={styles.title}>{item.title}</Text>
+        {item.subtitle && <Text style={styles.subtitle}>{item.subtitle}</Text>}
+        <Text style={styles.intro}>{item.intro}</Text>
+      </View>
 
-      {isComplete && (
-        <View style={styles.completeBanner}>
-          <Text style={styles.completeTitle}>Expedition complete!</Text>
+      {isComplete ? (
+        <View style={styles.completePanel}>
+          <Text style={styles.completeTitle}>Expedition complete</Text>
           <Text style={styles.completeOutro}>{item.outro}</Text>
+        </View>
+      ) : (
+        <View style={styles.objectivePanel}>
+          <Text style={styles.objectiveKicker}>Current objective</Text>
+          <Text style={styles.objectiveText}>
+            {upNext?.description ?? "All steps complete"}
+          </Text>
+          {upNext?.hint ? <Text style={styles.hint}>{upNext.hint}</Text> : null}
+          <Pressable
+            style={[
+              styles.button,
+              styles.buttonPrimary,
+              focus.isPending && styles.buttonDisabled,
+            ]}
+            disabled={focus.isPending}
+            onPress={() => void openCamera()}
+          >
+            <Text style={styles.buttonText}>
+              {focus.isPending ? "Focusing..." : "Open camera"}
+            </Text>
+          </Pressable>
         </View>
       )}
 
-      <Text style={styles.progressLine}>
-        {item.completed_step_count} / {item.total_step_count} steps
-      </Text>
+      <Text style={styles.progressLine}>{progressLabel(item)}</Text>
+      <View style={styles.path}>
+        {steps.map((step, index) => (
+          <StepNode
+            key={step.id}
+            number={index + 1}
+            step={step}
+            state={
+              step.completed_at != null
+                ? "done"
+                : step.id === upNext?.id
+                  ? "next"
+                  : "later"
+            }
+          />
+        ))}
+      </View>
 
-      {steps.map((step) => (
-        <StepRow
-          key={step.id}
-          step={step}
-          state={
-            step.completed_at != null
-              ? "done"
-              : step.id === upNext?.id
-                ? "next"
-                : "later"
-          }
-        />
-      ))}
-
-      {/* Restart only makes sense mid-expedition -- a completed one keeps
-          its trophy, so no reset offered there. */}
       {!isComplete && (
         <Pressable
           style={[
@@ -169,7 +224,7 @@ export default function ExpeditionDetailScreen() {
           }
         >
           <Text style={styles.buttonText}>
-            {restart.isPending ? "Starting over…" : "Start over"}
+            {restart.isPending ? "Starting over..." : "Start over"}
           </Text>
         </Pressable>
       )}
@@ -177,31 +232,34 @@ export default function ExpeditionDetailScreen() {
   );
 }
 
-function StepRow({
+function StepNode({
   step,
+  number,
   state,
 }: {
   step: StepProgress;
+  number: number;
   state: "done" | "next" | "later";
 }) {
   return (
     <View style={[styles.stepRow, state === "next" && styles.stepRowNext]}>
-      <Text
+      <View
         style={[
           styles.stepMark,
-          state === "done" ? styles.stepMarkDone : styles.stepMarkOpen,
+          state === "done"
+            ? styles.stepMarkDone
+            : state === "next"
+              ? styles.stepMarkNext
+              : styles.stepMarkLater,
         ]}
       >
-        {state === "done" ? "✓" : "○"}
-      </Text>
+        <Text style={styles.stepMarkText}>{state === "done" ? "✓" : number}</Text>
+      </View>
       <View style={styles.stepBody}>
         {state === "next" && <Text style={styles.upNextLabel}>Up next</Text>}
-        <Text
-          style={[styles.stepText, state === "done" && styles.stepTextDone]}
-        >
+        <Text style={[styles.stepText, state === "done" && styles.stepTextDone]}>
           {step.description}
         </Text>
-        {/* Hint only on the active step -- later steps stay unspoiled. */}
         {state === "next" && step.hint ? (
           <Text style={styles.stepHint}>{step.hint}</Text>
         ) : null}
@@ -211,73 +269,117 @@ function StepRow({
 }
 
 const styles = StyleSheet.create({
-  content: { padding: 16 },
+  content: { padding: 16, paddingBottom: 28 },
   center: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
   },
-  heading: { fontSize: 18, fontWeight: "600", marginBottom: 8 },
-  body: { fontSize: 14, opacity: 0.7, textAlign: "center", marginBottom: 16 },
-  title: { fontSize: 20, fontWeight: "600" },
-  subtitle: { fontSize: 14, opacity: 0.8, marginTop: 2 },
-  intro: { fontSize: 14, lineHeight: 20, marginTop: 12 },
-  completeBanner: {
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    marginTop: 16,
-    borderRadius: 6,
-    backgroundColor: "#1a1a1a",
-    borderColor: "#2f6feb",
-    borderWidth: 1,
+  heading: { fontSize: 18, fontWeight: "800", marginTop: 8, marginBottom: 8 },
+  body: { fontSize: 14, opacity: 0.75, textAlign: "center", marginBottom: 16 },
+  hero: {
+    backgroundColor: "#161a22",
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 12,
   },
-  completeTitle: { fontSize: 16, fontWeight: "600", color: "#2f6feb" },
-  completeOutro: { fontSize: 14, lineHeight: 20, marginTop: 6 },
-  progressLine: {
-    fontSize: 13,
-    fontWeight: "600",
-    opacity: 0.7,
-    marginTop: 16,
+  heroTop: {
+    backgroundColor: "transparent",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
     marginBottom: 8,
   },
+  heroKicker: {
+    color: "#8bdcb6",
+    fontSize: 12,
+    fontWeight: "800",
+    textTransform: "uppercase",
+  },
+  title: { color: "#fff", fontSize: 24, fontWeight: "800" },
+  subtitle: { color: "#dbeafe", fontSize: 14, marginTop: 2 },
+  intro: { color: "#e5e7eb", fontSize: 14, lineHeight: 20, marginTop: 12 },
+  objectivePanel: {
+    padding: 16,
+    borderRadius: 8,
+    backgroundColor: "#8bdcb6",
+    marginBottom: 14,
+  },
+  objectiveKicker: {
+    color: "#0f172a",
+    fontSize: 12,
+    fontWeight: "800",
+    textTransform: "uppercase",
+  },
+  objectiveText: {
+    color: "#0f172a",
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: "800",
+    marginTop: 6,
+  },
+  hint: { color: "#0f172a", fontSize: 13, lineHeight: 18, marginTop: 6 },
+  completePanel: {
+    padding: 16,
+    borderRadius: 8,
+    backgroundColor: "#f6c453",
+    marginBottom: 14,
+  },
+  completeTitle: { color: "#241a05", fontSize: 18, fontWeight: "800" },
+  completeOutro: { color: "#241a05", fontSize: 14, lineHeight: 20, marginTop: 6 },
+  progressLine: {
+    fontSize: 13,
+    fontWeight: "800",
+    opacity: 0.75,
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  path: { gap: 8 },
   stepRow: {
     flexDirection: "row",
     alignItems: "flex-start",
     paddingVertical: 12,
     paddingHorizontal: 14,
-    marginBottom: 8,
-    borderRadius: 6,
-    backgroundColor: "#1a1a1a",
+    borderRadius: 8,
+    backgroundColor: "#1a1f2b",
   },
   stepRowNext: {
-    borderColor: "#2f6feb",
+    borderColor: "#8bdcb6",
     borderWidth: 1,
   },
-  stepMark: { fontSize: 16, width: 24 },
-  stepMarkDone: { color: "#22c55e" },
-  stepMarkOpen: { opacity: 0.5 },
-  // Transparent so the themed View doesn't paint over the row card.
+  stepMark: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+  },
+  stepMarkDone: { backgroundColor: "#22c55e" },
+  stepMarkNext: { backgroundColor: "#2f6feb" },
+  stepMarkLater: { backgroundColor: "#334155" },
+  stepMarkText: { color: "#fff", fontSize: 13, fontWeight: "800" },
   stepBody: { flex: 1, backgroundColor: "transparent" },
   upNextLabel: {
+    color: "#8bdcb6",
     fontSize: 11,
-    fontWeight: "600",
-    color: "#2f6feb",
+    fontWeight: "800",
     textTransform: "uppercase",
-    letterSpacing: 1,
-    marginBottom: 2,
+    marginBottom: 3,
   },
-  stepText: { fontSize: 15 },
-  stepTextDone: { opacity: 0.5 },
-  stepHint: { fontSize: 13, opacity: 0.7, marginTop: 4 },
+  stepText: { color: "#fff", fontSize: 15, lineHeight: 20 },
+  stepTextDone: { opacity: 0.58 },
+  stepHint: { color: "#cbd5e1", fontSize: 13, lineHeight: 18, marginTop: 4 },
   button: {
     paddingHorizontal: 16,
     paddingVertical: 10,
-    borderRadius: 6,
+    borderRadius: 7,
     alignItems: "center",
   },
+  buttonPrimary: { backgroundColor: "#0f172a", marginTop: 14 },
   buttonGhost: { borderColor: "#888", borderWidth: StyleSheet.hairlineWidth },
-  buttonDisabled: { opacity: 0.4 },
-  buttonText: { fontSize: 14, color: "#fff" },
-  restartButton: { marginTop: 8 },
+  buttonDisabled: { opacity: 0.45 },
+  buttonText: { fontSize: 14, color: "#fff", fontWeight: "700" },
+  restartButton: { marginTop: 12 },
 });
