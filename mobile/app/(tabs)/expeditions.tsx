@@ -1,5 +1,7 @@
+import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
+import type { ComponentProps } from "react";
 import { useState } from "react";
 import {
   ActivityIndicator,
@@ -16,15 +18,22 @@ import {
   type ExpeditionRelevance,
   type ExpeditionSummary,
   type ProgressItem,
+  focusExpedition,
   listAvailableExpeditions,
   listMyExpeditions,
   startExpedition,
 } from "@/src/api/expeditions";
-import { filterByEnvironment, splitProgress } from "@/src/expeditions/logic";
+import {
+  activeProgress,
+  filterByEnvironment,
+  nextObjective,
+  progressLabel,
+  splitProgress,
+} from "@/src/expeditions/logic";
 import { useCoarseGeohash } from "@/src/expeditions/useCoarseGeohash";
 
-// "other" has no chip on purpose -- filterByEnvironment treats it as
-// matching every environment, so those expeditions show under any chip.
+const STARTER_ID = "backyard_starter";
+
 const ENVIRONMENT_CHIPS: { label: string; value: string | null }[] = [
   { label: "All", value: null },
   { label: "Yard", value: "yard" },
@@ -36,19 +45,11 @@ const ENVIRONMENT_CHIPS: { label: string; value: string | null }[] = [
 export default function ExpeditionsScreen() {
   const queryClient = useQueryClient();
   const [env, setEnv] = useState<string | null>(null);
-  // Passive coarse cell (never prompts); null until/unless the kid has
-  // already granted location on observe-submit.
   const geohash = useCoarseGeohash();
 
   const available = useQuery({
-    // The key includes the cell (and the hook re-checks on focus) so a
-    // grant-state change refetches with relevance; the ["expeditions"]
-    // prefix invalidations elsewhere still match this longer key.
     queryKey: ["expeditions", "available", geohash ?? "none"],
     queryFn: () => listAvailableExpeditions(geohash),
-    // When the cell resolves after mount the key swaps; keep showing
-    // the already-rendered list instead of flashing the full-screen
-    // spinner while the ranked response loads in.
     placeholderData: (prev) => prev,
   });
   const mine = useQuery({
@@ -58,13 +59,26 @@ export default function ExpeditionsScreen() {
 
   const start = useMutation({
     mutationFn: startExpedition,
+    onSuccess: (data) => {
+      void queryClient.invalidateQueries({ queryKey: ["expeditions"] });
+      router.push(`/expedition/${data.expedition_id}`);
+    },
+    onError: (err) => {
+      const message =
+        err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
+      Alert.alert("Couldn't start", message);
+    },
+  });
+
+  const focus = useMutation({
+    mutationFn: focusExpedition,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["expeditions"] });
     },
     onError: (err) => {
       const message =
         err instanceof ApiError ? `${err.status}: ${err.message}` : String(err);
-      Alert.alert("Couldn't start", message);
+      Alert.alert("Couldn't focus", message);
     },
   });
 
@@ -76,22 +90,28 @@ export default function ExpeditionsScreen() {
     );
   }
 
-  if (available.isError) {
-    const err = available.error;
-    const isUnauthed = err instanceof ApiError && err.status === 401;
+  const loadError = available.error ?? mine.error;
+  if (loadError) {
+    const isUnauthed = loadError instanceof ApiError && loadError.status === 401;
     return (
       <View style={styles.center}>
-        <Text style={styles.heading}>
-          {isUnauthed ? "Not signed in" : "Couldn't load expeditions"}
+        <FontAwesome name="map-signs" size={28} color="#5fbf8f" />
+        <Text style={styles.emptyTitle}>
+          {isUnauthed ? "Quest board is waiting" : "Couldn't load quests"}
         </Text>
-        <Text style={styles.body}>
+        <Text style={styles.emptyText}>
           {isUnauthed
-            ? "Open Settings and sign in, then come back."
-            : err.message}
+            ? "Your expeditions will appear here once this dev build has a session."
+            : loadError instanceof Error
+              ? loadError.message
+              : String(loadError)}
         </Text>
         <Pressable
           style={[styles.button, styles.buttonGhost]}
-          onPress={() => void available.refetch()}
+          onPress={() => {
+            void available.refetch();
+            void mine.refetch();
+          }}
         >
           <Text style={styles.buttonText}>Retry</Text>
         </Pressable>
@@ -99,8 +119,17 @@ export default function ExpeditionsScreen() {
     );
   }
 
-  const { inProgress, completed } = splitProgress(mine.data?.items ?? []);
-  const items = filterByEnvironment(available.data?.items ?? [], env);
+  const progressItems = mine.data?.items ?? [];
+  const { inProgress, completed } = splitProgress(progressItems);
+  const active = activeProgress(progressItems, mine.data?.active_expedition_id);
+  const allAvailable = available.data?.items ?? [];
+  const starter =
+    progressItems.length === 0
+      ? allAvailable.find((item) => item.id === STARTER_ID) ?? null
+      : null;
+  const items = filterByEnvironment(allAvailable, env).filter(
+    (item) => item.id !== starter?.id,
+  );
 
   return (
     <FlatList
@@ -109,7 +138,39 @@ export default function ExpeditionsScreen() {
       contentContainerStyle={styles.list}
       ListHeaderComponent={
         <View style={styles.section}>
-          {inProgress.length > 0 && <InProgressList items={inProgress} />}
+          <Text style={styles.kicker}>Expeditions</Text>
+          <Text style={styles.title}>Choose a field quest</Text>
+          <Text style={styles.subtitle}>
+            Every photo is a move. Match the objective, advance the quest.
+          </Text>
+
+          {active ? (
+            <ActiveMission item={active} />
+          ) : starter ? (
+            <StarterMission
+              item={starter}
+              onStart={() => start.mutate(starter.id)}
+              starting={start.isPending && start.variables === starter.id}
+            />
+          ) : (
+            <View style={styles.emptyPanel}>
+              <Text style={styles.emptyTitle}>No active quest</Text>
+              <Text style={styles.emptyText}>
+                Pick an expedition below to start a mission.
+              </Text>
+            </View>
+          )}
+
+          {inProgress.filter((item) => item.expedition_id !== active?.expedition_id).length >
+            0 && (
+            <InProgressList
+              activeId={active?.expedition_id ?? null}
+              items={inProgress}
+              onFocus={(id) => focus.mutate(id)}
+              focusing={focus.isPending ? focus.variables ?? null : null}
+            />
+          )}
+
           <Text style={styles.sectionLabel}>Where are you?</Text>
           <View style={styles.chipRow}>
             {ENVIRONMENT_CHIPS.map((chip) => (
@@ -132,30 +193,23 @@ export default function ExpeditionsScreen() {
               </Pressable>
             ))}
           </View>
-          <Text style={styles.sectionLabel}>Available</Text>
+          <Text style={styles.sectionLabel}>Available quests</Text>
         </View>
       }
       ListFooterComponent={
         completed.length === 0 ? null : <TrophyList items={completed} />
       }
       ListEmptyComponent={
-        env !== null ? (
-          <View style={styles.empty}>
-            <Text style={styles.heading}>Nothing for this spot</Text>
-            <Text style={styles.body}>
-              No expeditions match this place right now — tap All to see
-              every expedition.
-            </Text>
-          </View>
-        ) : (
-          <View style={styles.empty}>
-            <Text style={styles.heading}>No expeditions available</Text>
-            <Text style={styles.body}>
-              Either you're working on all of them already, or none have been
-              published yet.
-            </Text>
-          </View>
-        )
+        <View style={styles.emptyPanel}>
+          <Text style={styles.emptyTitle}>
+            {env ? "Nothing for this spot" : "No quests available"}
+          </Text>
+          <Text style={styles.emptyText}>
+            {env
+              ? "Tap All to see every unlocked expedition."
+              : "You may already be working through every unlocked quest."}
+          </Text>
+        </View>
       }
       refreshControl={
         <RefreshControl
@@ -167,7 +221,7 @@ export default function ExpeditionsScreen() {
         />
       }
       renderItem={({ item }) => (
-        <ExpeditionCard
+        <QuestCard
           item={item}
           onStart={() => start.mutate(item.id)}
           starting={start.isPending && start.variables === item.id}
@@ -177,66 +231,34 @@ export default function ExpeditionsScreen() {
   );
 }
 
-function InProgressList({ items }: { items: ProgressItem[] }) {
+function ActiveMission({ item }: { item: ProgressItem }) {
+  const objective = nextObjective(item);
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionLabel}>In progress</Text>
-      {items.map((p) => (
+    <View style={styles.activePanel}>
+      <Pressable onPress={() => router.push(`/expedition/${item.expedition_id}`)}>
+        <View style={styles.rowTransparent}>
+          <FontAwesome name="flag" size={18} color="#0f172a" />
+          <Text style={styles.activeKicker}>Active quest</Text>
+        </View>
+        <Text style={styles.activeTitle}>{item.title}</Text>
+        <Text style={styles.activeObjective}>
+          {objective?.description ?? "All steps complete"}
+        </Text>
+      </Pressable>
+      <View style={styles.activeActions}>
+        <Text style={styles.activeProgress}>{progressLabel(item)}</Text>
         <Pressable
-          key={p.expedition_id}
-          style={styles.progressRow}
-          onPress={() => router.push(`/expedition/${p.expedition_id}`)}
+          style={[styles.button, styles.buttonDark]}
+          onPress={() => router.push("/observe")}
         >
-          <View style={styles.progressBody}>
-            <Text style={styles.progressTitle}>{p.title}</Text>
-            <Text style={styles.progressMeta}>
-              {p.completed_step_count} / {p.total_step_count} steps
-            </Text>
-          </View>
-          <Text style={styles.progressChevron}>›</Text>
+          <Text style={styles.buttonText}>Open camera</Text>
         </Pressable>
-      ))}
-      <View
-        style={styles.divider}
-        lightColor="#eee"
-        darkColor="rgba(255,255,255,0.1)"
-      />
+      </View>
     </View>
   );
 }
 
-function TrophyList({ items }: { items: ProgressItem[] }) {
-  return (
-    <View style={styles.section}>
-      <View
-        style={styles.divider}
-        lightColor="#eee"
-        darkColor="rgba(255,255,255,0.1)"
-      />
-      <Text style={styles.sectionLabel}>Trophies</Text>
-      {items.map((p) => (
-        <Pressable
-          key={p.expedition_id}
-          style={styles.progressRow}
-          onPress={() => router.push(`/expedition/${p.expedition_id}`)}
-        >
-          <Text style={styles.trophyGlyph}>🏆</Text>
-          <View style={styles.progressBody}>
-            <Text style={styles.progressTitle}>{p.title}</Text>
-            <Text style={styles.progressMeta}>
-              {p.completed_at
-                ? `Completed ${new Date(p.completed_at).toLocaleDateString()}`
-                : "Completed"}
-            </Text>
-          </View>
-          <Text style={styles.progressChevron}>›</Text>
-        </Pressable>
-      ))}
-    </View>
-  );
-}
-
-function ExpeditionCard({
+function StarterMission({
   item,
   onStart,
   starting,
@@ -245,30 +267,125 @@ function ExpeditionCard({
   onStart: () => void;
   starting: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
   return (
-    <Pressable style={styles.card} onPress={() => setExpanded((x) => !x)}>
-      <Text style={styles.cardTitle}>{item.title}</Text>
-      {item.subtitle && <Text style={styles.cardSubtitle}>{item.subtitle}</Text>}
-      <Text style={styles.cardMeta}>
-        {item.duration_minutes} min · {item.environments.join(", ")}
-      </Text>
-      <RelevanceBadge relevance={item.relevance} />
-      {expanded && <Text style={styles.cardIntro}>{item.intro}</Text>}
+    <View style={styles.starterPanel}>
+      <Text style={styles.starterKicker}>First mission</Text>
+      <Text style={styles.starterTitle}>{item.title}</Text>
+      <Text style={styles.starterText}>{item.intro}</Text>
       <Pressable
-        style={[styles.button, styles.buttonPrimary, starting && styles.buttonDisabled]}
+        style={[styles.button, styles.buttonDark, starting && styles.buttonDisabled]}
         disabled={starting}
         onPress={onStart}
       >
-        <Text style={styles.buttonText}>{starting ? "Starting…" : "Start expedition"}</Text>
+        <Text style={styles.buttonText}>
+          {starting ? "Starting..." : "Start quest"}
+        </Text>
       </Pressable>
-    </Pressable>
+    </View>
   );
 }
 
-// Text-only relevance hint from the backend's geohash4 ranking. Absent
-// (older backend), "unknown", or any level this client doesn't know yet
-// renders nothing at all -- never mislabel a future level.
+function InProgressList({
+  items,
+  activeId,
+  onFocus,
+  focusing,
+}: {
+  items: ProgressItem[];
+  activeId: string | null;
+  onFocus: (id: string) => void;
+  focusing: string | null;
+}) {
+  const otherItems = items.filter((item) => item.expedition_id !== activeId);
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionLabel}>Other quests in progress</Text>
+      {otherItems.map((p) => (
+        <View key={p.expedition_id} style={styles.progressRow}>
+          <Pressable
+            style={styles.progressBody}
+            onPress={() => router.push(`/expedition/${p.expedition_id}`)}
+          >
+            <Text style={styles.progressTitle}>{p.title}</Text>
+            <Text style={styles.progressMeta}>{progressLabel(p)}</Text>
+          </Pressable>
+          <Pressable
+            style={styles.focusButton}
+            disabled={focusing === p.expedition_id}
+            onPress={() => onFocus(p.expedition_id)}
+          >
+            <Text style={styles.focusText}>
+              {focusing === p.expedition_id ? "..." : "Focus"}
+            </Text>
+          </Pressable>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function TrophyList({ items }: { items: ProgressItem[] }) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionLabel}>Trophy shelf</Text>
+      {items.map((p) => (
+        <Pressable
+          key={p.expedition_id}
+          style={styles.trophyRow}
+          onPress={() => router.push(`/expedition/${p.expedition_id}`)}
+        >
+          <FontAwesome name="trophy" size={15} color="#f6c453" />
+          <View style={styles.progressBody}>
+            <Text style={styles.progressTitle}>{p.title}</Text>
+            <Text style={styles.progressMeta}>
+              {p.completed_at
+                ? `Completed ${new Date(p.completed_at).toLocaleDateString()}`
+                : "Completed"}
+            </Text>
+          </View>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+function QuestCard({
+  item,
+  onStart,
+  starting,
+}: {
+  item: ExpeditionSummary;
+  onStart: () => void;
+  starting: boolean;
+}) {
+  const icon = iconForEnvironment(item.environments[0]);
+  return (
+    <View style={styles.questCard}>
+      <View style={styles.questIcon}>
+        <FontAwesome name={icon} size={18} color="#fff" />
+      </View>
+      <View style={styles.questBody}>
+        <Text style={styles.cardTitle}>{item.title}</Text>
+        {item.subtitle && <Text style={styles.cardSubtitle}>{item.subtitle}</Text>}
+        <Text style={styles.cardMeta}>
+          {item.duration_minutes} min - {item.environments.join(", ")}
+        </Text>
+        <RelevanceBadge relevance={item.relevance} />
+        <Text style={styles.cardIntro}>{item.intro}</Text>
+        <Pressable
+          style={[styles.button, styles.buttonPrimary, starting && styles.buttonDisabled]}
+          disabled={starting}
+          onPress={onStart}
+        >
+          <Text style={styles.buttonText}>
+            {starting ? "Starting..." : "Start quest"}
+          </Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 function RelevanceBadge({ relevance }: { relevance?: ExpeditionRelevance }) {
   if (
     !relevance ||
@@ -294,22 +411,88 @@ function RelevanceBadge({ relevance }: { relevance?: ExpeditionRelevance }) {
   );
 }
 
+function iconForEnvironment(
+  env: string | undefined,
+): ComponentProps<typeof FontAwesome>["name"] {
+  switch (env) {
+    case "yard":
+      return "home";
+    case "park":
+      return "leaf";
+    case "street":
+      return "road";
+    case "school":
+      return "graduation-cap";
+    default:
+      return "compass";
+  }
+}
+
 const styles = StyleSheet.create({
-  list: { padding: 16 },
+  list: { padding: 16, paddingBottom: 28 },
   center: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
   },
-  empty: { alignItems: "center", padding: 24 },
-  heading: { fontSize: 18, fontWeight: "600", marginBottom: 8 },
-  body: { fontSize: 14, opacity: 0.7, textAlign: "center", marginBottom: 16 },
-  section: { marginBottom: 8 },
+  section: { marginBottom: 14 },
+  kicker: {
+    color: "#5fbf8f",
+    fontSize: 12,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    marginBottom: 4,
+  },
+  title: { fontSize: 25, fontWeight: "800" },
+  subtitle: { fontSize: 14, lineHeight: 20, opacity: 0.75, marginTop: 6, marginBottom: 16 },
+  activePanel: {
+    backgroundColor: "#8bdcb6",
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 16,
+  },
+  rowTransparent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "transparent",
+  },
+  activeKicker: {
+    color: "#0f172a",
+    fontSize: 12,
+    fontWeight: "800",
+    textTransform: "uppercase",
+  },
+  activeTitle: { color: "#0f172a", fontSize: 21, fontWeight: "800", marginTop: 8 },
+  activeObjective: { color: "#0f172a", fontSize: 15, lineHeight: 21, marginTop: 6 },
+  activeActions: {
+    backgroundColor: "transparent",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    marginTop: 14,
+  },
+  activeProgress: { color: "#0f172a", fontSize: 13, fontWeight: "700" },
+  starterPanel: {
+    backgroundColor: "#f6c453",
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 16,
+  },
+  starterKicker: {
+    color: "#241a05",
+    fontSize: 12,
+    fontWeight: "800",
+    textTransform: "uppercase",
+  },
+  starterTitle: { color: "#241a05", fontSize: 21, fontWeight: "800", marginTop: 6 },
+  starterText: { color: "#241a05", fontSize: 14, lineHeight: 20, marginTop: 6, marginBottom: 12 },
   sectionLabel: {
     fontSize: 13,
-    fontWeight: "600",
-    opacity: 0.7,
+    fontWeight: "700",
+    opacity: 0.75,
     marginTop: 8,
     marginBottom: 8,
   },
@@ -318,17 +501,30 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 12,
     paddingHorizontal: 14,
-    borderRadius: 6,
-    backgroundColor: "#1a1a1a",
+    borderRadius: 8,
+    backgroundColor: "#1a1f2b",
     marginBottom: 8,
   },
-  // Transparent so the themed View doesn't paint over the row card.
+  trophyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    backgroundColor: "#1a1f2b",
+    marginBottom: 8,
+  },
   progressBody: { flex: 1, backgroundColor: "transparent" },
-  progressTitle: { fontSize: 15, fontWeight: "500" },
-  progressMeta: { fontSize: 12, opacity: 0.7, marginTop: 2 },
-  progressChevron: { fontSize: 22, opacity: 0.4, marginLeft: 8 },
-  trophyGlyph: { fontSize: 14, opacity: 0.8, marginRight: 10 },
-  divider: { height: 1, marginVertical: 16 },
+  progressTitle: { color: "#fff", fontSize: 15, fontWeight: "700" },
+  progressMeta: { color: "#cbd5e1", fontSize: 12, marginTop: 2 },
+  focusButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: "#2f6feb",
+  },
+  focusText: { color: "#fff", fontSize: 12, fontWeight: "700" },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 8 },
   chip: {
     paddingHorizontal: 12,
@@ -338,36 +534,55 @@ const styles = StyleSheet.create({
   },
   chipSelected: { backgroundColor: "#2f6feb" },
   chipGhost: { borderColor: "#888", borderWidth: StyleSheet.hairlineWidth },
-  // No color on the base style -- Themed Text supplies a scheme-aware
-  // color, so unselected ghost chips stay readable in light mode. The
-  // selected chip's blue fill needs white for contrast in both schemes.
   chipText: { fontSize: 13 },
   chipTextSelected: { color: "#fff" },
-  card: {
-    paddingVertical: 12,
+  questCard: {
+    flexDirection: "row",
+    gap: 12,
+    paddingVertical: 14,
     paddingHorizontal: 14,
-    borderRadius: 6,
-    backgroundColor: "#1a1a1a",
+    borderRadius: 8,
+    backgroundColor: "#161a22",
     marginBottom: 12,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+    borderWidth: StyleSheet.hairlineWidth,
   },
-  cardTitle: { fontSize: 16, fontWeight: "600" },
-  cardSubtitle: { fontSize: 13, opacity: 0.8, marginTop: 2 },
-  cardMeta: { fontSize: 12, opacity: 0.6, marginTop: 4 },
-  // Subtle tints that read on the fixed #1a1a1a card in both schemes.
-  relevanceBadge: { fontSize: 12, fontWeight: "600", marginTop: 4 },
+  questIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: "#2f6feb",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  questBody: { flex: 1, backgroundColor: "transparent" },
+  cardTitle: { color: "#fff", fontSize: 17, fontWeight: "800" },
+  cardSubtitle: { color: "#dbeafe", fontSize: 13, marginTop: 2 },
+  cardMeta: { color: "#cbd5e1", fontSize: 12, marginTop: 4 },
+  relevanceBadge: { fontSize: 12, fontWeight: "700", marginTop: 6 },
   relevanceGreat: { color: "#4ade80" },
   relevanceTricky: { color: "#fbbf24" },
-  relevanceReason: { fontSize: 12, opacity: 0.6, marginTop: 2 },
-  cardIntro: { fontSize: 13, marginTop: 8, lineHeight: 18 },
+  relevanceReason: { color: "#cbd5e1", fontSize: 12, marginTop: 2 },
+  cardIntro: { color: "#e5e7eb", fontSize: 13, marginTop: 9, lineHeight: 18 },
+  emptyPanel: {
+    alignItems: "center",
+    padding: 18,
+    borderRadius: 8,
+    borderColor: "rgba(95, 191, 143, 0.4)",
+    borderWidth: StyleSheet.hairlineWidth,
+    marginBottom: 14,
+  },
+  emptyTitle: { fontSize: 18, fontWeight: "800", marginTop: 8, marginBottom: 6 },
+  emptyText: { fontSize: 14, opacity: 0.75, textAlign: "center", lineHeight: 20 },
   button: {
     paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 6,
+    paddingVertical: 9,
+    borderRadius: 7,
     alignItems: "center",
-    marginTop: 12,
   },
-  buttonPrimary: { backgroundColor: "#2f6feb" },
-  buttonGhost: { borderColor: "#888", borderWidth: StyleSheet.hairlineWidth },
-  buttonDisabled: { opacity: 0.4 },
-  buttonText: { fontSize: 14, color: "#fff" },
+  buttonPrimary: { backgroundColor: "#2f6feb", marginTop: 12 },
+  buttonDark: { backgroundColor: "#0f172a" },
+  buttonGhost: { borderColor: "#888", borderWidth: StyleSheet.hairlineWidth, marginTop: 12 },
+  buttonDisabled: { opacity: 0.45 },
+  buttonText: { fontSize: 14, color: "#fff", fontWeight: "700" },
 });

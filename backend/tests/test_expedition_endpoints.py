@@ -366,6 +366,7 @@ def _progress_row(
     *,
     completed_steps: dict[str, Any],
     completed_at: datetime | None = None,
+    focused_at: datetime | None = None,
 ) -> models.ExpeditionProgress:
     progress = models.ExpeditionProgress(
         id=f"prog-{exp_id}",
@@ -374,6 +375,7 @@ def _progress_row(
         expedition_id=exp_id,
         completed_steps=completed_steps,
         completed_at=completed_at,
+        focused_at=focused_at,
     )
     progress.created_at = datetime(2026, 5, 10, 12, 0, 0, tzinfo=UTC)
     return progress
@@ -415,7 +417,9 @@ def test_me_returns_step_detail_with_mixed_completion_formats(
     for client in _build_client(fake_session):
         response = client.get("/v1/expeditions/me", headers={"Authorization": "Bearer fake"})
         assert response.status_code == 200
-        items = response.json()["items"]
+        payload = response.json()
+        assert payload["active_expedition_id"] == "backyard_starter"
+        items = payload["items"]
         assert len(items) == 1
         item = items[0]
         assert item["expedition_id"] == "backyard_starter"
@@ -425,6 +429,7 @@ def test_me_returns_step_detail_with_mixed_completion_formats(
         assert item["outro"] == "Real science."
         assert item["completed_step_count"] == 2
         assert item["total_step_count"] == 3
+        assert item["focused_at"] is None
         steps = item["steps"]
         assert [s["id"] for s in steps] == ["s0", "s1", "s2"]
         assert steps[0]["description"] == "x"
@@ -446,7 +451,9 @@ def test_me_malformed_completed_at_degrades_to_null(
     for client in _build_client(fake_session):
         response = client.get("/v1/expeditions/me", headers={"Authorization": "Bearer fake"})
         assert response.status_code == 200
-        item = response.json()["items"][0]
+        payload = response.json()
+        assert payload["active_expedition_id"] == "x"
+        item = payload["items"][0]
         # The count still reflects the stored key; the step itself
         # degrades to "not completed".
         assert item["completed_step_count"] == 1
@@ -465,13 +472,65 @@ def test_me_bad_content_falls_back_to_empty_detail(
     for client in _build_client(fake_session):
         response = client.get("/v1/expeditions/me", headers={"Authorization": "Bearer fake"})
         assert response.status_code == 200
-        item = response.json()["items"][0]
+        payload = response.json()
+        assert payload["active_expedition_id"] == "x"
+        item = payload["items"][0]
         assert item["title"] == "x"
         assert item["subtitle"] is None
         assert item["intro"] == ""
         assert item["outro"] == ""
         assert item["steps"] == []
         assert item["total_step_count"] == 0
+
+
+def test_me_prefers_focused_incomplete_expedition(
+    monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    older_focus = datetime(2026, 5, 10, 12, 15, 0, tzinfo=UTC)
+    newest = _progress_row("newest", completed_steps={})
+    focused = _progress_row("focused", completed_steps={}, focused_at=older_focus)
+    newest.created_at = datetime(2026, 5, 10, 13, 0, 0, tzinfo=UTC)
+    focused.created_at = datetime(2026, 5, 10, 12, 0, 0, tzinfo=UTC)
+    _wire_me(
+        fake_session,
+        user=_user(),
+        rows=[
+            (newest, _content("newest", _exp_body(exp_id="newest"))),
+            (focused, _content("focused", _exp_body(exp_id="focused"))),
+        ],
+    )
+    for client in _build_client(fake_session):
+        response = client.get("/v1/expeditions/me", headers={"Authorization": "Bearer fake"})
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["active_expedition_id"] == "focused"
+        assert payload["items"][1]["focused_at"].startswith("2026-05-10T12:15:00")
+
+
+def test_me_ignores_completed_focus_for_active_expedition(
+    monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    completed = _progress_row(
+        "done",
+        completed_steps={"s0": "2026-05-10T13:00:00+00:00"},
+        completed_at=datetime(2026, 5, 10, 13, 0, 0, tzinfo=UTC),
+        focused_at=datetime(2026, 5, 10, 12, 15, 0, tzinfo=UTC),
+    )
+    active = _progress_row("active", completed_steps={})
+    _wire_me(
+        fake_session,
+        user=_user(),
+        rows=[
+            (completed, _content("done", _exp_body(exp_id="done"))),
+            (active, _content("active", _exp_body(exp_id="active"))),
+        ],
+    )
+    for client in _build_client(fake_session):
+        response = client.get("/v1/expeditions/me", headers={"Authorization": "Bearer fake"})
+        assert response.status_code == 200
+        assert response.json()["active_expedition_id"] == "active"
 
 
 # ---------------------------------------------------------------------------
@@ -503,11 +562,15 @@ def _wire_start(
     existing_result = MagicMock()
     existing_result.scalar_one_or_none = MagicMock(return_value=existing_progress_id)
 
+    focus_update_result = MagicMock()
+
     side_effects: list[Any] = [user_result]
     if user is not None:
         side_effects.append(content_result)
         if content is not None:
             side_effects.extend([dex_result, completed_result, existing_result])
+            if existing_progress_id is None:
+                side_effects.append(focus_update_result)
 
     fake_session.execute = AsyncMock(side_effect=side_effects)
     fake_session.add = MagicMock()
@@ -589,6 +652,7 @@ def test_start_happy_path_creates_progress_row(
     assert progress.group_id == _GROUP_ID
     assert progress.expedition_id == "backyard_starter"
     assert progress.completed_steps == {}
+    assert progress.focused_at is not None
 
 
 def test_start_concurrent_duplicate_surfaces_409(
@@ -638,11 +702,15 @@ def _wire_restart(
     progress_result = MagicMock()
     progress_result.scalar_one_or_none = MagicMock(return_value=progress)
 
+    focus_update_result = MagicMock()
+
     side_effects: list[Any] = [user_result]
     if user is not None:
         side_effects.append(content_result)
         if content is not None:
             side_effects.append(progress_result)
+            if progress is not None and progress.completed_at is None:
+                side_effects.append(focus_update_result)
 
     fake_session.execute = AsyncMock(side_effect=side_effects)
     fake_session.commit = AsyncMock()
@@ -691,6 +759,7 @@ def test_restart_happy_path_resets_progress_in_place(
     assert progress.completed_steps == {}
     assert progress.completed_at is None
     assert progress.created_at > old_created_at
+    assert progress.focused_at == progress.created_at
     fake_session.commit.assert_awaited_once()
 
 
@@ -749,3 +818,81 @@ def test_restart_409_when_already_completed(
     # Nothing touched on the trophy row.
     assert progress.completed_steps == {"s0": "2026-05-10T13:00:00+00:00"}
     fake_session.commit.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/expeditions/{id}/focus
+# ---------------------------------------------------------------------------
+
+
+def _wire_focus(
+    fake_session: AsyncMock,
+    *,
+    user: models.User | None,
+    progress: models.ExpeditionProgress | None,
+) -> None:
+    user_result = MagicMock()
+    user_result.scalar_one_or_none = MagicMock(return_value=user)
+
+    progress_result = MagicMock()
+    progress_result.scalar_one_or_none = MagicMock(return_value=progress)
+
+    focus_update_result = MagicMock()
+
+    side_effects: list[Any] = [user_result]
+    if user is not None:
+        side_effects.append(progress_result)
+        if progress is not None and progress.completed_at is None:
+            side_effects.append(focus_update_result)
+
+    fake_session.execute = AsyncMock(side_effect=side_effects)
+    fake_session.commit = AsyncMock()
+
+
+def test_focus_requires_bearer(fake_session: AsyncMock) -> None:
+    for client in _build_client(fake_session):
+        response = client.post("/v1/expeditions/x/focus")
+        assert response.status_code == 401
+
+
+def test_focus_404_when_never_started(
+    monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    _wire_focus(fake_session, user=_user(), progress=None)
+    for client in _build_client(fake_session):
+        response = client.post("/v1/expeditions/x/focus", headers={"Authorization": "Bearer fake"})
+        assert response.status_code == 404
+        assert "not started" in response.json()["error"]["message"]
+
+
+def test_focus_409_when_completed(monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock) -> None:
+    _stub_token_verifier(monkeypatch)
+    progress = _progress_row(
+        "x",
+        completed_steps={"s0": "2026-05-10T13:00:00+00:00"},
+        completed_at=datetime(2026, 5, 10, 13, 0, 0, tzinfo=UTC),
+    )
+    _wire_focus(fake_session, user=_user(), progress=progress)
+    for client in _build_client(fake_session):
+        response = client.post("/v1/expeditions/x/focus", headers={"Authorization": "Bearer fake"})
+        assert response.status_code == 409
+        assert "cannot be focused" in response.json()["error"]["message"]
+    fake_session.commit.assert_not_awaited()
+
+
+def test_focus_happy_path_sets_focus(
+    monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    progress = _progress_row("x", completed_steps={})
+    _wire_focus(fake_session, user=_user(), progress=progress)
+    for client in _build_client(fake_session):
+        response = client.post("/v1/expeditions/x/focus", headers={"Authorization": "Bearer fake"})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["expedition_id"] == "x"
+        assert body["focused_at"] is not None
+
+    assert progress.focused_at is not None
+    fake_session.commit.assert_awaited_once()

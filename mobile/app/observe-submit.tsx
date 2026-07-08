@@ -1,5 +1,6 @@
 import { router, Stack } from "expo-router";
 import * as Location from "expo-location";
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -26,7 +27,10 @@ import {
   legacyPutHeaders,
   putPhotoToSignedUrl,
 } from "@/src/api/upload";
+import { listMyExpeditions } from "@/src/api/expeditions";
 import {
+  activeProgress,
+  expeditionRewardTarget,
   selectExpeditionRewards,
   selectSanctuaryRewards,
 } from "@/src/expeditions/logic";
@@ -106,6 +110,11 @@ export default function ObserveSubmitScreen() {
     ObservationReward[]
   >([]);
   const [revealVisible, setRevealVisible] = useState(false);
+  const mission = useQuery({
+    queryKey: ["expeditions", "me"],
+    queryFn: listMyExpeditions,
+    retry: false,
+  });
   // Not state: progress is only read inside runSubmit/sendPatch, and a
   // re-render mid-pipeline must not reset it.
   const progressRef = useRef<SubmitProgress>({
@@ -181,10 +190,13 @@ export default function ObserveSubmitScreen() {
     void queryClient.invalidateQueries({ queryKey: ["sanctuary", "me"] });
     void queryClient.invalidateQueries({ queryKey: ["expeditions"] });
     setRevealVisible(false);
-    // Same destination the existing post-submit flow would land on if no
-    // reveal fired -- the submit screen stays mounted (kid can read the
-    // success line) and ``router.back()`` is wired to a back button below.
-    router.back();
+    router.replace("/observe");
+  }
+
+  function handleViewExpedition(expeditionId: string) {
+    void queryClient.invalidateQueries({ queryKey: ["expeditions"] });
+    setRevealVisible(false);
+    router.replace(`/expedition/${expeditionId}`);
   }
 
   // Prefer the live draft; fall back to the snapshot once the draft is
@@ -212,6 +224,14 @@ export default function ObserveSubmitScreen() {
     (phase.kind === "idle" || phase.kind === "error") &&
     locStatus === "ready" &&
     coords !== null;
+  const activeMission = activeProgress(
+    mission.data?.items ?? [],
+    mission.data?.active_expedition_id,
+  );
+  const rewardTarget = expeditionRewardTarget(
+    expeditionRewards,
+    activeMission?.expedition_id,
+  );
 
   function finishDone(observationId: string) {
     progressRef.current.pendingCreate = null;
@@ -425,22 +445,23 @@ export default function ObserveSubmitScreen() {
           stays visible after the Sanctuary reveal closes (and renders
           when no reveal fires at all). Title/detail come straight from
           the dispatcher; the client never fabricates progress. */}
-      {phase.kind === "done" && expeditionRewards.length > 0 && (
+      {phase.kind === "done" && rewardTarget.primary && (
         <View style={styles.expeditionCard}>
-          {expeditionRewards.map((r, i) => (
-            <View
-              key={`${r.type}-${i}`}
-              style={[
-                styles.expeditionReward,
-                i > 0 && styles.expeditionRewardGap,
-              ]}
-            >
-              <Text style={styles.expeditionRewardTitle}>{r.title}</Text>
-              {r.detail ? (
-                <Text style={styles.expeditionRewardDetail}>{r.detail}</Text>
-              ) : null}
-            </View>
-          ))}
+          <Text style={styles.expeditionRewardKicker}>Quest progress</Text>
+          <Text style={styles.expeditionRewardTitle}>
+            {rewardTarget.primary.title}
+          </Text>
+          {rewardTarget.primary.detail ? (
+            <Text style={styles.expeditionRewardDetail}>
+              {rewardTarget.primary.detail}
+            </Text>
+          ) : null}
+          {rewardTarget.extraCount > 0 ? (
+            <Text style={styles.expeditionRewardDetail}>
+              +{rewardTarget.extraCount} other quest update
+              {rewardTarget.extraCount === 1 ? "" : "s"}
+            </Text>
+          ) : null}
         </View>
       )}
       {phase.kind === "done" && (
@@ -529,14 +550,35 @@ export default function ObserveSubmitScreen() {
       )}
 
       <View style={styles.actions}>
-        <Pressable
-          style={[styles.button, styles.buttonGhost]}
-          onPress={phase.kind === "done" ? handleDone : () => router.back()}
-        >
-          <Text style={styles.buttonText}>
-            {phase.kind === "done" ? "Done" : "Cancel"}
-          </Text>
-        </Pressable>
+        {phase.kind === "done" ? (
+          <>
+            {rewardTarget.expeditionId ? (
+              <Pressable
+                style={[styles.button, styles.buttonGhost]}
+                onPress={() =>
+                  rewardTarget.expeditionId
+                    ? handleViewExpedition(rewardTarget.expeditionId)
+                    : undefined
+                }
+              >
+                <Text style={styles.buttonText}>View Expedition</Text>
+              </Pressable>
+            ) : null}
+            <Pressable
+              style={[styles.button, styles.buttonPrimary]}
+              onPress={handleDone}
+            >
+              <Text style={styles.buttonText}>Keep observing</Text>
+            </Pressable>
+          </>
+        ) : (
+          <Pressable
+            style={[styles.button, styles.buttonGhost]}
+            onPress={() => router.back()}
+          >
+            <Text style={styles.buttonText}>Cancel</Text>
+          </Pressable>
+        )}
         {phase.kind !== "picking" && phase.kind !== "done" && (
           <Pressable
             style={[
@@ -649,6 +691,13 @@ const styles = StyleSheet.create({
   },
   expeditionRewardGap: {
     marginTop: 10,
+  },
+  expeditionRewardKicker: {
+    fontSize: 12,
+    fontWeight: "700",
+    opacity: 0.7,
+    marginBottom: 4,
+    textTransform: "uppercase",
   },
   expeditionRewardTitle: {
     fontSize: 15,

@@ -1,7 +1,12 @@
 import type { ObservationReward, RewardType } from "@/src/api/observations";
+import type { ProgressItem } from "@/src/api/expeditions";
 import {
+  activeProgress,
+  expeditionRewardTarget,
   filterByEnvironment,
   nextIncompleteStep,
+  nextObjective,
+  progressLabel,
   selectExpeditionRewards,
   selectSanctuaryRewards,
   splitProgress,
@@ -9,6 +14,16 @@ import {
 
 function reward(type: RewardType, title: string = type): ObservationReward {
   return { type, title, detail: "", icon: "icon-key", weight: 1, payload: {} };
+}
+
+function expeditionReward(
+  type: RewardType,
+  expeditionId: string,
+): ObservationReward {
+  return {
+    ...reward(type),
+    payload: { expedition_id: expeditionId },
+  };
 }
 
 describe("selectExpeditionRewards", () => {
@@ -165,5 +180,73 @@ describe("splitProgress", () => {
     const { inProgress, completed } = splitProgress(items);
     expect(inProgress.map((i) => i.id)).toEqual(["b", "d"]);
     expect(completed.map((i) => i.id)).toEqual(["a", "c"]);
+  });
+});
+
+describe("activeProgress", () => {
+  function item(id: string, completed_at: string | null = null): ProgressItem {
+    return {
+      expedition_id: id,
+      title: id,
+      subtitle: null,
+      intro: "",
+      outro: "",
+      started_at: "2026-06-01T00:00:00Z",
+      completed_at,
+      focused_at: null,
+      completed_step_count: 0,
+      total_step_count: 1,
+      steps: [{ id: "s0", description: "Find something", hint: null, completed_at: null }],
+    };
+  }
+
+  it("uses the backend active id when it points at an incomplete expedition", () => {
+    const items = [item("newest"), item("focused")];
+    expect(activeProgress(items, "focused")?.expedition_id).toBe("focused");
+  });
+
+  it("falls back to the first incomplete expedition", () => {
+    const items = [item("done", "2026-06-01T01:00:00Z"), item("next")];
+    expect(activeProgress(items, null)?.expedition_id).toBe("next");
+  });
+
+  it("returns null when every expedition is complete", () => {
+    expect(activeProgress([item("done", "2026-06-01T01:00:00Z")], null)).toBeNull();
+  });
+});
+
+describe("nextObjective / progressLabel", () => {
+  it("returns the active incomplete step and compact progress text", () => {
+    const progress: ProgressItem = {
+      expedition_id: "x",
+      title: "Quest",
+      subtitle: null,
+      intro: "",
+      outro: "",
+      started_at: "2026-06-01T00:00:00Z",
+      completed_at: null,
+      focused_at: null,
+      completed_step_count: 1,
+      total_step_count: 2,
+      steps: [
+        { id: "a", description: "Done", hint: null, completed_at: "2026-06-01T01:00:00Z" },
+        { id: "b", description: "Next", hint: "Look close", completed_at: null },
+      ],
+    };
+    expect(nextObjective(progress)?.id).toBe("b");
+    expect(progressLabel(progress)).toBe("1 / 2 steps");
+  });
+});
+
+describe("expeditionRewardTarget", () => {
+  it("prefers the focused expedition reward when several advanced", () => {
+    const rewards = [
+      expeditionReward("expedition_step", "side"),
+      expeditionReward("expedition_complete", "focused"),
+    ];
+    const target = expeditionRewardTarget(rewards, "focused");
+    expect(target.primary?.type).toBe("expedition_complete");
+    expect(target.expeditionId).toBe("focused");
+    expect(target.extraCount).toBe(1);
   });
 });

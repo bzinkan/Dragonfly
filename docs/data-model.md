@@ -47,6 +47,7 @@ The logical product invariants are unchanged:
 | User Dex | `select * from dex_entries where user_id = $1 order by first_seen_at desc` |
 | First find | `insert into dex_entries (...) on conflict (user_id, taxon_id) do nothing` |
 | Expedition progress | `select * from expedition_progress where user_id = $1` |
+| Active expedition focus | `select * from expedition_progress where user_id = $1 and focused_at is not null` |
 | Review queue | `select * from review_queue where group_id = $1 and status = 'pending'` |
 | Rarity lookup | `select * from rarity_cache where region_geohash = $1 and taxon_id = $2` |
 | Ingest replay | `select * from ingest_runs where source = $1 and status = 'failed'` |
@@ -69,6 +70,15 @@ The logical product invariants are unchanged:
 
 The first-find check must not become read-then-write. The database unique
 constraint is the source of truth under concurrency.
+
+## Expedition Progress
+
+Expedition progress is personal kid game state. `expedition_progress.user_id`
+is the dispatch and read scope; `group_id` remains on the row as creation
+context for audit/history, not as the active progression boundary. The mobile
+quest loop highlights one focused incomplete expedition at a time through
+nullable `focused_at`, with a partial unique index enforcing at most one focused
+row per user.
 
 ## Ingest And Cursors
 

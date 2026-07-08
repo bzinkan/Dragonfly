@@ -7,6 +7,7 @@
  */
 
 import type { ObservationReward } from "@/src/api/observations";
+import type { ProgressItem, StepProgress } from "@/src/api/expeditions";
 
 /**
  * Rewards that should surface as expedition feedback after a submit:
@@ -78,4 +79,56 @@ export function splitProgress<T extends { completed_at: string | null }>(
     (item.completed_at === null ? inProgress : completed).push(item);
   }
   return { inProgress, completed };
+}
+
+export function activeProgress(
+  items: readonly ProgressItem[],
+  activeExpeditionId?: string | null,
+): ProgressItem | null {
+  const inProgress = items.filter((item) => item.completed_at === null);
+  if (activeExpeditionId) {
+    const focused = inProgress.find(
+      (item) => item.expedition_id === activeExpeditionId,
+    );
+    if (focused) return focused;
+  }
+  return inProgress[0] ?? null;
+}
+
+export function nextObjective(progress: ProgressItem | null): StepProgress | null {
+  if (!progress || progress.completed_at !== null) return null;
+  return nextIncompleteStep(progress.steps);
+}
+
+export function progressLabel(progress: ProgressItem): string {
+  return `${progress.completed_step_count} / ${progress.total_step_count} steps`;
+}
+
+export function expeditionRewardTarget(
+  rewards: ObservationReward[],
+  activeExpeditionId?: string | null,
+): {
+  primary: ObservationReward | null;
+  extraCount: number;
+  expeditionId: string | null;
+} {
+  if (rewards.length === 0) {
+    return { primary: null, extraCount: 0, expeditionId: null };
+  }
+  const activeReward =
+    activeExpeditionId == null
+      ? null
+      : rewards.find(
+          (reward) => reward.payload?.expedition_id === activeExpeditionId,
+        );
+  const primary = activeReward ?? rewards[0];
+  const expeditionId =
+    typeof primary.payload?.expedition_id === "string"
+      ? primary.payload.expedition_id
+      : activeExpeditionId ?? null;
+  return {
+    primary,
+    extraCount: Math.max(0, rewards.length - 1),
+    expeditionId,
+  };
 }

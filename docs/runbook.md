@@ -64,8 +64,9 @@ Workflow shape:
    `content/expeditions/` ships inside the image).
 3. Update Container App `hinterland-api` in resource group `hinterland-dev-rg`.
 4. Run `alembic upgrade head`.
-5. Point the expedition content sync job at the new image, then start it when
-   that optional job is provisioned.
+5. Point the expedition content sync job at the new image, then start it. This
+   is required: a green API deploy must mean starter expeditions are in
+   Postgres.
 6. Smoke public probes.
 7. Run authenticated smoke when the token secret is configured.
 
@@ -89,7 +90,25 @@ az containerapp job update \
   --resource-group hinterland-dev-rg \
   --image hinterlandacrdev.azurecr.io/hinterland-api:<git-sha>
 
-az containerapp job start -n hinterland-sync-expeditions -g hinterland-dev-rg
+EXECUTION_NAME="$(az containerapp job start \
+  --name hinterland-sync-expeditions \
+  --resource-group hinterland-dev-rg \
+  --query name \
+  --output tsv)"
+
+for attempt in {1..60}; do
+  STATUS="$(az containerapp job execution show \
+    --name hinterland-sync-expeditions \
+    --job-execution-name "${EXECUTION_NAME}" \
+    --resource-group hinterland-dev-rg \
+    --query properties.status \
+    --output tsv)"
+  case "${STATUS}" in
+    Succeeded) break ;;
+    Failed|Canceled) exit 1 ;;
+  esac
+  sleep 10
+done
 ```
 
 Run the sync job after every deploy: the image IS the expedition content
@@ -99,6 +118,12 @@ The job's template pins whatever image it was provisioned with, so the
 without it re-syncs the previous image's content. Do not pass `--image` on
 `job start` instead: start-time container overrides replace the whole
 template, dropping the job's env vars and command.
+Wait for the execution to reach `Succeeded`; treating "job accepted" as deploy
+success can leave the phone with an empty or stale quest board.
+
+The authenticated smoke script now fails unless a kid token can load
+`backyard_starter` from `/v1/expeditions/available`, which catches a missing or
+failed expedition sync before the phone build sees an empty quest board.
 
 The old Cloud Run workflow is a manual no-op. If a GCP service is accidentally
 recreated, treat it as an incident and decommission it under ADR 0014 after the
