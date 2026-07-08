@@ -77,6 +77,10 @@ const ENV: Record<AppEnv, EnvConfig> = {
 
 const env = ENV[APP_ENV];
 const isPlayInternal = APP_ENV === "play-internal";
+const devLoginKey =
+  process.env.HINTERLAND_DEV_AUTH_TOKEN ??
+  process.env.DRAGONFLY_DEV_LOGIN_KEY ??
+  null;
 
 // Sanctuary 2.5D diorama build flag (ADR 0011/0012). Build-time default
 // only -- runtime overrides (screen reader, Simple view, renderer crash
@@ -188,12 +192,13 @@ const config: ExpoConfig = {
     entra: env.entra,
     // Shared key for the silent dev auto-login (POST /v1/auth/dev-login).
     // Baked in ONLY for development/preview builds, and only when the
-    // builder exports DRAGONFLY_DEV_LOGIN_KEY. Store builds
+    // builder exports HINTERLAND_DEV_AUTH_TOKEN (or legacy
+    // DRAGONFLY_DEV_LOGIN_KEY). Store builds
     // (play-internal/production) ALWAYS get null -- enforced by
     // scripts/verify-play-internal-config.mjs in CI.
     devLoginKey:
       APP_ENV === "development" || APP_ENV === "preview"
-        ? (process.env.DRAGONFLY_DEV_LOGIN_KEY ?? null)
+        ? devLoginKey
         : null,
     sanctuaryDiorama: SANCTUARY_DIORAMA,
     // Links this project to the existing EAS project (account
