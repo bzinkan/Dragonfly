@@ -8,6 +8,7 @@
 # re-exclude junk the allowlist re-admitted. Last matching rule wins.
 *
 !backend/**
+!content/expedition_taxon_sets.json
 !content/expeditions/**
 
 # Junk re-admitted by !backend/** (mirrors backend/.dockerignore).
