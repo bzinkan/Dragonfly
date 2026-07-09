@@ -1,0 +1,228 @@
+{
+  "taxon_sets": [
+    {
+      "id": "pollinators",
+      "title": "Pollinators",
+      "description": "Broad flower visitors that are useful for starter pollinator quests.",
+      "taxa": [
+        {
+          "taxon_id": 47157,
+          "name": "Lepidoptera",
+          "common_name": "Butterflies and Moths",
+          "rank": "order",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 47201,
+          "name": "Hymenoptera",
+          "common_name": "Ants, Bees, Wasps, and Sawflies",
+          "rank": "order",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 47822,
+          "name": "Diptera",
+          "common_name": "Flies",
+          "rank": "order",
+          "taxon_id_verified": true
+        }
+      ]
+    },
+    {
+      "id": "decomposers",
+      "title": "Decomposers",
+      "description": "Fungi and common detritivores kids can reasonably find near logs, soil, leaf litter, and damp corners.",
+      "taxa": [
+        {
+          "taxon_id": 47170,
+          "name": "Fungi",
+          "common_name": "Fungi Including Lichens",
+          "rank": "kingdom",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 48147,
+          "name": "Isopoda",
+          "common_name": "Isopods",
+          "rank": "order",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 47735,
+          "name": "Diplopoda",
+          "common_name": "Millipedes",
+          "rank": "class",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 69758,
+          "name": "Lumbricidae",
+          "common_name": "Lumbricid Earthworms",
+          "rank": "family",
+          "taxon_id_verified": true
+        }
+      ]
+    },
+    {
+      "id": "deciduous_trees",
+      "title": "Deciduous Trees",
+      "description": "Common deciduous tree genera for a first tree-trio challenge.",
+      "taxa": [
+        {
+          "taxon_id": 47727,
+          "name": "Acer",
+          "common_name": "Maples",
+          "rank": "genus",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 47851,
+          "name": "Quercus",
+          "common_name": "Oaks",
+          "rank": "genus",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 49156,
+          "name": "Betula",
+          "common_name": "Birches",
+          "rank": "genus",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 49203,
+          "name": "Fagus",
+          "common_name": "Beeches",
+          "rank": "genus",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 47566,
+          "name": "Populus",
+          "common_name": "Poplars, Cottonwoods, and Aspens",
+          "rank": "genus",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 53549,
+          "name": "Ulmus",
+          "common_name": "Elms",
+          "rank": "genus",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 54788,
+          "name": "Carya",
+          "common_name": "Hickories",
+          "rank": "genus",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 49664,
+          "name": "Platanus",
+          "common_name": "Planes",
+          "rank": "genus",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 49661,
+          "name": "Liquidambar",
+          "common_name": "Sweetgums",
+          "rank": "genus",
+          "taxon_id_verified": true
+        }
+      ]
+    },
+    {
+      "id": "semi_aquatic_animals",
+      "title": "Semi-aquatic Animals",
+      "description": "Wetland-friendly groups for ponds, ditches, streams, and marshy edges.",
+      "taxa": [
+        {
+          "taxon_id": 20978,
+          "name": "Amphibia",
+          "common_name": "Amphibians",
+          "rank": "class",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 20979,
+          "name": "Anura",
+          "common_name": "Frogs and Toads",
+          "rank": "order",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 26718,
+          "name": "Caudata",
+          "common_name": "Salamanders",
+          "rank": "order",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 39532,
+          "name": "Testudines",
+          "common_name": "Turtles and Tortoises",
+          "rank": "order",
+          "taxon_id_verified": true
+        }
+      ]
+    },
+    {
+      "id": "us_common_invasives",
+      "title": "U.S. Common Invasive Species",
+      "description": "A starter U.S.-scoped invasive set. Regional copy must avoid implying these taxa are invasive everywhere.",
+      "taxa": [
+        {
+          "taxon_id": 57278,
+          "name": "Ailanthus altissima",
+          "common_name": "Tree-of-heaven",
+          "rank": "species",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 56061,
+          "name": "Alliaria petiolata",
+          "common_name": "Garlic Mustard",
+          "rank": "species",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 82342,
+          "name": "Lonicera maackii",
+          "common_name": "Amur Honeysuckle",
+          "rank": "species",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 61321,
+          "name": "Lythrum salicaria",
+          "common_name": "Purple Loosestrife",
+          "rank": "species",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 62671,
+          "name": "Pueraria montana",
+          "common_name": "Kudzu",
+          "rank": "species",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 78882,
+          "name": "Rosa multiflora",
+          "common_name": "Multiflora Rose",
+          "rank": "species",
+          "taxon_id_verified": true
+        },
+        {
+          "taxon_id": 64697,
+          "name": "Elaeagnus umbellata",
+          "common_name": "Autumn Olive",
+          "rank": "species",
+          "taxon_id_verified": true
+        }
+      ]
+    }
+  ]
+}

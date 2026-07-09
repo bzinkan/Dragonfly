@@ -1,0 +1,48 @@
+{
+  "id": "decomposer_detectives",
+  "title": "Decomposer Detectives",
+  "subtitle": "Find the recyclers underfoot",
+  "tier": 1,
+  "duration_minutes": 30,
+  "environments": ["yard", "park", "school", "other"],
+  "theme": "decomposers",
+  "learning_goal": "Recognize decomposers and detritivores as the organisms that recycle dead material.",
+  "difficulty_label": "Beginner decomposers",
+  "preview_enabled": false,
+  "unlock_hint": null,
+  "intro": "Leaves, logs, and damp corners have cleanup crews. Find three different recyclers or detritivores.",
+  "outro": "You found the organisms that turn old life into new soil.",
+  "prerequisites": [],
+  "steps": [
+    {
+      "id": "first_recycler",
+      "description": "Find a decomposer",
+      "match": { "kind": "taxon_set", "value": "decomposers" },
+      "hint": "Check fallen leaves, damp bark, mulch, rocks, and shady walls."
+    },
+    {
+      "id": "second_recycler",
+      "description": "Find a different decomposer",
+      "match": {
+        "kind": "all_of",
+        "matches": [
+          { "kind": "taxon_set", "value": "decomposers" },
+          { "kind": "not_in_current_expedition" }
+        ]
+      },
+      "hint": "Different species count. A repeat photo of the same mushroom does not."
+    },
+    {
+      "id": "third_recycler",
+      "description": "Find a third decomposer",
+      "match": {
+        "kind": "all_of",
+        "matches": [
+          { "kind": "taxon_set", "value": "decomposers" },
+          { "kind": "not_in_current_expedition" }
+        ]
+      },
+      "hint": "Try a new microhabitat: bark, soil, leaf litter, or a damp edge."
+    }
+  ]
+}

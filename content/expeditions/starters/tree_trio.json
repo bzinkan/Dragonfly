@@ -1,0 +1,48 @@
+{
+  "id": "tree_trio",
+  "title": "Tree Trio",
+  "subtitle": "Three different deciduous trees",
+  "tier": 1,
+  "duration_minutes": 30,
+  "environments": ["yard", "park", "street", "school"],
+  "theme": "trees",
+  "learning_goal": "Compare deciduous tree groups by looking for different species instead of repeating the same tree.",
+  "difficulty_label": "Beginner trees",
+  "preview_enabled": false,
+  "unlock_hint": null,
+  "intro": "Trees are not all the same green wall. Find three different deciduous tree species and compare their leaves or bark.",
+  "outro": "You turned a row of trees into a real comparison set.",
+  "prerequisites": [],
+  "steps": [
+    {
+      "id": "first_tree",
+      "description": "Find a deciduous tree",
+      "match": { "kind": "taxon_set", "value": "deciduous_trees" },
+      "hint": "Maple, oak, birch, beech, poplar, elm, hickory, sycamore, and sweetgum count."
+    },
+    {
+      "id": "second_tree",
+      "description": "Find a different deciduous tree",
+      "match": {
+        "kind": "all_of",
+        "matches": [
+          { "kind": "taxon_set", "value": "deciduous_trees" },
+          { "kind": "not_in_current_expedition" }
+        ]
+      },
+      "hint": "Photograph leaves, bark, or fruit clearly. Repeating the same species will not count."
+    },
+    {
+      "id": "third_tree",
+      "description": "Find a third deciduous tree",
+      "match": {
+        "kind": "all_of",
+        "matches": [
+          { "kind": "taxon_set", "value": "deciduous_trees" },
+          { "kind": "not_in_current_expedition" }
+        ]
+      },
+      "hint": "Move to another part of the block or park if every tree nearby is the same."
+    }
+  ]
+}

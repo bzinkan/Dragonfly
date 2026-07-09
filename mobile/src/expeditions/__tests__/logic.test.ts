@@ -191,12 +191,23 @@ describe("activeProgress", () => {
       subtitle: null,
       intro: "",
       outro: "",
+      theme: "warmup",
+      learning_goal: null,
+      difficulty_label: null,
       started_at: "2026-06-01T00:00:00Z",
       completed_at,
       focused_at: null,
       completed_step_count: 0,
       total_step_count: 1,
-      steps: [{ id: "s0", description: "Find something", hint: null, completed_at: null }],
+      steps: [
+        {
+          id: "s0",
+          description: "Find something",
+          hint: null,
+          tag_prompt: null,
+          completed_at: null,
+        },
+      ],
     };
   }
 
@@ -223,14 +234,29 @@ describe("nextObjective / progressLabel", () => {
       subtitle: null,
       intro: "",
       outro: "",
+      theme: "warmup",
+      learning_goal: null,
+      difficulty_label: null,
       started_at: "2026-06-01T00:00:00Z",
       completed_at: null,
       focused_at: null,
       completed_step_count: 1,
       total_step_count: 2,
       steps: [
-        { id: "a", description: "Done", hint: null, completed_at: "2026-06-01T01:00:00Z" },
-        { id: "b", description: "Next", hint: "Look close", completed_at: null },
+        {
+          id: "a",
+          description: "Done",
+          hint: null,
+          tag_prompt: null,
+          completed_at: "2026-06-01T01:00:00Z",
+        },
+        {
+          id: "b",
+          description: "Next",
+          hint: "Look close",
+          tag_prompt: null,
+          completed_at: null,
+        },
       ],
     };
     expect(nextObjective(progress)?.id).toBe("b");

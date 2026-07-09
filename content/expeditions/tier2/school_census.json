@@ -5,6 +5,11 @@
   "tier": 2,
   "duration_minutes": 45,
   "environments": ["school"],
+  "theme": "urban",
+  "learning_goal": "Run a more complete survey by sampling walls, shade, edges, and distant corners.",
+  "difficulty_label": "Census",
+  "preview_enabled": true,
+  "unlock_hint": "Complete Schoolyard Survey.",
   "intro": "Last time you worked the edges. This time, take the full census -- sun and shade, walls and far corners, until the map has no blank spots.",
   "outro": "A full-grounds census is the kind of fieldwork ecologists get paid to do. Nobody knows this place better than you now.",
   "prerequisites": [

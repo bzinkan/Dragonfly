@@ -1,0 +1,86 @@
+{
+  "id": "life_cycle_builder",
+  "title": "Life Cycle Builder",
+  "subtitle": "Tag the stage you can see",
+  "tier": 2,
+  "duration_minutes": 45,
+  "environments": ["yard", "park", "school", "street"],
+  "theme": "seasonal",
+  "learning_goal": "Use closed-choice life-stage tags to compare different stages instead of guessing from species alone.",
+  "difficulty_label": "Life cycle set",
+  "preview_enabled": true,
+  "unlock_hint": "Reach 3 Dex species.",
+  "intro": "A species changes through the season. Find plant observations that show different life stages and tag what you can see.",
+  "outro": "You recorded life-cycle evidence: flower, fruit or seed, and new growth.",
+  "prerequisites": [
+    { "kind": "dex_count_at_least", "value": 3 }
+  ],
+  "steps": [
+    {
+      "id": "flower_stage",
+      "description": "Find a plant in flower",
+      "match": {
+        "kind": "all_of",
+        "matches": [
+          { "kind": "iconic_taxon", "value": "Plantae" },
+          { "kind": "observation_tag", "key": "life_stage", "value": "flower" }
+        ]
+      },
+      "hint": "The flower has to be visible in the photo.",
+      "tag_prompt": {
+        "key": "life_stage",
+        "question": "What life stage can you see?",
+        "options": [
+          { "value": "flower", "label": "Flower" },
+          { "value": "fruit_seed", "label": "Fruit or seed" },
+          { "value": "seedling", "label": "Seedling" },
+          { "value": "leaf", "label": "Leaf only" }
+        ]
+      }
+    },
+    {
+      "id": "fruit_or_seed_stage",
+      "description": "Find a plant with fruit or seeds",
+      "match": {
+        "kind": "all_of",
+        "matches": [
+          { "kind": "iconic_taxon", "value": "Plantae" },
+          { "kind": "observation_tag", "key": "life_stage", "value": "fruit_seed" }
+        ]
+      },
+      "hint": "Berries, pods, cones, acorns, seedheads, and fruits all count.",
+      "tag_prompt": {
+        "key": "life_stage",
+        "question": "What life stage can you see?",
+        "options": [
+          { "value": "flower", "label": "Flower" },
+          { "value": "fruit_seed", "label": "Fruit or seed" },
+          { "value": "seedling", "label": "Seedling" },
+          { "value": "leaf", "label": "Leaf only" }
+        ]
+      }
+    },
+    {
+      "id": "seedling_stage",
+      "description": "Find a seedling or new sprout",
+      "match": {
+        "kind": "all_of",
+        "matches": [
+          { "kind": "iconic_taxon", "value": "Plantae" },
+          { "kind": "observation_tag", "key": "life_stage", "value": "seedling" }
+        ]
+      },
+      "hint": "Look for tiny plants with fresh leaves close to the ground.",
+      "tag_prompt": {
+        "key": "life_stage",
+        "question": "What life stage can you see?",
+        "options": [
+          { "value": "flower", "label": "Flower" },
+          { "value": "fruit_seed", "label": "Fruit or seed" },
+          { "value": "seedling", "label": "Seedling" },
+          { "value": "leaf", "label": "Leaf only" }
+        ]
+      }
+    }
+  ]
+}

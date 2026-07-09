@@ -8,7 +8,8 @@ ExpeditionHandler from data it already has loaded.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -41,3 +42,12 @@ class MatcherInputs:
 
     obs_latitude: float
     obs_longitude: float
+
+    taxon_sets: Mapping[str, frozenset[int]] = field(default_factory=dict)
+    """Curated taxon sets keyed by content id. Used by taxon_set."""
+
+    current_expedition_taxon_ids: frozenset[int] = frozenset()
+    """Taxa already credited inside the expedition currently being evaluated."""
+
+    ecology_tags: Mapping[str, str] = field(default_factory=dict)
+    """Closed-choice tags saved on the observation. Used by observation_tag."""

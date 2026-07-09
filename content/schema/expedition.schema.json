@@ -1,5 +1,27 @@
 {
   "$defs": {
+    "EcologyTagOption": {
+      "properties": {
+        "label": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 40,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "label"
+      ],
+      "title": "EcologyTagOption",
+      "type": "object"
+    },
     "MatchAllOf": {
       "properties": {
         "kind": {
@@ -15,9 +37,12 @@
                 "any_of": "#/$defs/MatchAnyOf",
                 "any_organism": "#/$defs/MatchAnyOrganism",
                 "iconic_taxon": "#/$defs/MatchIconicTaxon",
+                "not_in_current_expedition": "#/$defs/MatchNotInCurrentExpedition",
                 "not_in_dex": "#/$defs/MatchNotInDex",
                 "not_within_radius_of_existing": "#/$defs/MatchNotWithinRadius",
-                "taxon_id": "#/$defs/MatchTaxonId"
+                "observation_tag": "#/$defs/MatchObservationTag",
+                "taxon_id": "#/$defs/MatchTaxonId",
+                "taxon_set": "#/$defs/MatchTaxonSet"
               },
               "propertyName": "kind"
             },
@@ -36,6 +61,15 @@
               },
               {
                 "$ref": "#/$defs/MatchNotWithinRadius"
+              },
+              {
+                "$ref": "#/$defs/MatchTaxonSet"
+              },
+              {
+                "$ref": "#/$defs/MatchNotInCurrentExpedition"
+              },
+              {
+                "$ref": "#/$defs/MatchObservationTag"
               },
               {
                 "$ref": "#/$defs/MatchAllOf"
@@ -72,9 +106,12 @@
                 "any_of": "#/$defs/MatchAnyOf",
                 "any_organism": "#/$defs/MatchAnyOrganism",
                 "iconic_taxon": "#/$defs/MatchIconicTaxon",
+                "not_in_current_expedition": "#/$defs/MatchNotInCurrentExpedition",
                 "not_in_dex": "#/$defs/MatchNotInDex",
                 "not_within_radius_of_existing": "#/$defs/MatchNotWithinRadius",
-                "taxon_id": "#/$defs/MatchTaxonId"
+                "observation_tag": "#/$defs/MatchObservationTag",
+                "taxon_id": "#/$defs/MatchTaxonId",
+                "taxon_set": "#/$defs/MatchTaxonSet"
               },
               "propertyName": "kind"
             },
@@ -93,6 +130,15 @@
               },
               {
                 "$ref": "#/$defs/MatchNotWithinRadius"
+              },
+              {
+                "$ref": "#/$defs/MatchTaxonSet"
+              },
+              {
+                "$ref": "#/$defs/MatchNotInCurrentExpedition"
+              },
+              {
+                "$ref": "#/$defs/MatchObservationTag"
               },
               {
                 "$ref": "#/$defs/MatchAllOf"
@@ -162,6 +208,20 @@
       "title": "MatchIconicTaxon",
       "type": "object"
     },
+    "MatchNotInCurrentExpedition": {
+      "properties": {
+        "kind": {
+          "const": "not_in_current_expedition",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "MatchNotInCurrentExpedition",
+      "type": "object"
+    },
     "MatchNotInDex": {
       "properties": {
         "kind": {
@@ -197,6 +257,33 @@
       "title": "MatchNotWithinRadius",
       "type": "object"
     },
+    "MatchObservationTag": {
+      "properties": {
+        "key": {
+          "const": "life_stage",
+          "title": "Key",
+          "type": "string"
+        },
+        "kind": {
+          "const": "observation_tag",
+          "title": "Kind",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 40,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "key",
+        "value"
+      ],
+      "title": "MatchObservationTag",
+      "type": "object"
+    },
     "MatchTaxonId": {
       "properties": {
         "include_descendants": {
@@ -220,6 +307,32 @@
         "value"
       ],
       "title": "MatchTaxonId",
+      "type": "object"
+    },
+    "MatchTaxonSet": {
+      "properties": {
+        "include_descendants": {
+          "default": true,
+          "title": "Include Descendants",
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "taxon_set",
+          "title": "Kind",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "title": "MatchTaxonSet",
       "type": "object"
     },
     "PrereqCompleted": {
@@ -292,9 +405,12 @@
               "any_of": "#/$defs/MatchAnyOf",
               "any_organism": "#/$defs/MatchAnyOrganism",
               "iconic_taxon": "#/$defs/MatchIconicTaxon",
+              "not_in_current_expedition": "#/$defs/MatchNotInCurrentExpedition",
               "not_in_dex": "#/$defs/MatchNotInDex",
               "not_within_radius_of_existing": "#/$defs/MatchNotWithinRadius",
-              "taxon_id": "#/$defs/MatchTaxonId"
+              "observation_tag": "#/$defs/MatchObservationTag",
+              "taxon_id": "#/$defs/MatchTaxonId",
+              "taxon_set": "#/$defs/MatchTaxonSet"
             },
             "propertyName": "kind"
           },
@@ -315,6 +431,15 @@
               "$ref": "#/$defs/MatchNotWithinRadius"
             },
             {
+              "$ref": "#/$defs/MatchTaxonSet"
+            },
+            {
+              "$ref": "#/$defs/MatchNotInCurrentExpedition"
+            },
+            {
+              "$ref": "#/$defs/MatchObservationTag"
+            },
+            {
               "$ref": "#/$defs/MatchAllOf"
             },
             {
@@ -322,6 +447,17 @@
             }
           ],
           "title": "Match"
+        },
+        "tag_prompt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StepTagPrompt"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -331,10 +467,54 @@
       ],
       "title": "Step",
       "type": "object"
+    },
+    "StepTagPrompt": {
+      "properties": {
+        "key": {
+          "const": "life_stage",
+          "title": "Key",
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/EcologyTagOption"
+          },
+          "maxItems": 8,
+          "minItems": 2,
+          "title": "Options",
+          "type": "array"
+        },
+        "question": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Question",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "question",
+        "options"
+      ],
+      "title": "StepTagPrompt",
+      "type": "object"
     }
   },
   "description": "Top-level expedition. One per JSON file under content/expeditions/.",
   "properties": {
+    "difficulty_label": {
+      "anyOf": [
+        {
+          "maxLength": 80,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Difficulty Label"
+    },
     "duration_minutes": {
       "maximum": 120,
       "minimum": 5,
@@ -366,6 +546,19 @@
       "title": "Intro",
       "type": "string"
     },
+    "learning_goal": {
+      "anyOf": [
+        {
+          "maxLength": 240,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Learning Goal"
+    },
     "outro": {
       "maxLength": 300,
       "minLength": 1,
@@ -393,6 +586,11 @@
       "title": "Prerequisites",
       "type": "array"
     },
+    "preview_enabled": {
+      "default": false,
+      "title": "Preview Enabled",
+      "type": "boolean"
+    },
     "steps": {
       "items": {
         "$ref": "#/$defs/Step"
@@ -415,6 +613,22 @@
       "default": null,
       "title": "Subtitle"
     },
+    "theme": {
+      "default": "warmup",
+      "enum": [
+        "warmup",
+        "food_web",
+        "pollinators",
+        "decomposers",
+        "trees",
+        "wetland",
+        "invasive",
+        "urban",
+        "seasonal"
+      ],
+      "title": "Theme",
+      "type": "string"
+    },
     "tier": {
       "maximum": 5,
       "minimum": 1,
@@ -426,6 +640,19 @@
       "minLength": 1,
       "title": "Title",
       "type": "string"
+    },
+    "unlock_hint": {
+      "anyOf": [
+        {
+          "maxLength": 160,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Unlock Hint"
     }
   },
   "required": [

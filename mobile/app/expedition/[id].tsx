@@ -80,10 +80,10 @@ export default function ExpeditionDetailScreen() {
               : String(err)}
         </Text>
         <Pressable
-          style={[styles.button, styles.buttonGhost]}
+          style={[styles.button, styles.buttonGhostLight]}
           onPress={() => void mine.refetch()}
         >
-          <Text style={styles.buttonText}>Retry</Text>
+          <Text style={styles.buttonTextDark}>Retry</Text>
         </Pressable>
       </View>
     );
@@ -100,10 +100,10 @@ export default function ExpeditionDetailScreen() {
           Head back to the quest board and pick another mission.
         </Text>
         <Pressable
-          style={[styles.button, styles.buttonGhost]}
+          style={[styles.button, styles.buttonGhostLight]}
           onPress={() => router.back()}
         >
-          <Text style={styles.buttonText}>Back</Text>
+          <Text style={styles.buttonTextDark}>Back</Text>
         </Pressable>
       </View>
     );
@@ -150,6 +150,15 @@ export default function ExpeditionDetailScreen() {
         </View>
         <Text style={styles.title}>{item.title}</Text>
         {item.subtitle && <Text style={styles.subtitle}>{item.subtitle}</Text>}
+        <View style={styles.metaRow}>
+          {item.difficulty_label ? (
+            <Text style={styles.metaPill}>{item.difficulty_label}</Text>
+          ) : null}
+          <Text style={styles.metaPill}>{themeLabel(item.theme)}</Text>
+        </View>
+        {item.learning_goal ? (
+          <Text style={styles.learningGoal}>{item.learning_goal}</Text>
+        ) : null}
         <Text style={styles.intro}>{item.intro}</Text>
       </View>
 
@@ -200,13 +209,13 @@ export default function ExpeditionDetailScreen() {
       </View>
 
       {!isComplete && (
-        <Pressable
-          style={[
-            styles.button,
-            styles.buttonGhost,
-            styles.restartButton,
-            restart.isPending && styles.buttonDisabled,
-          ]}
+          <Pressable
+            style={[
+              styles.button,
+              styles.buttonGhostLight,
+              styles.restartButton,
+              restart.isPending && styles.buttonDisabled,
+            ]}
           disabled={restart.isPending}
           onPress={() =>
             Alert.alert(
@@ -223,7 +232,7 @@ export default function ExpeditionDetailScreen() {
             )
           }
         >
-          <Text style={styles.buttonText}>
+          <Text style={styles.buttonTextDark}>
             {restart.isPending ? "Starting over..." : "Start over"}
           </Text>
         </Pressable>
@@ -263,9 +272,37 @@ function StepNode({
         {state === "next" && step.hint ? (
           <Text style={styles.stepHint}>{step.hint}</Text>
         ) : null}
+        {state === "next" && step.tag_prompt ? (
+          <Text style={styles.stepPrompt}>
+            Tag prompt: {step.tag_prompt.question}
+          </Text>
+        ) : null}
       </View>
     </View>
   );
+}
+
+function themeLabel(theme: string): string {
+  switch (theme) {
+    case "food_web":
+      return "Food web";
+    case "pollinators":
+      return "Pollinators";
+    case "decomposers":
+      return "Decomposers";
+    case "trees":
+      return "Trees";
+    case "wetland":
+      return "Wetland";
+    case "invasive":
+      return "Invasive";
+    case "urban":
+      return "Urban";
+    case "seasonal":
+      return "Seasonal";
+    default:
+      return "Warm-up";
+  }
 }
 
 const styles = StyleSheet.create({
@@ -299,6 +336,29 @@ const styles = StyleSheet.create({
   },
   title: { color: "#fff", fontSize: 24, fontWeight: "800" },
   subtitle: { color: "#dbeafe", fontSize: 14, marginTop: 2 },
+  metaRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    backgroundColor: "transparent",
+    marginTop: 10,
+  },
+  metaPill: {
+    color: "#dcead8",
+    borderColor: "#8bdcb6",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  learningGoal: {
+    color: "#f7e7b5",
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 10,
+  },
   intro: { color: "#e5e7eb", fontSize: 14, lineHeight: 20, marginTop: 12 },
   objectivePanel: {
     padding: 16,
@@ -371,6 +431,7 @@ const styles = StyleSheet.create({
   stepText: { color: "#fff", fontSize: 15, lineHeight: 20 },
   stepTextDone: { opacity: 0.58 },
   stepHint: { color: "#cbd5e1", fontSize: 13, lineHeight: 18, marginTop: 4 },
+  stepPrompt: { color: "#f7e7b5", fontSize: 12, lineHeight: 17, marginTop: 5 },
   button: {
     paddingHorizontal: 16,
     paddingVertical: 10,
@@ -379,7 +440,13 @@ const styles = StyleSheet.create({
   },
   buttonPrimary: { backgroundColor: "#0f172a", marginTop: 14 },
   buttonGhost: { borderColor: "#888", borderWidth: StyleSheet.hairlineWidth },
+  buttonGhostLight: {
+    backgroundColor: "#fff",
+    borderColor: "#64748b",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
   buttonDisabled: { opacity: 0.45 },
   buttonText: { fontSize: 14, color: "#fff", fontWeight: "700" },
+  buttonTextDark: { fontSize: 14, color: "#0f172a", fontWeight: "700" },
   restartButton: { marginTop: 12 },
 });

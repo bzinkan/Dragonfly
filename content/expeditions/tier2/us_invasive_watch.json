@@ -1,0 +1,49 @@
+{
+  "id": "us_invasive_watch",
+  "title": "U.S. Invasive Watch",
+  "subtitle": "Common invaders, checked carefully",
+  "tier": 2,
+  "duration_minutes": 45,
+  "environments": ["yard", "park", "street", "school"],
+  "theme": "invasive",
+  "learning_goal": "Learn that invasive status is regional and that identification needs careful evidence.",
+  "difficulty_label": "Local challenge",
+  "preview_enabled": true,
+  "unlock_hint": "Reach 5 Dex species.",
+  "intro": "Some species spread aggressively in parts of the U.S. Find three from this starter watchlist and photograph enough detail to check the ID.",
+  "outro": "You practiced careful invasive-species reporting without guessing beyond the evidence.",
+  "prerequisites": [
+    { "kind": "dex_count_at_least", "value": 5 }
+  ],
+  "steps": [
+    {
+      "id": "first_invasive",
+      "description": "Find a watchlist species",
+      "match": { "kind": "taxon_set", "value": "us_common_invasives" },
+      "hint": "Tree-of-heaven, garlic mustard, Amur honeysuckle, kudzu, and purple loosestrife are examples."
+    },
+    {
+      "id": "second_invasive",
+      "description": "Find a different watchlist species",
+      "match": {
+        "kind": "all_of",
+        "matches": [
+          { "kind": "taxon_set", "value": "us_common_invasives" },
+          { "kind": "not_in_current_expedition" }
+        ]
+      }
+    },
+    {
+      "id": "third_invasive",
+      "description": "Find a third watchlist species",
+      "match": {
+        "kind": "all_of",
+        "matches": [
+          { "kind": "taxon_set", "value": "us_common_invasives" },
+          { "kind": "not_in_current_expedition" }
+        ]
+      },
+      "hint": "Only log what iNaturalist identifies confidently. Invasive status depends on where you are."
+    }
+  ]
+}

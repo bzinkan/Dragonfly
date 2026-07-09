@@ -41,6 +41,18 @@ IconicTaxon = Literal[
 ]
 
 Environment = Literal["yard", "park", "street", "school", "other"]
+Theme = Literal[
+    "warmup",
+    "food_web",
+    "pollinators",
+    "decomposers",
+    "trees",
+    "wetland",
+    "invasive",
+    "urban",
+    "seasonal",
+]
+EcologyTagKey = Literal["life_stage"]
 
 
 class MatchIconicTaxon(BaseModel):
@@ -67,6 +79,22 @@ class MatchNotWithinRadius(BaseModel):
     radius_meters: Annotated[int, Field(ge=1, le=10_000)]
 
 
+class MatchTaxonSet(BaseModel):
+    kind: Literal["taxon_set"]
+    value: Annotated[str, Field(min_length=1, max_length=80)]
+    include_descendants: bool = True
+
+
+class MatchNotInCurrentExpedition(BaseModel):
+    kind: Literal["not_in_current_expedition"]
+
+
+class MatchObservationTag(BaseModel):
+    kind: Literal["observation_tag"]
+    key: EcologyTagKey
+    value: Annotated[str, Field(min_length=1, max_length=40)]
+
+
 class MatchAllOf(BaseModel):
     kind: Literal["all_of"]
     # min_length guard: an empty all_of would vacuously match ANY photo.
@@ -84,6 +112,9 @@ MatchSpec = Annotated[
     | MatchAnyOrganism
     | MatchNotInDex
     | MatchNotWithinRadius
+    | MatchTaxonSet
+    | MatchNotInCurrentExpedition
+    | MatchObservationTag
     | MatchAllOf
     | MatchAnyOf,
     Field(discriminator="kind"),
@@ -99,11 +130,23 @@ MatchAnyOf.model_rebuild()
 # ---------------------------------------------------------------------------
 
 
+class EcologyTagOption(BaseModel):
+    value: Annotated[str, Field(min_length=1, max_length=40)]
+    label: Annotated[str, Field(min_length=1, max_length=80)]
+
+
+class StepTagPrompt(BaseModel):
+    key: EcologyTagKey
+    question: Annotated[str, Field(min_length=1, max_length=120)]
+    options: Annotated[list[EcologyTagOption], Field(min_length=2, max_length=8)]
+
+
 class Step(BaseModel):
     id: str
     description: Annotated[str, Field(min_length=1, max_length=120)]
     match: MatchSpec
     hint: str | None = None
+    tag_prompt: StepTagPrompt | None = None
 
     @field_validator("id")
     @classmethod
@@ -148,6 +191,11 @@ class Expedition(BaseModel):
     tier: Annotated[int, Field(ge=1, le=5)]
     duration_minutes: Annotated[int, Field(ge=5, le=120)]
     environments: Annotated[list[Environment], Field(min_length=1)]
+    theme: Theme = "warmup"
+    learning_goal: Annotated[str, Field(max_length=240)] | None = None
+    difficulty_label: Annotated[str, Field(max_length=80)] | None = None
+    preview_enabled: bool = False
+    unlock_hint: Annotated[str, Field(max_length=160)] | None = None
     intro: Annotated[str, Field(min_length=1, max_length=600)]
     outro: Annotated[str, Field(min_length=1, max_length=300)]
     prerequisites: list[Prerequisite] = Field(default_factory=list)

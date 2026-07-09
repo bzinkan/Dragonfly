@@ -71,6 +71,11 @@ The logical product invariants are unchanged:
 The first-find check must not become read-then-write. The database unique
 constraint is the source of truth under concurrency.
 
+`observations.ecology_tags` stores closed-choice kid selections used by
+Expedition steps, such as `{ "life_stage": "flower" }`. Tags are optional,
+validated against the approved key/value catalog at `POST /v1/observations`,
+and are never free text or runtime-LLM output.
+
 ## Expedition Progress
 
 Expedition progress is personal kid game state. `expedition_progress.user_id`

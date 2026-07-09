@@ -5,6 +5,11 @@
   "tier": 1,
   "duration_minutes": 20,
   "environments": ["street"],
+  "theme": "urban",
+  "learning_goal": "Notice how plants, insects, and birds use built spaces as habitat.",
+  "difficulty_label": "Beginner ecology",
+  "preview_enabled": false,
+  "unlock_hint": null,
   "intro": "Concrete is a habitat. Plants grow through it, insects build under it, birds fly above it. Look closer.",
   "outro": "The city is alive. You just proved it.",
   "prerequisites": [],
@@ -19,7 +24,7 @@
       "id": "bug_on_a_wall",
       "description": "Find a bug on a wall, fence, or window",
       "match": { "kind": "iconic_taxon", "value": "Insecta" },
-      "hint": "Spiders count too -- check corners and under awnings."
+      "hint": "Check corners, porch lights, window screens, and the underside of railings."
     },
     {
       "id": "bird_overhead",

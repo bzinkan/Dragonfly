@@ -300,6 +300,7 @@ def test_create_happy_path(
     assert body["longitude"] == -84.5120
     assert body["taxon_id"] == 12345
     assert body["species_name"] == "Northern Cardinal"
+    assert body["ecology_tags"] == {}
     # geohash4 length 4, base32-ish
     assert body["geohash4"] is not None
     assert len(body["geohash4"]) == 4
@@ -324,6 +325,7 @@ def test_create_happy_path(
     # Created WITH a taxon: the write-once first-assignment marker is set
     # at insert time, so a later clear-and-repick can never re-dispatch.
     assert obs.taxon_first_assigned_at is not None
+    assert obs.ecology_tags == {}
     assert fake_session.commit.await_count == 2
 
 
@@ -400,6 +402,65 @@ def test_create_manual_species_has_no_species_rewards(
     assert body["taxon_id"] is None
     assert body["species_name"] == "Mystery green sprout"
     assert body["rewards"] == []
+
+
+def test_create_saves_closed_choice_ecology_tags(
+    monkeypatch: pytest.MonkeyPatch,
+    observations_client: TestClient,
+    fake_session: AsyncMock,
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    _wire_session(
+        fake_session,
+        user=_user_row(),
+        photo=_photo_row(),
+        membership_id="01J0MEMBERID0000000000ULID",
+    )
+
+    async def fake_dispatch(ctx: Context, handlers: object) -> list[Reward]:
+        assert ctx.observation.ecology_tags == {"life_stage": "flower"}
+        return []
+
+    monkeypatch.setattr(observations_routes, "dispatch", fake_dispatch)
+
+    response = observations_client.post(
+        "/v1/observations",
+        json={
+            "photo_id": _PHOTO_ID,
+            "latitude": 39.1031,
+            "longitude": -84.5120,
+            "species_name": "Mystery flower",
+            "ecology_tags": {"life_stage": "flower"},
+        },
+        headers={"Authorization": "Bearer fake"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["ecology_tags"] == {"life_stage": "flower"}
+
+
+@pytest.mark.parametrize(
+    "ecology_tags",
+    [
+        {"unknown": "flower"},
+        {"life_stage": "not_a_stage"},
+        {"life_stage": 123},
+    ],
+)
+def test_create_rejects_unknown_ecology_tags(
+    monkeypatch: pytest.MonkeyPatch,
+    observations_client: TestClient,
+    ecology_tags: dict[str, object],
+) -> None:
+    _stub_token_verifier(monkeypatch)
+
+    response = observations_client.post(
+        "/v1/observations",
+        json=_valid_payload() | {"ecology_tags": ecology_tags},
+        headers={"Authorization": "Bearer fake"},
+    )
+
+    assert response.status_code == 422
 
 
 def test_create_fills_species_name_from_local_cache_when_available(

@@ -163,6 +163,43 @@ def test_available_returns_unstarted_unblocked_expeditions(
         assert response.status_code == 200
         body = response.json()
         assert [item["id"] for item in body["items"]] == ["a", "b"]
+        assert body["locked_preview_items"] == []
+
+
+def test_available_returns_locked_preview_items_when_enabled(
+    monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    locked = _exp_body(
+        exp_id="locked_preview",
+        prerequisites=[{"kind": "dex_count_at_least", "value": 5}],
+    ) | {
+        "theme": "decomposers",
+        "learning_goal": "Find the recyclers underfoot.",
+        "difficulty_label": "Preview",
+        "preview_enabled": True,
+        "unlock_hint": "Reach 5 Dex species.",
+    }
+    hidden = _exp_body(
+        exp_id="hidden_locked",
+        prerequisites=[{"kind": "dex_count_at_least", "value": 5}],
+    )
+    _wire_available(
+        fake_session,
+        user=_user(),
+        dex_count=0,
+        contents=[_content("locked_preview", locked), _content("hidden_locked", hidden)],
+    )
+    for client in _build_client(fake_session):
+        response = client.get("/v1/expeditions/available", headers={"Authorization": "Bearer fake"})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["items"] == []
+        assert [item["id"] for item in body["locked_preview_items"]] == ["locked_preview"]
+        preview = body["locked_preview_items"][0]
+        assert preview["theme"] == "decomposers"
+        assert preview["learning_goal"] == "Find the recyclers underfoot."
+        assert preview["unlock_hint"] == "Reach 5 Dex species."
 
 
 def test_available_filters_already_started(

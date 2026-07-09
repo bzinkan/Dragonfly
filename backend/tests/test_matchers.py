@@ -9,9 +9,12 @@ from app.models.expedition import (
     MatchAnyOf,
     MatchAnyOrganism,
     MatchIconicTaxon,
+    MatchNotInCurrentExpedition,
     MatchNotInDex,
     MatchNotWithinRadius,
+    MatchObservationTag,
     MatchTaxonId,
+    MatchTaxonSet,
 )
 
 
@@ -20,6 +23,9 @@ def _inputs(
     taxon: TaxonInfo | None = None,
     dex: frozenset[int] = frozenset(),
     priors: tuple[PriorObservation, ...] = (),
+    taxon_sets: dict[str, frozenset[int]] | None = None,
+    current_expedition_taxa: frozenset[int] = frozenset(),
+    ecology_tags: dict[str, str] | None = None,
     lat: float = 39.1,
     lng: float = -84.5,
 ) -> MatcherInputs:
@@ -29,6 +35,9 @@ def _inputs(
         user_prior_observations=priors,
         obs_latitude=lat,
         obs_longitude=lng,
+        taxon_sets=taxon_sets or {},
+        current_expedition_taxon_ids=current_expedition_taxa,
+        ecology_tags=ecology_tags or {},
     )
 
 
@@ -140,6 +149,68 @@ def test_not_within_radius_no_match_when_a_prior_is_too_close() -> None:
     spec = MatchNotWithinRadius(kind="not_within_radius_of_existing", radius_meters=50)
     near = PriorObservation(latitude=39.1, longitude=-84.5)  # same point
     assert matches(spec, _inputs(lat=39.1, lng=-84.5, priors=(near,))) is False
+
+
+# ---------------------------------------------------------------------------
+# taxon_set
+# ---------------------------------------------------------------------------
+
+
+def test_taxon_set_matches_exact_taxon() -> None:
+    spec = MatchTaxonSet(kind="taxon_set", value="pollinators")
+    inputs = _inputs(
+        taxon=_bird_taxon(47157),
+        taxon_sets={"pollinators": frozenset({47157})},
+    )
+    assert matches(spec, inputs) is True
+
+
+def test_taxon_set_matches_descendant_via_ancestor_chain() -> None:
+    spec = MatchTaxonSet(kind="taxon_set", value="pollinators")
+    taxon = TaxonInfo(taxon_id=999999, iconic_taxon="Insecta", ancestor_ids=(1, 47157, 123))
+    inputs = _inputs(taxon=taxon, taxon_sets={"pollinators": frozenset({47157})})
+    assert matches(spec, inputs) is True
+
+
+def test_taxon_set_no_match_for_missing_set_or_taxon() -> None:
+    spec = MatchTaxonSet(kind="taxon_set", value="pollinators")
+    assert matches(spec, _inputs(taxon=_bird_taxon(12345))) is False
+    assert (
+        matches(spec, _inputs(taxon=None, taxon_sets={"pollinators": frozenset({47157})})) is False
+    )
+
+
+# ---------------------------------------------------------------------------
+# not_in_current_expedition
+# ---------------------------------------------------------------------------
+
+
+def test_not_in_current_expedition_matches_new_taxon_for_this_run() -> None:
+    spec = MatchNotInCurrentExpedition(kind="not_in_current_expedition")
+    inputs = _inputs(taxon=_bird_taxon(12345), current_expedition_taxa=frozenset({999}))
+    assert matches(spec, inputs) is True
+
+
+def test_not_in_current_expedition_blocks_repeat_taxon_for_this_run() -> None:
+    spec = MatchNotInCurrentExpedition(kind="not_in_current_expedition")
+    inputs = _inputs(taxon=_bird_taxon(12345), current_expedition_taxa=frozenset({12345}))
+    assert matches(spec, inputs) is False
+
+
+# ---------------------------------------------------------------------------
+# observation_tag
+# ---------------------------------------------------------------------------
+
+
+def test_observation_tag_matches_closed_choice_value() -> None:
+    spec = MatchObservationTag(kind="observation_tag", key="life_stage", value="flower")
+    assert matches(spec, _inputs(ecology_tags={"life_stage": "flower"})) is True
+
+
+def test_observation_tag_no_match_for_missing_or_different_value() -> None:
+    spec = MatchObservationTag(kind="observation_tag", key="life_stage", value="flower")
+    assert matches(spec, _inputs(ecology_tags={})) is False
+    assert matches(spec, _inputs(ecology_tags={"life_stage": "seedling"})) is False
 
 
 # ---------------------------------------------------------------------------

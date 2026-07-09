@@ -5,6 +5,11 @@
   "tier": 2,
   "duration_minutes": 60,
   "environments": ["yard", "park", "street", "school", "other"],
+  "theme": "seasonal",
+  "learning_goal": "Build Dex depth with new species and new places rather than repeated finds.",
+  "difficulty_label": "Collector challenge",
+  "preview_enabled": true,
+  "unlock_hint": "Complete Food Web Anywhere and reach 5 Dex species.",
   "intro": "Five species in your Dex means you're past the easy finds. This challenge only counts species you've never logged -- four finds, zero repeats, wherever you happen to be.",
   "outro": "Four brand-new species in a single outing -- collectors chase streaks like that for years. Your Dex isn't a beginner's Dex anymore.",
   "prerequisites": [

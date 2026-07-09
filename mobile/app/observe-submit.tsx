@@ -31,6 +31,7 @@ import { listMyExpeditions } from "@/src/api/expeditions";
 import {
   activeProgress,
   expeditionRewardTarget,
+  nextObjective,
   selectExpeditionRewards,
   selectSanctuaryRewards,
 } from "@/src/expeditions/logic";
@@ -96,6 +97,7 @@ export default function ObserveSubmitScreen() {
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [manualSpecies, setManualSpecies] = useState("");
   const [showManualInput, setShowManualInput] = useState(false);
+  const [ecologyTags, setEcologyTags] = useState<Record<string, string>>({});
   // Geocoded place_name resolves in parallel with /identify; gets folded
   // into whatever PATCH the kid eventually sends.
   const [placeName, setPlaceName] = useState<string | null>(null);
@@ -228,10 +230,20 @@ export default function ObserveSubmitScreen() {
     mission.data?.items ?? [],
     mission.data?.active_expedition_id,
   );
+  const activeObjective = nextObjective(activeMission);
+  const tagPrompt = activeObjective?.tag_prompt ?? null;
+  const missingRequiredTag =
+    phase.kind === "picking" && tagPrompt !== null && !ecologyTags[tagPrompt.key];
   const rewardTarget = expeditionRewardTarget(
     expeditionRewards,
     activeMission?.expedition_id,
   );
+
+  function selectedEcologyTags(): Record<string, string> {
+    if (!tagPrompt) return {};
+    const value = ecologyTags[tagPrompt.key];
+    return value ? { [tagPrompt.key]: value } : {};
+  }
 
   function finishDone(observationId: string) {
     progressRef.current.pendingCreate = null;
@@ -253,6 +265,13 @@ export default function ObserveSubmitScreen() {
     if (!coords) return;
     const presigned = progressRef.current.presigned;
     if (!presigned) return;
+    if (tagPrompt && !ecologyTags[tagPrompt.key]) {
+      setPhase({
+        kind: "error",
+        message: "Choose the visible life stage before saving.",
+      });
+      return;
+    }
 
     // Stashed before the request so Try again can re-send the same final
     // choice if the create response is lost or the network drops.
@@ -265,6 +284,7 @@ export default function ObserveSubmitScreen() {
       taxon_id: choice.taxon_id,
       species_name: choice.species_name,
       place_name: placeName,
+      ecology_tags: selectedEcologyTags(),
     });
     if (obs.taxon_id !== null) {
       void queryClient.invalidateQueries({ queryKey: ["dex", "me"] });
@@ -487,6 +507,45 @@ export default function ObserveSubmitScreen() {
               unknown organism.
             </Text>
           )}
+          {tagPrompt ? (
+            <View style={styles.tagPrompt}>
+              <Text style={styles.tagQuestion}>{tagPrompt.question}</Text>
+              <View style={styles.tagOptions}>
+                {tagPrompt.options.map((option) => {
+                  const selected = ecologyTags[tagPrompt.key] === option.value;
+                  return (
+                    <Pressable
+                      key={option.value}
+                      style={[
+                        styles.tagOption,
+                        selected && styles.tagOptionSelected,
+                      ]}
+                      onPress={() =>
+                        setEcologyTags((prev) => ({
+                          ...prev,
+                          [tagPrompt.key]: option.value,
+                        }))
+                      }
+                    >
+                      <Text
+                        style={[
+                          styles.tagOptionText,
+                          selected && styles.tagOptionTextSelected,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              {missingRequiredTag ? (
+                <Text style={styles.help}>
+                  Pick the visible stage before saving this observation.
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
           {!phase.cvUnavailable &&
             !phase.noMatches &&
             phase.suggestions.length === 0 && (
@@ -498,7 +557,11 @@ export default function ObserveSubmitScreen() {
           {phase.suggestions.map((s) => (
             <Pressable
               key={`${s.source ?? "inat"}-${s.taxon_id ?? s.common_name ?? s.scientific_name}-${s.score}`}
-              style={[styles.suggestion]}
+              style={[
+                styles.suggestion,
+                missingRequiredTag && styles.suggestionDisabled,
+              ]}
+              disabled={missingRequiredTag}
               onPress={() => void pickSuggestion(s)}
             >
               <Text style={styles.suggestionName}>
@@ -530,9 +593,10 @@ export default function ObserveSubmitScreen() {
                 style={[
                   styles.button,
                   styles.buttonPrimary,
-                  manualSpecies.trim().length === 0 && styles.buttonDisabled,
+                  (manualSpecies.trim().length === 0 || missingRequiredTag) &&
+                    styles.buttonDisabled,
                 ]}
-                disabled={manualSpecies.trim().length === 0}
+                disabled={manualSpecies.trim().length === 0 || missingRequiredTag}
                 onPress={() => void pickManual()}
               >
                 <Text style={styles.buttonText}>Save</Text>
@@ -541,7 +605,12 @@ export default function ObserveSubmitScreen() {
           )}
 
           <Pressable
-            style={[styles.suggestion, styles.suggestionGhost]}
+            style={[
+              styles.suggestion,
+              styles.suggestionGhost,
+              missingRequiredTag && styles.suggestionDisabled,
+            ]}
+            disabled={missingRequiredTag}
             onPress={() => void pickSkip()}
           >
             <Text style={styles.suggestionName}>Skip for now</Text>
@@ -728,6 +797,47 @@ const styles = StyleSheet.create({
   picker: {
     marginTop: 16,
   },
+  tagPrompt: {
+    marginTop: 10,
+    marginBottom: 8,
+    padding: 12,
+    borderRadius: 6,
+    backgroundColor: "#eef7ed",
+    borderColor: "#8bbf86",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  tagQuestion: {
+    color: "#14351f",
+    fontSize: 14,
+    fontWeight: "700",
+    marginBottom: 8,
+  },
+  tagOptions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    backgroundColor: "transparent",
+  },
+  tagOption: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 16,
+    backgroundColor: "#fff",
+    borderColor: "#9ca3af",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  tagOptionSelected: {
+    backgroundColor: "#267344",
+    borderColor: "#267344",
+  },
+  tagOptionText: {
+    color: "#14351f",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  tagOptionTextSelected: {
+    color: "#fff",
+  },
   suggestion: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -742,6 +852,9 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
     borderColor: "#888",
     borderWidth: StyleSheet.hairlineWidth,
+  },
+  suggestionDisabled: {
+    opacity: 0.45,
   },
   suggestionName: {
     fontSize: 15,
