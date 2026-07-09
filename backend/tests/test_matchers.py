@@ -175,7 +175,9 @@ def test_taxon_set_matches_descendant_via_ancestor_chain() -> None:
 def test_taxon_set_no_match_for_missing_set_or_taxon() -> None:
     spec = MatchTaxonSet(kind="taxon_set", value="pollinators")
     assert matches(spec, _inputs(taxon=_bird_taxon(12345))) is False
-    assert matches(spec, _inputs(taxon=None, taxon_sets={"pollinators": frozenset({47157})})) is False
+    assert (
+        matches(spec, _inputs(taxon=None, taxon_sets={"pollinators": frozenset({47157})})) is False
+    )
 
 
 # ---------------------------------------------------------------------------
