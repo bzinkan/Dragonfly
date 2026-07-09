@@ -1,0 +1,52 @@
+{
+  "id": "food_chain_builder",
+  "title": "Food Chain Builder",
+  "subtitle": "Producer, consumer, hunter, recycler",
+  "tier": 2,
+  "duration_minutes": 45,
+  "environments": ["yard", "park", "school", "other"],
+  "theme": "food_web",
+  "learning_goal": "Build a simple food-chain set from observations that play different ecological roles.",
+  "difficulty_label": "Food web set",
+  "preview_enabled": true,
+  "unlock_hint": "Complete Food Web Anywhere.",
+  "intro": "A food chain is a path through a larger food web. Build one from four real observations.",
+  "outro": "You built a field-note food chain from real organisms, not a worksheet.",
+  "prerequisites": [
+    { "kind": "completed_expedition", "value": "anywhere_starter" }
+  ],
+  "steps": [
+    {
+      "id": "producer",
+      "description": "Find a producer",
+      "match": { "kind": "iconic_taxon", "value": "Plantae" },
+      "hint": "Plants are producers because they make food from sunlight."
+    },
+    {
+      "id": "plant_visitor",
+      "description": "Find a plant visitor",
+      "match": { "kind": "taxon_set", "value": "pollinators" },
+      "hint": "Look on flowers and leaves for insects feeding or moving pollen."
+    },
+    {
+      "id": "hunter",
+      "description": "Find a hunter",
+      "match": {
+        "kind": "any_of",
+        "matches": [
+          { "kind": "iconic_taxon", "value": "Arachnida" },
+          { "kind": "iconic_taxon", "value": "Aves" },
+          { "kind": "iconic_taxon", "value": "Amphibia" },
+          { "kind": "iconic_taxon", "value": "Reptilia" }
+        ]
+      },
+      "hint": "Spiders, birds, frogs, lizards, and snakes all hunt other animals."
+    },
+    {
+      "id": "recycler",
+      "description": "Find a recycler",
+      "match": { "kind": "taxon_set", "value": "decomposers" },
+      "hint": "Decomposers return old plant and animal material to the soil."
+    }
+  ]
+}

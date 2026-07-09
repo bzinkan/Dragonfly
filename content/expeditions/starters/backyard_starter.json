@@ -5,7 +5,12 @@
   "tier": 1,
   "duration_minutes": 20,
   "environments": ["yard", "park", "street", "school", "other"],
-  "intro": "Look around. Even the most familiar place is full of life you've never noticed. Find three living things and log them.",
+  "theme": "warmup",
+  "learning_goal": "Practice the basic loop: find, photograph, identify, and save real organisms.",
+  "difficulty_label": "Warm-up",
+  "preview_enabled": false,
+  "unlock_hint": null,
+  "intro": "Warm up with a simple field set: one plant, one insect, and one surprise organism from wherever you are.",
   "outro": "You just contributed real data to science. Welcome to Hinterland.",
   "prerequisites": [],
   "steps": [
@@ -23,7 +28,7 @@
     },
     {
       "id": "wildcard",
-      "description": "Find one more living thing -- your choice",
+      "description": "Find one surprise organism",
       "match": { "kind": "any_organism" },
       "hint": "Bird, fungus, spider, snail -- surprise us."
     }

@@ -29,7 +29,7 @@ from typing import Annotated, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import desc, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,6 +45,7 @@ from app.models.expedition import (
     PrereqCompleted,
     PrereqDexCount,
     Step,
+    StepTagPrompt,
 )
 from app.services.expedition_progress import parse_step_completion
 from app.services.expedition_ranking import (
@@ -78,6 +79,11 @@ class ExpeditionSummary(BaseModel):
     tier: int
     duration_minutes: int
     environments: list[str]
+    theme: str
+    learning_goal: str | None
+    difficulty_label: str | None
+    preview_enabled: bool
+    unlock_hint: str | None
     intro: str
     # Additive: always present, defaults to "no regional signal".
     relevance: Relevance = Relevance(level="unknown", reason=None)
@@ -85,6 +91,7 @@ class ExpeditionSummary(BaseModel):
 
 class AvailableListResponse(BaseModel):
     items: list[ExpeditionSummary]
+    locked_preview_items: list[ExpeditionSummary] = Field(default_factory=list)
 
 
 class StepProgress(BaseModel):
@@ -93,6 +100,7 @@ class StepProgress(BaseModel):
     id: str
     description: str
     hint: str | None
+    tag_prompt: StepTagPrompt | None = None
     completed_at: datetime | None
 
 
@@ -102,6 +110,9 @@ class ProgressItem(BaseModel):
     subtitle: str | None
     intro: str
     outro: str
+    theme: str
+    learning_goal: str | None
+    difficulty_label: str | None
     started_at: datetime
     completed_at: datetime | None
     focused_at: datetime | None
@@ -173,6 +184,24 @@ def _prerequisites_met(exp: Expedition, *, dex_count: int, completed_ids: set[st
     return True
 
 
+def _summary_for(exp: Expedition, relevance: Relevance) -> ExpeditionSummary:
+    return ExpeditionSummary(
+        id=exp.id,
+        title=exp.title,
+        subtitle=exp.subtitle,
+        tier=exp.tier,
+        duration_minutes=exp.duration_minutes,
+        environments=list(exp.environments),
+        theme=exp.theme,
+        learning_goal=exp.learning_goal,
+        difficulty_label=exp.difficulty_label,
+        preview_enabled=exp.preview_enabled,
+        unlock_hint=exp.unlock_hint,
+        intro=exp.intro,
+        relevance=relevance,
+    )
+
+
 def _step_progress(step: Step, completed_value: object) -> StepProgress:
     """Build one StepProgress, coercing the stored iso string via Pydantic.
 
@@ -186,6 +215,7 @@ def _step_progress(step: Step, completed_value: object) -> StepProgress:
                 "id": step.id,
                 "description": step.description,
                 "hint": step.hint,
+                "tag_prompt": step.tag_prompt,
                 "completed_at": completion.completed_at,
             }
         )
@@ -194,6 +224,7 @@ def _step_progress(step: Step, completed_value: object) -> StepProgress:
             id=step.id,
             description=step.description,
             hint=step.hint,
+            tag_prompt=step.tag_prompt,
             completed_at=None,
         )
 
@@ -280,6 +311,7 @@ async def list_available(
     region = await region_iconic_taxa(session, region_hash) if region_hash is not None else None
 
     ranked: list[tuple[int, ExpeditionSummary]] = []
+    locked_previews: list[ExpeditionSummary] = []
     for row in rows:
         if row.id in any_progress_ids:
             # Either in-progress or already done -- not "available".
@@ -289,24 +321,20 @@ async def list_available(
         except Exception:
             log.warning("expeditions.available.bad_content", id=row.id)
             continue
-        if not _prerequisites_met(exp, dex_count=dex_count, completed_ids=completed_ids):
-            continue
         bucket, level, reason = relevance_for(required_iconic_taxa(exp), region)
-        ranked.append(
-            (
-                bucket,
-                ExpeditionSummary(
-                    id=exp.id,
-                    title=exp.title,
-                    subtitle=exp.subtitle,
-                    tier=exp.tier,
-                    duration_minutes=exp.duration_minutes,
-                    environments=list(exp.environments),
-                    intro=exp.intro,
-                    relevance=Relevance(level=level, reason=reason),
-                ),
-            )
+        summary = _summary_for(exp, Relevance(level=level, reason=reason))
+
+        prerequisites_met = _prerequisites_met(
+            exp,
+            dex_count=dex_count,
+            completed_ids=completed_ids,
         )
+        if not prerequisites_met:
+            if exp.preview_enabled:
+                locked_previews.append(summary)
+            continue
+
+        ranked.append((bucket, summary))
 
     # Rows arrive (tier, id)-ordered, so this stable sort yields
     # (bucket, tier, id). Downrank, never hide: every bucket stays
@@ -324,7 +352,10 @@ async def list_available(
         region_known=region is not None,
     )
 
-    return AvailableListResponse(items=[summary for _, summary in ranked])
+    return AvailableListResponse(
+        items=[summary for _, summary in ranked],
+        locked_preview_items=locked_previews,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -362,6 +393,9 @@ async def list_my_progress(
             subtitle = exp.subtitle
             intro = exp.intro
             outro = exp.outro
+            theme = exp.theme
+            learning_goal = exp.learning_goal
+            difficulty_label = exp.difficulty_label
             steps = [_step_progress(step, completed.get(step.id)) for step in exp.steps]
             completed_step_count = _completed_step_count(exp, completed)
         except Exception:
@@ -371,6 +405,9 @@ async def list_my_progress(
             subtitle = None
             intro = ""
             outro = ""
+            theme = "warmup"
+            learning_goal = None
+            difficulty_label = None
             steps = []
             completed_step_count = 0
         items.append(
@@ -380,6 +417,9 @@ async def list_my_progress(
                 subtitle=subtitle,
                 intro=intro,
                 outro=outro,
+                theme=theme,
+                learning_goal=learning_goal,
+                difficulty_label=difficulty_label,
                 started_at=progress.created_at,
                 completed_at=progress.completed_at,
                 focused_at=progress.focused_at,

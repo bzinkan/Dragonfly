@@ -18,7 +18,12 @@ One JSON file per expedition, living in `content/expeditions/<tier>/<id>.json`. 
   "tier": 1,
   "duration_minutes": 20,
   "environments": ["yard", "park", "street", "school", "other"],
-  "intro": "Look around. Even the most familiar place is full of life you've never noticed. Find three living things and log them.",
+  "theme": "warmup",
+  "learning_goal": "Practice making a simple field set: one plant, one small animal, and one surprise organism.",
+  "difficulty_label": "Warm-up",
+  "preview_enabled": true,
+  "unlock_hint": null,
+  "intro": "Warm up with a simple field set: one plant, one insect, and one surprise organism from wherever you are.",
   "outro": "You just contributed real data to science. Welcome to Hinterland.",
   "prerequisites": [],
   "steps": [
@@ -36,7 +41,7 @@ One JSON file per expedition, living in `content/expeditions/<tier>/<id>.json`. 
     },
     {
       "id": "wildcard",
-      "description": "Find one more living thing — your choice",
+      "description": "Find one surprise organism",
       "match": { "kind": "any_organism" },
       "hint": "Bird, fungus, spider, snail — surprise us."
     }
@@ -54,6 +59,11 @@ One JSON file per expedition, living in `content/expeditions/<tier>/<id>.json`. 
 | `tier`             | integer       | 1 = starter, 2 = unlocked after completing any tier 1, 3+ = themed |
 | `duration_minutes` | integer       | Honest estimate — kids hate being told "quick" when it isn't    |
 | `environments`     | list[string]  | Any of: `yard`, `park`, `street`, `school`, `other`. Filters which expeditions appear in the onboarding picker |
+| `theme`            | string        | One of `warmup`, `food_web`, `pollinators`, `decomposers`, `trees`, `wetland`, `invasive`, `urban`, `seasonal`; drives placeholder card treatment |
+| `learning_goal`    | string/null   | Short science outcome for cards and briefing screens            |
+| `difficulty_label` | string/null   | Kid-facing scope label like `Warm-up`, `Starter ecology`, or `Needs a few finds` |
+| `preview_enabled`  | boolean       | If true, locked expeditions can appear in the preview shelf before prerequisites are met |
+| `unlock_hint`      | string/null   | Copy shown on locked preview cards, e.g. `Complete Tree Trio to unlock.` |
 | `intro`            | string        | Shown when the kid opens the expedition                         |
 | `outro`            | string        | Shown on completion, after the celebration sequence             |
 | `prerequisites`    | list[object]  | See [Prerequisites](#prerequisites); empty for starters         |
@@ -67,6 +77,7 @@ One JSON file per expedition, living in `content/expeditions/<tier>/<id>.json`. 
 | `description` | string  | One line, imperative voice ("Find…", "Spot…", "Look for…")                     |
 | `match`       | object  | The match spec — see below                                                     |
 | `hint`        | string  | Optional; shown if the kid taps the step. Concrete examples, not abstract help |
+| `tag_prompt`  | object  | Optional closed-choice prompt for steps that need a kid-selected ecology tag   |
 
 ## The match language
 
@@ -79,15 +90,18 @@ expeditions when their next steps also match.
 
 **Matching is deliberately simple.** The match language is a small declarative vocabulary interpreted by the matcher registry in `app/matchers/`, not a full expression engine. If a match you want to express can't be written with one of the kinds below, the answer is usually "add a new kind" (small, tested, reviewable) not "invent a DSL."
 
-### Phase 1 match kinds
+### Match kinds
 
 | Kind                          | When to reach for it                                    |
 |-------------------------------|---------------------------------------------------------|
 | `iconic_taxon`                | Broad category like Plantae, Insecta, Aves, Fungi       |
 | `taxon_id`                    | A specific species or genus from iNaturalist            |
+| `taxon_set`                   | Curated ecology groups like pollinators, decomposers, deciduous trees, semi-aquatic animals, or U.S. common invasives |
 | `any_organism`                | Wildcard — any living observation counts                |
 | `not_in_dex`                  | Nudge toward finding something new to the user          |
+| `not_in_current_expedition`   | Require a different species than earlier completed steps in this expedition |
 | `not_within_radius_of_existing` | Nudge toward geographic variety                       |
+| `observation_tag`             | Match a closed-choice kid-selected tag such as a plant life stage |
 
 #### `iconic_taxon`
 
@@ -109,6 +123,16 @@ Matches a specific iNat taxon or anything under it in the taxonomic tree. Use wh
 
 Looking up the right `value`: search the species on [iNaturalist](https://www.inaturalist.org) and copy the numeric ID from the URL (`/taxa/47157` → `47157`). Put the common and scientific name in a comment at the top of the expedition file for future-you. `include_descendants: true` is the common case ("any butterfly" = taxon ID for order Lepidoptera, descendants included).
 
+#### `taxon_set`
+
+Matches one of the manually curated groups in `content/expedition_taxon_sets.json`. The set file is intentionally small and reviewed by hand; every entry must carry `taxon_id_verified: true` so content authors can see which IDs were checked against iNaturalist.
+
+```json
+{ "kind": "taxon_set", "value": "pollinators", "include_descendants": true }
+```
+
+Use this for ecology quests where a single iNaturalist taxon is too narrow: `pollinators`, `decomposers`, `deciduous_trees`, `semi_aquatic_animals`, and `us_common_invasives`.
+
 #### `any_organism`
 
 Matches anything. Use for wildcard slots in starter expeditions where the goal is momentum, not specificity.
@@ -127,12 +151,53 @@ Matches any observation of a species not already in this user's Dex. Use to enco
 { "kind": "not_in_dex" }
 ```
 
+#### `not_in_current_expedition`
+
+Matches only when the current observation's taxon has not already completed an earlier step in this expedition run. Use this with `all_of` for "find three different deciduous trees" or "find three different pollinators." It requires a real `taxon_id`; manual/no-match observations will not satisfy it.
+
+```json
+{
+  "kind": "all_of",
+  "matches": [
+    { "kind": "taxon_set", "value": "deciduous_trees" },
+    { "kind": "not_in_current_expedition" }
+  ]
+}
+```
+
 #### `not_within_radius_of_existing`
 
 Matches any observation at least `radius_meters` away from any prior observation by this user. Use to push kids to explore rather than photograph the same tree.
 
 ```json
 { "kind": "not_within_radius_of_existing", "radius_meters": 50 }
+```
+
+#### `observation_tag`
+
+Matches a closed-choice ecology tag saved with the observation. The current approved tag key is `life_stage`, with values `flower`, `fruit_seed`, `seedling`, `leaf`, `adult`, and `egg_larva_nymph`. Do not use free text here; the mobile flow renders the options from the step's `tag_prompt`.
+
+```json
+{
+  "kind": "observation_tag",
+  "key": "life_stage",
+  "value": "flower"
+}
+```
+
+A step that uses `observation_tag` should include a matching prompt:
+
+```json
+{
+  "tag_prompt": {
+    "key": "life_stage",
+    "question": "What stage can you see?",
+    "options": [
+      { "value": "flower", "label": "Flower" },
+      { "value": "fruit_seed", "label": "Fruit or seeds" }
+    ]
+  }
+}
 ```
 
 ### Composing kinds
@@ -167,7 +232,7 @@ Kid must have at least 5 species in their Dex. Used to gate tier-2 expeditions b
 
 Kid must have completed the named expedition. Used for direct-sequel expeditions.
 
-Prerequisites are ANDed together: all must be satisfied for the expedition to appear. Kids don't see locked expeditions in the UI — they just appear when unlocked, so "where did that new one come from?" is part of the experience.
+Prerequisites are ANDed together: all must be satisfied for the expedition to become startable. If `preview_enabled` is true, the expedition may still appear in the locked preview shelf with `unlock_hint`; otherwise it stays hidden until unlocked.
 
 ## Validation
 
@@ -199,15 +264,28 @@ class MatchTaxonId(BaseModel):
     value: int
     include_descendants: bool = True
 
+class MatchTaxonSet(BaseModel):
+    kind: Literal["taxon_set"]
+    value: str
+    include_descendants: bool = True
+
 class MatchAnyOrganism(BaseModel):
     kind: Literal["any_organism"]
 
 class MatchNotInDex(BaseModel):
     kind: Literal["not_in_dex"]
 
+class MatchNotInCurrentExpedition(BaseModel):
+    kind: Literal["not_in_current_expedition"]
+
 class MatchNotWithinRadius(BaseModel):
     kind: Literal["not_within_radius_of_existing"]
     radius_meters: Annotated[int, Field(ge=1, le=10_000)]
+
+class MatchObservationTag(BaseModel):
+    kind: Literal["observation_tag"]
+    key: Literal["life_stage"]
+    value: str
 
 class MatchAllOf(BaseModel):
     kind: Literal["all_of"]
@@ -222,16 +300,27 @@ MatchSpec = Annotated[
     Union[
         MatchIconicTaxon, MatchTaxonId, MatchAnyOrganism,
         MatchNotInDex, MatchNotWithinRadius,
+        MatchTaxonSet, MatchNotInCurrentExpedition, MatchObservationTag,
         MatchAllOf, MatchAnyOf,
     ],
     Field(discriminator="kind"),
 ]
+
+class EcologyTagOption(BaseModel):
+    value: str
+    label: str
+
+class StepTagPrompt(BaseModel):
+    key: Literal["life_stage"]
+    question: str
+    options: Annotated[list[EcologyTagOption], Field(min_length=2, max_length=6)]
 
 class Step(BaseModel):
     id: str
     description: str
     match: MatchSpec
     hint: str | None = None
+    tag_prompt: StepTagPrompt | None = None
 
 class PrereqDexCount(BaseModel):
     kind: Literal["dex_count_at_least"]
@@ -253,6 +342,14 @@ class Expedition(BaseModel):
     tier: Annotated[int, Field(ge=1, le=5)]
     duration_minutes: Annotated[int, Field(ge=5, le=120)]
     environments: list[Literal["yard", "park", "street", "school", "other"]]
+    theme: Literal[
+        "warmup", "food_web", "pollinators", "decomposers", "trees",
+        "wetland", "invasive", "urban", "seasonal",
+    ] = "warmup"
+    learning_goal: str | None = None
+    difficulty_label: str | None = None
+    preview_enabled: bool = False
+    unlock_hint: str | None = None
     intro: str
     outro: str
     prerequisites: list[Prerequisite] = []
@@ -298,10 +395,10 @@ content/expeditions/*.json
 Follows the same pattern as adding a dispatcher handler: small, local, reviewed.
 
 1. **Define the spec.** Add a new `Match<Name>` Pydantic model in `models/expedition.py`. Add it to the `MatchSpec` union. This is the only place the schema is defined.
-2. **Implement the matcher.** Add a file in `app/matchers/kinds/<name>.py` with a function that takes `(spec: Match<Name>, observation: Observation, user_state: UserState) -> bool`. Keep it pure — no DB calls if at all possible.
+2. **Implement the matcher.** Add a file in `app/matchers/kinds/<name>.py` with a function that takes `(spec: Match<Name>, inputs: MatcherInputs) -> bool`. Keep it pure — no DB calls inside individual matcher functions.
 3. **Register it.** One line in `app/matchers/registry.py`.
 4. **Test it.** Unit test the matcher against 5–10 observation fixtures covering positive, negative, and edge cases (e.g. missing fields in the observation). Snapshot-test an expedition that uses it through the dispatcher test harness.
-5. **Document it.** Add a row to the Phase 1 match kinds table above, with an example.
+5. **Document it.** Add a row to the match kinds table above, with an example.
 6. **Regenerate the JSON Schema.** `python scripts/regenerate_schema.py`. Commit both the Pydantic change and the schema regeneration in the same PR.
 
 No step 7. No touching `ExpeditionHandler` — it dispatches against the registry, never against specific kinds.
@@ -322,30 +419,44 @@ The copy a kid reads matters as much as the mechanics. A few principles that sho
 
 **Length targets.** Intro: 1–2 sentences. Outro: 1 sentence. Step description: under 10 words. Hint: under 20 words. Brevity is a feature for this audience.
 
-## The five starter expeditions (reference)
+## Starter expedition catalog
 
-Each starter is tier 1, no prerequisites, `duration_minutes: 20`. Filenames under `content/expeditions/starters/`.
+Starter expeditions are tier 1, have no prerequisites, and should be visible immediately. The first mission stays easy, but the catalog should quickly signal real ecology themes.
 
-1. **`backyard_starter.json` — Start Where You Are.** The canonical example above. Plant / insect / surprise. `environments: ["yard", "park", "street", "school", "other"]` — the only starter that works anywhere, surfaced as the default.
+1. **`backyard_starter.json` — Start Where You Are.** Warm-up: plant / insect / surprise organism. This is the default first quest and works anywhere.
 
-2. **`park_starter.json` — Park Patrol.** Tree (Plantae) / something flying (`any_of` Aves, Insecta) / something on the ground the kid hasn't logged before (plain `not_in_dex` — no taxon exclusion). `environments: ["park"]`.
+2. **`park_starter.json` — Park Patrol.** Tree / flying animal / ground-level new find. A gentle park ecology bridge.
 
-3. **`street_starter.json` — Sidewalk Science.** A plant in a crack (Plantae) / a bug on a wall (Insecta) / a bird overhead (Aves). The copy leans into how cities are habitats too — this is the hardest environment to feel "natural" in, so the voice matters most here. `environments: ["street"]`.
+3. **`street_starter.json` — Sidewalk Science.** Plant / insect / bird in an urban habitat.
 
-4. **`school_starter.json` — Schoolyard Survey.** Something near the fence / something near a door / something nobody else has noticed (uses `not_within_radius_of_existing` at 50m to push away from the popular tree). `environments: ["school"]`.
+4. **`school_starter.json` — Schoolyard Survey.** Fence / doorway / distance-based find to show that a schoolyard has microhabitats.
 
-5. **`anywhere_starter.json` — Found Anywhere.** Three observations, no taxon constraint, `not_in_dex` on each. The fallback — works in a car, a boat, a grandma's apartment. `environments: ["other"]`.
+5. **`anywhere_starter.json` — Food Web Anywhere.** Producer / consumer / recycler. This replaces the old generic warm-up copy with a specific food-web learning goal.
 
-## The five tier-2 sequels (reference)
+6. **`pollinator_scout.json` — Pollinator Scout.** Flower / pollinator / different pollinator. Uses `taxon_set: pollinators` plus `not_in_current_expedition`.
 
-Each starter unlocks exactly one tier-2 sequel via a `completed_expedition` prerequisite, giving an unbroken ladder from "first observation" to "themed challenge." Filenames under `content/expeditions/tier2/`.
+7. **`decomposer_detectives.json` — Decomposer Detectives.** Fungi / detritivore / different decomposer. Uses `taxon_set: decomposers`.
 
-1. **`backyard_closeup.json` — Look Closer.** Unlocked by `backyard_starter`. Beetle (`taxon_id` 47208, Coleoptera) / spider (`taxon_id` 47118, Araneae) / a plant new to the Dex (`all_of` not_in_dex + Plantae) / smallest-thing wildcard. `environments: ["yard"]`.
+8. **`tree_trio.json` — Tree Trio.** Three different deciduous trees. Uses `taxon_set: deciduous_trees` plus `not_in_current_expedition`.
 
-2. **`park_pollinators.json` — Pollinator Patrol.** Unlocked by `park_starter`. A bloom (Plantae) / butterfly or moth (`taxon_id` 47157, Lepidoptera) / bee, wasp, or ant (`taxon_id` 47201, Hymenoptera) / a new flower visitor (`not_in_dex`). `environments: ["park"]`.
+## Locked preview catalog
 
-3. **`street_survivors.json` — Urban Survivors.** Unlocked by `street_starter`. City bird or mammal (`any_of` Aves, Mammalia) / spider (Arachnida) / a new-to-the-Dex pavement plant (`all_of` not_in_dex + Plantae). `environments: ["street"]`.
+Tier-2 expeditions can be locked but visible when `preview_enabled` is true. The board uses these as a shelf that shows the educational arc before a kid unlocks everything.
 
-4. **`school_census.json` — Schoolyard Census.** Unlocked by `school_starter`. Fungus or lichen (Fungi) / a new insect (`all_of` not_in_dex + Insecta) / a bird on the building (Aves) / a 150m radius push (`not_within_radius_of_existing`, escalating the starter's 50m). `environments: ["school"]`.
+1. **`backyard_closeup.json` — Look Closer.** Small backyard species and a new plant.
 
-5. **`anywhere_collector.json` — Nothing But New.** Unlocked by `anywhere_starter` **plus** `dex_count_at_least: 5` — the only tier-2 carrying the Dex gate, because every step demands a species new to the Dex (including a dragonfly/damselfly-or-lepidopteran step, `taxon_id` 47792/47157, and a closing new-find 100m from all prior observations). Environments: all five.
+2. **`park_pollinators.json` — Pollinator Patrol.** Bloom / Lepidoptera / Hymenoptera / new pollinator.
+
+3. **`street_survivors.json` — Urban Survivors.** City animals and pavement plants.
+
+4. **`school_census.json` — Schoolyard Census.** Fungi, insects, birds, and a wider schoolyard search radius.
+
+5. **`anywhere_collector.json` — Nothing But New.** New-to-Dex observations with a distance challenge.
+
+6. **`food_chain_builder.json` — Food Chain Builder.** Producer / plant eater / predator-or-scavenger / decomposer.
+
+7. **`wetland_watch.json` — Wetland Watch.** Semi-aquatic animals, with copy that tells kids to stay safe and observe from paths or edges.
+
+8. **`us_invasive_watch.json` — U.S. Invasive Watch.** U.S.-labeled common invasive species. Keep the regional label; do not imply a taxon is globally invasive.
+
+9. **`life_cycle_builder.json` — Life Cycle Builder.** Uses `observation_tag` with closed-choice plant life-stage prompts. It should never guess life stage from AI or free text.

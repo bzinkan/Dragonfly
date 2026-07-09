@@ -1,0 +1,42 @@
+{
+  "id": "pollinator_scout",
+  "title": "Pollinator Scout",
+  "subtitle": "Start with flowers, then watch who visits",
+  "tier": 1,
+  "duration_minutes": 25,
+  "environments": ["yard", "park", "school", "street"],
+  "theme": "pollinators",
+  "learning_goal": "See pollination as an interaction between plants and flower visitors.",
+  "difficulty_label": "Beginner pollinators",
+  "preview_enabled": false,
+  "unlock_hint": null,
+  "intro": "Flowers are meeting places. Find a bloom, then watch for the insects that move between them.",
+  "outro": "You connected a plant to its visitors, which is the beginning of pollinator fieldwork.",
+  "prerequisites": [],
+  "steps": [
+    {
+      "id": "find_a_bloom",
+      "description": "Find a flowering plant",
+      "match": { "kind": "iconic_taxon", "value": "Plantae" },
+      "hint": "Get the flower in frame. Leaves alone are harder to identify."
+    },
+    {
+      "id": "first_pollinator",
+      "description": "Find a pollinator",
+      "match": { "kind": "taxon_set", "value": "pollinators" },
+      "hint": "Bees, butterflies, moths, flies, wasps, and ants all count here."
+    },
+    {
+      "id": "different_pollinator",
+      "description": "Find a different pollinator",
+      "match": {
+        "kind": "all_of",
+        "matches": [
+          { "kind": "taxon_set", "value": "pollinators" },
+          { "kind": "not_in_current_expedition" }
+        ]
+      },
+      "hint": "A second photo of the same species will not advance this step."
+    }
+  ]
+}

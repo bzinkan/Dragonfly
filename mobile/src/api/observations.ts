@@ -67,6 +67,7 @@ export type ObservationCreate = {
   taxon_id?: number | null;
   species_name?: string | null;
   place_name?: string | null;
+  ecology_tags?: Record<string, string>;
 };
 
 export type Observation = {
@@ -80,6 +81,7 @@ export type Observation = {
   taxon_id: number | null;
   species_name: string | null;
   place_name: string | null;
+  ecology_tags: Record<string, string>;
   // Dispatcher-returned rewards. Present on the create response, and on
   // PATCH responses when the patch sets or changes ``taxon_id`` -- that
   // second dispatch is what advances taxon-based expedition steps. Absent
@@ -162,6 +164,7 @@ export type ObservationListItem = {
   taxon_id: number | null;
   species_name: string | null;
   place_name: string | null;
+  ecology_tags: Record<string, string>;
   created_at: string;
 };
 

@@ -17,6 +17,7 @@ import { ApiError } from "@/src/api/client";
 import {
   type ExpeditionRelevance,
   type ExpeditionSummary,
+  type ExpeditionTheme,
   type ProgressItem,
   focusExpedition,
   listAvailableExpeditions,
@@ -33,6 +34,21 @@ import {
 import { useCoarseGeohash } from "@/src/expeditions/useCoarseGeohash";
 
 const STARTER_ID = "backyard_starter";
+
+const THEME_META: Record<
+  ExpeditionTheme,
+  { label: string; icon: ComponentProps<typeof FontAwesome>["name"]; color: string }
+> = {
+  warmup: { label: "Warm-up", icon: "compass", color: "#5f8f3f" },
+  food_web: { label: "Food web", icon: "sitemap", color: "#8a5a2b" },
+  pollinators: { label: "Pollinators", icon: "leaf", color: "#b7791f" },
+  decomposers: { label: "Decomposers", icon: "recycle", color: "#6f5b3e" },
+  trees: { label: "Trees", icon: "tree", color: "#2f6f4e" },
+  wetland: { label: "Wetland", icon: "tint", color: "#246b8f" },
+  invasive: { label: "Invasive", icon: "exclamation-triangle", color: "#9f4b3f" },
+  urban: { label: "Urban", icon: "building", color: "#4f5d75" },
+  seasonal: { label: "Seasonal", icon: "calendar", color: "#7c4d85" },
+};
 
 const ENVIRONMENT_CHIPS: { label: string; value: string | null }[] = [
   { label: "All", value: null },
@@ -107,13 +123,13 @@ export default function ExpeditionsScreen() {
               : String(loadError)}
         </Text>
         <Pressable
-          style={[styles.button, styles.buttonGhost]}
+          style={[styles.button, styles.buttonGhostLight]}
           onPress={() => {
             void available.refetch();
             void mine.refetch();
           }}
         >
-          <Text style={styles.buttonText}>Retry</Text>
+          <Text style={styles.buttonTextDark}>Retry</Text>
         </Pressable>
       </View>
     );
@@ -123,6 +139,7 @@ export default function ExpeditionsScreen() {
   const { inProgress, completed } = splitProgress(progressItems);
   const active = activeProgress(progressItems, mine.data?.active_expedition_id);
   const allAvailable = available.data?.items ?? [];
+  const allLockedPreviews = available.data?.locked_preview_items ?? [];
   const starter =
     progressItems.length === 0
       ? allAvailable.find((item) => item.id === STARTER_ID) ?? null
@@ -130,6 +147,7 @@ export default function ExpeditionsScreen() {
   const items = filterByEnvironment(allAvailable, env).filter(
     (item) => item.id !== starter?.id,
   );
+  const lockedPreviews = filterByEnvironment(allLockedPreviews, env).slice(0, 6);
 
   return (
     <FlatList
@@ -197,7 +215,7 @@ export default function ExpeditionsScreen() {
         </View>
       }
       ListFooterComponent={
-        completed.length === 0 ? null : <TrophyList items={completed} />
+        <FooterSections lockedPreviews={lockedPreviews} completed={completed} />
       }
       ListEmptyComponent={
         <View style={styles.emptyPanel}>
@@ -240,7 +258,11 @@ function ActiveMission({ item }: { item: ProgressItem }) {
           <FontAwesome name="flag" size={18} color="#0f172a" />
           <Text style={styles.activeKicker}>Active quest</Text>
         </View>
+        <ThemePill theme={item.theme} compact />
         <Text style={styles.activeTitle}>{item.title}</Text>
+        {item.learning_goal ? (
+          <Text style={styles.activeLearning}>{item.learning_goal}</Text>
+        ) : null}
         <Text style={styles.activeObjective}>
           {objective?.description ?? "All steps complete"}
         </Text>
@@ -270,8 +292,12 @@ function StarterMission({
   return (
     <View style={styles.starterPanel}>
       <Text style={styles.starterKicker}>First mission</Text>
+      <ThemePill theme={item.theme} compact />
       <Text style={styles.starterTitle}>{item.title}</Text>
       <Text style={styles.starterText}>{item.intro}</Text>
+      {item.learning_goal ? (
+        <Text style={styles.starterLearning}>{item.learning_goal}</Text>
+      ) : null}
       <Pressable
         style={[styles.button, styles.buttonDark, starting && styles.buttonDisabled]}
         disabled={starting}
@@ -281,6 +307,28 @@ function StarterMission({
           {starting ? "Starting..." : "Start quest"}
         </Text>
       </Pressable>
+    </View>
+  );
+}
+
+function FooterSections({
+  lockedPreviews,
+  completed,
+}: {
+  lockedPreviews: ExpeditionSummary[];
+  completed: ProgressItem[];
+}) {
+  return (
+    <View style={styles.footer}>
+      {lockedPreviews.length > 0 ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Coming up</Text>
+          {lockedPreviews.map((item) => (
+            <LockedQuestCard key={item.id} item={item} />
+          ))}
+        </View>
+      ) : null}
+      {completed.length > 0 ? <TrophyList items={completed} /> : null}
     </View>
   );
 }
@@ -358,19 +406,28 @@ function QuestCard({
   onStart: () => void;
   starting: boolean;
 }) {
-  const icon = iconForEnvironment(item.environments[0]);
+  const theme = THEME_META[item.theme] ?? THEME_META.warmup;
   return (
     <View style={styles.questCard}>
-      <View style={styles.questIcon}>
-        <FontAwesome name={icon} size={18} color="#fff" />
+      <View style={[styles.questIcon, { backgroundColor: theme.color }]}>
+        <FontAwesome name={theme.icon} size={18} color="#fff" />
       </View>
       <View style={styles.questBody}>
+        <View style={styles.cardTopLine}>
+          <ThemePill theme={item.theme} />
+          {item.difficulty_label ? (
+            <Text style={styles.difficultyText}>{item.difficulty_label}</Text>
+          ) : null}
+        </View>
         <Text style={styles.cardTitle}>{item.title}</Text>
         {item.subtitle && <Text style={styles.cardSubtitle}>{item.subtitle}</Text>}
         <Text style={styles.cardMeta}>
           {item.duration_minutes} min - {item.environments.join(", ")}
         </Text>
         <RelevanceBadge relevance={item.relevance} />
+        {item.learning_goal ? (
+          <Text style={styles.learningGoal}>{item.learning_goal}</Text>
+        ) : null}
         <Text style={styles.cardIntro}>{item.intro}</Text>
         <Pressable
           style={[styles.button, styles.buttonPrimary, starting && styles.buttonDisabled]}
@@ -382,6 +439,62 @@ function QuestCard({
           </Text>
         </Pressable>
       </View>
+    </View>
+  );
+}
+
+function LockedQuestCard({ item }: { item: ExpeditionSummary }) {
+  const theme = THEME_META[item.theme] ?? THEME_META.warmup;
+  return (
+    <Pressable
+      style={styles.previewCard}
+      onPress={() =>
+        Alert.alert(
+          item.title,
+          `${item.learning_goal ?? item.intro}\n\n${item.unlock_hint ?? "Unlock this by completing earlier quests."}`,
+        )
+      }
+    >
+      <View style={[styles.previewIcon, { backgroundColor: theme.color }]}>
+        <FontAwesome name={theme.icon} size={15} color="#fff" />
+      </View>
+      <View style={styles.progressBody}>
+        <View style={styles.cardTopLine}>
+          <ThemePill theme={item.theme} />
+          <Text style={styles.previewLabel}>Preview</Text>
+        </View>
+        <Text style={styles.previewTitle}>{item.title}</Text>
+        {item.learning_goal ? (
+          <Text style={styles.previewText}>{item.learning_goal}</Text>
+        ) : null}
+        <Text style={styles.previewUnlock}>
+          {item.unlock_hint ?? "Unlock this by completing earlier quests."}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function ThemePill({
+  theme,
+  compact = false,
+}: {
+  theme: ExpeditionTheme;
+  compact?: boolean;
+}) {
+  const meta = THEME_META[theme] ?? THEME_META.warmup;
+  return (
+    <View
+      style={[
+        styles.themePill,
+        { borderColor: meta.color },
+        compact && styles.themePillCompact,
+      ]}
+    >
+      <FontAwesome name={meta.icon} size={compact ? 10 : 11} color={meta.color} />
+      <Text style={[styles.themePillText, { color: meta.color }]}>
+        {meta.label}
+      </Text>
     </View>
   );
 }
@@ -411,23 +524,6 @@ function RelevanceBadge({ relevance }: { relevance?: ExpeditionRelevance }) {
   );
 }
 
-function iconForEnvironment(
-  env: string | undefined,
-): ComponentProps<typeof FontAwesome>["name"] {
-  switch (env) {
-    case "yard":
-      return "home";
-    case "park":
-      return "leaf";
-    case "street":
-      return "road";
-    case "school":
-      return "graduation-cap";
-    default:
-      return "compass";
-  }
-}
-
 const styles = StyleSheet.create({
   list: { padding: 16, paddingBottom: 28 },
   center: {
@@ -436,6 +532,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 24,
   },
+  footer: { marginTop: 4 },
   section: { marginBottom: 14 },
   kicker: {
     color: "#5fbf8f",
@@ -465,6 +562,7 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
   activeTitle: { color: "#0f172a", fontSize: 21, fontWeight: "800", marginTop: 8 },
+  activeLearning: { color: "#14351f", fontSize: 13, lineHeight: 18, marginTop: 5 },
   activeObjective: { color: "#0f172a", fontSize: 15, lineHeight: 21, marginTop: 6 },
   activeActions: {
     backgroundColor: "transparent",
@@ -489,6 +587,7 @@ const styles = StyleSheet.create({
   },
   starterTitle: { color: "#241a05", fontSize: 21, fontWeight: "800", marginTop: 6 },
   starterText: { color: "#241a05", fontSize: 14, lineHeight: 20, marginTop: 6, marginBottom: 12 },
+  starterLearning: { color: "#3a2b08", fontSize: 13, lineHeight: 18, marginBottom: 12 },
   sectionLabel: {
     fontSize: 13,
     fontWeight: "700",
@@ -556,6 +655,34 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   questBody: { flex: 1, backgroundColor: "transparent" },
+  cardTopLine: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 7,
+    backgroundColor: "transparent",
+  },
+  themePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    alignSelf: "flex-start",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: "#fff",
+  },
+  themePillCompact: {
+    marginTop: 10,
+    backgroundColor: "rgba(255,255,255,0.7)",
+  },
+  themePillText: {
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  difficultyText: { color: "#b7c4d8", fontSize: 12, fontWeight: "700" },
   cardTitle: { color: "#fff", fontSize: 17, fontWeight: "800" },
   cardSubtitle: { color: "#dbeafe", fontSize: 13, marginTop: 2 },
   cardMeta: { color: "#cbd5e1", fontSize: 12, marginTop: 4 },
@@ -563,7 +690,45 @@ const styles = StyleSheet.create({
   relevanceGreat: { color: "#4ade80" },
   relevanceTricky: { color: "#fbbf24" },
   relevanceReason: { color: "#cbd5e1", fontSize: 12, marginTop: 2 },
+  learningGoal: {
+    color: "#f7e7b5",
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 8,
+  },
   cardIntro: { color: "#e5e7eb", fontSize: 13, marginTop: 9, lineHeight: 18 },
+  previewCard: {
+    flexDirection: "row",
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    backgroundColor: "#f8fafc",
+    marginBottom: 10,
+    borderColor: "#cbd5e1",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  previewIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  previewLabel: {
+    color: "#64748b",
+    fontSize: 12,
+    fontWeight: "800",
+    textTransform: "uppercase",
+  },
+  previewTitle: { color: "#111827", fontSize: 16, fontWeight: "800" },
+  previewText: { color: "#334155", fontSize: 13, lineHeight: 18, marginTop: 4 },
+  previewUnlock: {
+    color: "#7c4d24",
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 6,
+  },
   emptyPanel: {
     alignItems: "center",
     padding: 18,
@@ -583,6 +748,13 @@ const styles = StyleSheet.create({
   buttonPrimary: { backgroundColor: "#2f6feb", marginTop: 12 },
   buttonDark: { backgroundColor: "#0f172a" },
   buttonGhost: { borderColor: "#888", borderWidth: StyleSheet.hairlineWidth, marginTop: 12 },
+  buttonGhostLight: {
+    backgroundColor: "#fff",
+    borderColor: "#64748b",
+    borderWidth: StyleSheet.hairlineWidth,
+    marginTop: 12,
+  },
   buttonDisabled: { opacity: 0.45 },
   buttonText: { fontSize: 14, color: "#fff", fontWeight: "700" },
+  buttonTextDark: { fontSize: 14, color: "#0f172a", fontWeight: "700" },
 });

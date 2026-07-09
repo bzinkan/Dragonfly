@@ -180,6 +180,64 @@ async def test_active_progress_query_is_personal_not_group_scoped(
     assert "expedition_progress.group_id" not in stmt.split("where", maxsplit=1)[1]
 
 
+async def test_not_in_current_expedition_blocks_repeat_species(
+    fake_session: AsyncMock,
+) -> None:
+    body = _expedition_body(
+        exp_id="pollinator_scout",
+        steps=[
+            _step("first_pollinator", "taxon_set", value="pollinators"),
+            {
+                "id": "different_pollinator",
+                "description": "Find a different pollinator",
+                "match": {
+                    "kind": "all_of",
+                    "matches": [
+                        {"kind": "taxon_set", "value": "pollinators"},
+                        {"kind": "not_in_current_expedition"},
+                    ],
+                },
+            },
+        ],
+    )
+    progress = _progress(
+        "pollinator_scout",
+        completed={
+            "first_pollinator": {
+                "completed_at": "2026-05-10T11:00:00+00:00",
+                "observation_id": "01J0PREVIOUSOBS000000ULID",
+            }
+        },
+    )
+
+    progress_result = MagicMock()
+    progress_result.all = MagicMock(return_value=[(progress, _content("pollinator_scout", body))])
+    species_result = MagicMock()
+    species_result.scalar_one_or_none = MagicMock(
+        return_value=models.SpeciesCache(
+            taxon_id=47157,
+            scientific_name="Lepidoptera",
+            common_name="Butterflies and Moths",
+            iconic_taxon="Insecta",
+            source_payload={},
+        )
+    )
+    dex_result = MagicMock()
+    dex_result.all = MagicMock(return_value=[])
+    completed_taxa_result = MagicMock()
+    completed_taxa_result.all = MagicMock(return_value=[(47157,)])
+    fake_session.execute = AsyncMock(
+        side_effect=[progress_result, species_result, dex_result, completed_taxa_result]
+    )
+    fake_session.commit = AsyncMock()
+
+    handler = ExpeditionHandler()
+    result = await handler.handle(_ctx(fake_session, taxon_id=47157))
+
+    assert result.rewards == []
+    fake_session.commit.assert_not_called()
+
+
 async def test_step_advances_when_match_succeeds(fake_session: AsyncMock) -> None:
     body = _expedition_body(
         exp_id="x",

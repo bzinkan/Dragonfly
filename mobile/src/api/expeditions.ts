@@ -12,13 +12,30 @@ export type ExpeditionSummary = {
   tier: number;
   duration_minutes: number;
   environments: string[];
+  theme: ExpeditionTheme;
+  learning_goal: string | null;
+  difficulty_label: string | null;
+  preview_enabled: boolean;
+  unlock_hint: string | null;
   intro: string;
   // Optional -- older backends omit it; the card renders nothing then.
   relevance?: ExpeditionRelevance;
 };
 
+export type ExpeditionTheme =
+  | "warmup"
+  | "food_web"
+  | "pollinators"
+  | "decomposers"
+  | "trees"
+  | "wetland"
+  | "invasive"
+  | "urban"
+  | "seasonal";
+
 export type AvailableListResponse = {
   items: ExpeditionSummary[];
+  locked_preview_items?: ExpeditionSummary[];
 };
 
 export function listAvailableExpeditions(
@@ -66,7 +83,14 @@ export type StepProgress = {
   id: string;
   description: string;
   hint: string | null;
+  tag_prompt: StepTagPrompt | null;
   completed_at: string | null;
+};
+
+export type StepTagPrompt = {
+  key: "life_stage";
+  question: string;
+  options: { value: string; label: string }[];
 };
 
 export type ProgressItem = {
@@ -75,6 +99,9 @@ export type ProgressItem = {
   subtitle: string | null;
   intro: string;
   outro: string;
+  theme: ExpeditionTheme;
+  learning_goal: string | null;
+  difficulty_label: string | null;
   started_at: string;
   completed_at: string | null;
   focused_at: string | null;

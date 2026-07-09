@@ -29,7 +29,14 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _BACKEND = _REPO_ROOT / "backend"
 sys.path.insert(0, str(_BACKEND))
 
-from app.models.expedition import Expedition  # noqa: E402
+from app.models.expedition import (  # noqa: E402
+    Expedition,
+    MatchAllOf,
+    MatchAnyOf,
+    MatchSpec,
+    MatchTaxonSet,
+)
+from app.models.expedition_taxon_set import ExpeditionTaxonSetConfig  # noqa: E402
 from app.models.sanctuary import (  # noqa: E402
     CharismaticUnlock,
     CoarseUnlock,
@@ -101,6 +108,59 @@ def _validate_expeditions(failures: list[tuple[Path, str]]) -> tuple[int, set[st
         expedition_ids.add(exp.id)
 
     return len(files), expedition_ids
+
+
+def _validate_expedition_taxon_sets(failures: list[tuple[Path, str]]) -> set[str]:
+    path = _REPO_ROOT / "content" / "expedition_taxon_sets.json"
+    if not path.exists():
+        failures.append((path, "missing expedition taxon-set content"))
+        return set()
+
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        failures.append((path, f"invalid JSON: {exc}"))
+        return set()
+
+    try:
+        config = ExpeditionTaxonSetConfig.model_validate(raw)
+    except ValidationError as exc:
+        failures.append((path, f"schema mismatch:\n{exc}"))
+        return set()
+
+    return {taxon_set.id for taxon_set in config.taxon_sets}
+
+
+def _taxon_set_refs(spec: MatchSpec) -> set[str]:
+    if isinstance(spec, MatchTaxonSet):
+        return {spec.value}
+    if isinstance(spec, MatchAllOf | MatchAnyOf):
+        found: set[str] = set()
+        for sub in spec.matches:
+            found.update(_taxon_set_refs(sub))
+        return found
+    return set()
+
+
+def _validate_expedition_taxon_set_refs(
+    failures: list[tuple[Path, str]],
+    taxon_set_ids: set[str],
+) -> None:
+    content_root = _REPO_ROOT / "content" / "expeditions"
+    for path in sorted(content_root.rglob("*.json")):
+        try:
+            exp = Expedition.model_validate(json.loads(path.read_text(encoding="utf-8")))
+        except Exception:
+            continue
+        refs = set().union(*(_taxon_set_refs(step.match) for step in exp.steps))
+        missing = sorted(ref for ref in refs if ref not in taxon_set_ids)
+        if missing:
+            failures.append(
+                (
+                    path,
+                    f"unknown taxon_set reference(s): {', '.join(missing)}",
+                )
+            )
 
 
 def _validate_sanctuary(failures: list[tuple[Path, str]]) -> tuple[int, list[SanctuarySouvenir]]:
@@ -273,6 +333,8 @@ def main() -> int:
     failures: list[tuple[Path, str]] = []
 
     expedition_count, expedition_ids = _validate_expeditions(failures)
+    taxon_set_ids = _validate_expedition_taxon_sets(failures)
+    _validate_expedition_taxon_set_refs(failures, taxon_set_ids)
     sanctuary_count, souvenirs = _validate_sanctuary(failures)
     _validate_souvenir_expedition_refs(failures, souvenirs, expedition_ids)
 
@@ -285,7 +347,8 @@ def main() -> int:
         return 1
 
     print(
-        f"OK: {expedition_count} expedition file(s) and "
+        f"OK: {expedition_count} expedition file(s), "
+        f"{len(taxon_set_ids)} expedition taxon set(s), and "
         f"{sanctuary_count} sanctuary file(s) validated."
     )
     return 0

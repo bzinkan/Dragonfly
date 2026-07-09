@@ -5,6 +5,11 @@
   "tier": 2,
   "duration_minutes": 40,
   "environments": ["park"],
+  "theme": "pollinators",
+  "learning_goal": "Connect flowers with the insects that move pollen through a habitat.",
+  "difficulty_label": "Pollinator set",
+  "preview_enabled": true,
+  "unlock_hint": "Complete Park Patrol.",
   "intro": "Every flower in the park is a landing pad. Find the blooms, then stake one out and log the crew that keeps the whole place growing.",
   "outro": "Scientists count pollinators on every continent, and your observations just joined that count. Patrol complete -- there's more park out there.",
   "prerequisites": [
@@ -31,7 +36,13 @@
     {
       "id": "a_new_visitor",
       "description": "Find a flower visitor that's new to your Dex",
-      "match": { "kind": "not_in_dex" },
+      "match": {
+        "kind": "all_of",
+        "matches": [
+          { "kind": "taxon_set", "value": "pollinators" },
+          { "kind": "not_in_dex" }
+        ]
+      },
       "hint": "Hoverflies look like bees but fly like helicopters. Good odds you don't have one yet."
     }
   ]

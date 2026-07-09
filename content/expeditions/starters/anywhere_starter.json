@@ -1,31 +1,49 @@
 {
   "id": "anywhere_starter",
-  "title": "Found Anywhere",
-  "subtitle": "Wherever you are, that's a place",
+  "title": "Food Web Anywhere",
+  "subtitle": "Find the jobs living things do",
   "tier": 1,
   "duration_minutes": 20,
   "environments": ["other"],
-  "intro": "A car, a boat, a hospital window, a grandparent's apartment. Anywhere has organisms in it -- find three you don't already have.",
-  "outro": "There is no boring place. You proved it.",
+  "theme": "food_web",
+  "learning_goal": "Notice producers, consumers, and decomposers as different jobs in an ecosystem.",
+  "difficulty_label": "Beginner ecology",
+  "preview_enabled": false,
+  "unlock_hint": null,
+  "intro": "A food web is made of jobs. Find one producer, one consumer, and one recycler wherever you can safely look.",
+  "outro": "You mapped a tiny food web from real observations.",
   "prerequisites": [],
   "steps": [
     {
-      "id": "first_new_thing",
-      "description": "Find one new living thing",
-      "match": { "kind": "not_in_dex" },
-      "hint": "Look at where you actually are -- not where you wish you were."
+      "id": "producer",
+      "description": "Find a producer",
+      "match": { "kind": "iconic_taxon", "value": "Plantae" },
+      "hint": "Plants make food from sunlight. Grass, moss, weeds, and trees all count."
     },
     {
-      "id": "second_new_thing",
-      "description": "Find a second new living thing",
-      "match": { "kind": "not_in_dex" },
-      "hint": "Different organism. Plant, then bug. Or bug, then bird."
+      "id": "consumer",
+      "description": "Find a consumer",
+      "match": {
+        "kind": "any_of",
+        "matches": [
+          { "kind": "iconic_taxon", "value": "Insecta" },
+          { "kind": "iconic_taxon", "value": "Aves" },
+          { "kind": "iconic_taxon", "value": "Mammalia" },
+          { "kind": "iconic_taxon", "value": "Reptilia" },
+          { "kind": "iconic_taxon", "value": "Amphibia" },
+          { "kind": "iconic_taxon", "value": "Actinopterygii" },
+          { "kind": "iconic_taxon", "value": "Mollusca" },
+          { "kind": "iconic_taxon", "value": "Arachnida" },
+          { "kind": "iconic_taxon", "value": "Animalia" }
+        ]
+      },
+      "hint": "Animals eat plants, fungi, or other animals. Bugs, birds, snails, and dogs count."
     },
     {
-      "id": "third_new_thing",
-      "description": "Find a third new living thing",
-      "match": { "kind": "not_in_dex" },
-      "hint": "If you're stuck, look smaller. Lichens, moss, a fly on a windowsill all count."
+      "id": "recycler",
+      "description": "Find a decomposer",
+      "match": { "kind": "taxon_set", "value": "decomposers" },
+      "hint": "Mushrooms, lichens, isopods, millipedes, and earthworms recycle dead material."
     }
   ]
 }

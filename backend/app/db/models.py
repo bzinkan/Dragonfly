@@ -142,6 +142,7 @@ class Observation(TimestampMixin, Base):
     # dispatch and is reset for replay recovery.
     taxon_first_assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     rewards: Mapped[list[JsonDict]] = mapped_column(JSONB, nullable=False, default=list)
+    ecology_tags: Mapped[JsonDict] = mapped_column(JSONB, nullable=False, default=dict)
     # Azure Content Safety lifecycle state for this observation's photo.
     # CHECK constraint pins the vocabulary to {pending, clean, quarantine,
     # rejected} (see migration 20260604_0006). Only `clean` rows are

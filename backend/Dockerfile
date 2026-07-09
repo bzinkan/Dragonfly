@@ -31,6 +31,7 @@ COPY backend/admin/ ./admin/
 # Expedition content baked into the image; admin.sync_expeditions
 # materializes it into Postgres after each deploy (docs/runbook.md).
 COPY content/expeditions/ ./content/expeditions/
+COPY content/expedition_taxon_sets.json ./content/expedition_taxon_sets.json
 
 ENV PATH="/app/.venv/bin:${PATH}"
 

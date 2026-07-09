@@ -5,6 +5,11 @@
   "tier": 2,
   "duration_minutes": 30,
   "environments": ["yard"],
+  "theme": "decomposers",
+  "learning_goal": "Shift attention from obvious organisms to small builders, hunters, and recyclers.",
+  "difficulty_label": "Closer look",
+  "preview_enabled": true,
+  "unlock_hint": "Complete Start Where You Are.",
   "intro": "You found the easy-to-spot life last time. Now shrink your search -- the busiest hunters and builders around you are smaller than your thumb.",
   "outro": "You just ran a survey at bug scale, and that's a real field technique. Keep logging -- new expeditions appear as your Dex grows.",
   "prerequisites": [

@@ -1,0 +1,49 @@
+{
+  "id": "wetland_watch",
+  "title": "Wetland Watch",
+  "subtitle": "Amphibians and semi-aquatic animals",
+  "tier": 2,
+  "duration_minutes": 45,
+  "environments": ["park", "school", "other"],
+  "theme": "wetland",
+  "learning_goal": "Look for animals that depend on water edges, damp ground, ponds, or streams.",
+  "difficulty_label": "Habitat challenge",
+  "preview_enabled": true,
+  "unlock_hint": "Reach 4 Dex species.",
+  "intro": "Water edges are busy if you move slowly. Find three different animals tied to wet places.",
+  "outro": "You surveyed the edge between land and water, one of the richest habitats around.",
+  "prerequisites": [
+    { "kind": "dex_count_at_least", "value": 4 }
+  ],
+  "steps": [
+    {
+      "id": "first_wetland_animal",
+      "description": "Find a wetland animal",
+      "match": { "kind": "taxon_set", "value": "semi_aquatic_animals" },
+      "hint": "Frogs, toads, salamanders, and turtles all count."
+    },
+    {
+      "id": "second_wetland_animal",
+      "description": "Find a different wetland animal",
+      "match": {
+        "kind": "all_of",
+        "matches": [
+          { "kind": "taxon_set", "value": "semi_aquatic_animals" },
+          { "kind": "not_in_current_expedition" }
+        ]
+      }
+    },
+    {
+      "id": "third_wetland_animal",
+      "description": "Find a third wetland animal",
+      "match": {
+        "kind": "all_of",
+        "matches": [
+          { "kind": "taxon_set", "value": "semi_aquatic_animals" },
+          { "kind": "not_in_current_expedition" }
+        ]
+      },
+      "hint": "Listen first, then move slowly. Many wetland animals notice you before you notice them."
+    }
+  ]
+}

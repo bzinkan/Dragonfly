@@ -23,12 +23,12 @@ knows what to request.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 import geohash
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import desc, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,6 +44,7 @@ from app.dispatcher.registry import HANDLERS
 from app.dispatcher.types import Context, Reward
 from app.inat.client import InatClientDep, InatUnavailable
 from app.inat.cv import score_image
+from app.models.ecology_tags import normalize_ecology_tags
 from app.organism_fallback import SuggestionSource
 from app.services import species_cache
 
@@ -64,6 +65,16 @@ class ObservationCreateRequest(BaseModel):
     taxon_id: int | None = Field(default=None, ge=1)
     species_name: str | None = Field(default=None, max_length=200)
     place_name: str | None = Field(default=None, max_length=200)
+    ecology_tags: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("ecology_tags", mode="before")
+    @classmethod
+    def ecology_tags_are_closed_choice(cls, value: object) -> Any:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            return value
+        return normalize_ecology_tags(value)
 
 
 class RewardDTO(BaseModel):
@@ -111,6 +122,7 @@ class ObservationResponse(BaseModel):
     taxon_id: int | None
     species_name: str | None
     place_name: str | None
+    ecology_tags: dict[str, str] = Field(default_factory=dict)
     rewards: list[RewardDTO] = Field(default_factory=list)
 
     @classmethod
@@ -130,6 +142,7 @@ class ObservationResponse(BaseModel):
             taxon_id=obs.taxon_id,
             species_name=obs.species_name,
             place_name=obs.place_name,
+            ecology_tags=dict(obs.ecology_tags or {}),
             rewards=[RewardDTO.from_reward(r) for r in (rewards or [])],
         )
 
@@ -169,6 +182,7 @@ async def create_observation(
     payload: ObservationCreateRequest,
     current_user: CurrentUserDep,
     session: DbSessionDep,
+    inat_client: InatClientDep,
     settings: Annotated[Settings, Depends(get_request_settings)],
 ) -> ObservationResponse:
     user_row = await resolve_current_user_row(session, current_user)
@@ -213,7 +227,19 @@ async def create_observation(
 
     species_name = payload.species_name
     if payload.taxon_id is not None and species_name is None:
-        species_name = await _cached_species_display_name(session, payload.taxon_id)
+        cached_species = None
+        try:
+            cached_species = await species_cache.get_or_fill(session, inat_client, payload.taxon_id)
+        except InatUnavailable as exc:
+            log.warning(
+                "observations.create.species_cache_unavailable",
+                taxon_id=payload.taxon_id,
+                reason=str(exc),
+            )
+        if cached_species is not None:
+            species_name = cached_species.common_name or cached_species.scientific_name
+        else:
+            species_name = await _cached_species_display_name(session, payload.taxon_id)
 
     # Atomic counter bump on the membership row. If the user isn't in this
     # group, RETURNING comes back empty and we 403 before inserting the
@@ -249,6 +275,7 @@ async def create_observation(
         taxon_id=payload.taxon_id,
         species_name=species_name,
         place_name=payload.place_name,
+        ecology_tags=payload.ecology_tags,
         # Created-with-taxon counts as the first assignment: the
         # create-time dispatch runs with this taxon, so a later
         # clear-and-repick must not dispatch again.
@@ -291,6 +318,7 @@ async def create_observation(
         photo_id=payload.photo_id,
         taxon_id=payload.taxon_id,
         geohash4=geohash4,
+        ecology_tag_keys=sorted(payload.ecology_tags),
     )
 
     # Dispatcher runs after the observation is persisted. Failure here
@@ -357,6 +385,7 @@ class ObservationListItem(BaseModel):
     taxon_id: int | None
     species_name: str | None
     place_name: str | None
+    ecology_tags: dict[str, str] = Field(default_factory=dict)
     created_at: datetime
 
 
@@ -414,6 +443,7 @@ async def list_my_observations(
             taxon_id=obs.taxon_id,
             species_name=obs.species_name,
             place_name=obs.place_name,
+            ecology_tags=dict(obs.ecology_tags or {}),
             created_at=obs.created_at,
         )
         for obs, photo in page
@@ -467,6 +497,7 @@ async def get_observation(
         taxon_id=obs.taxon_id,
         species_name=obs.species_name,
         place_name=obs.place_name,
+        ecology_tags=dict(obs.ecology_tags or {}),
         created_at=obs.created_at,
         rewards=rewards,
     )

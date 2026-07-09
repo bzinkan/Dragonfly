@@ -30,6 +30,8 @@ needs hardening, a `restarted_at` column is the lever.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import structlog
 from sqlalchemy import select
 from sqlalchemy.orm.attributes import flag_modified
@@ -38,6 +40,7 @@ from app.db import models
 from app.dispatcher.types import Context, HandlerResult, Reward
 from app.matchers.context import MatcherInputs, PriorObservation, TaxonInfo
 from app.matchers.registry import matches
+from app.matchers.taxon_sets import load_taxon_set_index
 from app.models.expedition import (
     Expedition,
     MatchNotWithinRadius,
@@ -120,7 +123,7 @@ class ExpeditionHandler:
         # simple and safe over minimal.
         needs_priors = any(_uses_radius(step.match) for _, _, exp in parsed for step in exp.steps)
 
-        inputs = await self._build_inputs(ctx, include_prior_observations=needs_priors)
+        base_inputs = await self._build_inputs(ctx, include_prior_observations=needs_priors)
 
         rewards: list[Reward] = []
         any_advanced = False
@@ -147,6 +150,10 @@ class ExpeditionHandler:
                 # Race: something else completed all steps. Skip.
                 continue
 
+            inputs = replace(
+                base_inputs,
+                current_expedition_taxon_ids=await self._completed_taxon_ids(ctx, completed),
+            )
             if not matches(next_step.match, inputs):
                 continue
 
@@ -200,6 +207,30 @@ class ExpeditionHandler:
             completed_count=sum(1 for r in rewards if r.type == "expedition_complete"),
         )
         return HandlerResult(rewards=rewards)
+
+    @staticmethod
+    async def _completed_taxon_ids(
+        ctx: Context,
+        completed: dict[str, object],
+    ) -> frozenset[int]:
+        observation_ids = [
+            parsed.observation_id
+            for value in completed.values()
+            for parsed in [parse_step_completion(value)]
+            if parsed.observation_id is not None
+        ]
+        if not observation_ids:
+            return frozenset()
+
+        rows = (
+            await ctx.db.execute(
+                select(models.Observation.taxon_id).where(
+                    models.Observation.id.in_(observation_ids),
+                    models.Observation.taxon_id.is_not(None),
+                )
+            )
+        ).all()
+        return frozenset(taxon_id for (taxon_id,) in rows if taxon_id is not None)
 
     async def _build_inputs(
         self, ctx: Context, *, include_prior_observations: bool
@@ -260,4 +291,10 @@ class ExpeditionHandler:
             user_prior_observations=priors,
             obs_latitude=obs.latitude,
             obs_longitude=obs.longitude,
+            taxon_sets=load_taxon_set_index(),
+            ecology_tags={
+                str(key): str(value)
+                for key, value in (obs.ecology_tags or {}).items()
+                if isinstance(key, str) and isinstance(value, str)
+            },
         )

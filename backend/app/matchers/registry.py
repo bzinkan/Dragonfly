@@ -17,18 +17,24 @@ from collections.abc import Callable
 from app.matchers.context import MatcherInputs
 from app.matchers.kinds.any_organism import match_any_organism
 from app.matchers.kinds.iconic_taxon import match_iconic_taxon
+from app.matchers.kinds.not_in_current_expedition import match_not_in_current_expedition
 from app.matchers.kinds.not_in_dex import match_not_in_dex
 from app.matchers.kinds.not_within_radius import match_not_within_radius
+from app.matchers.kinds.observation_tag import match_observation_tag
 from app.matchers.kinds.taxon_id import match_taxon_id
+from app.matchers.kinds.taxon_set import match_taxon_set
 from app.models.expedition import (
     MatchAllOf,
     MatchAnyOf,
     MatchAnyOrganism,
     MatchIconicTaxon,
+    MatchNotInCurrentExpedition,
     MatchNotInDex,
     MatchNotWithinRadius,
+    MatchObservationTag,
     MatchSpec,
     MatchTaxonId,
+    MatchTaxonSet,
 )
 
 # Each entry: spec class -> matcher function.
@@ -40,6 +46,9 @@ _LEAF_MATCHERS: dict[type, Callable[..., bool]] = {
     MatchAnyOrganism: match_any_organism,
     MatchNotInDex: match_not_in_dex,
     MatchNotWithinRadius: match_not_within_radius,
+    MatchTaxonSet: match_taxon_set,
+    MatchNotInCurrentExpedition: match_not_in_current_expedition,
+    MatchObservationTag: match_observation_tag,
 }
 
 

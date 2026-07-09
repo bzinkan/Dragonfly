@@ -5,6 +5,11 @@
   "tier": 2,
   "duration_minutes": 35,
   "environments": ["street"],
+  "theme": "urban",
+  "learning_goal": "Find organisms that actively use city surfaces, lights, and pavement edges.",
+  "difficulty_label": "Urban ecology",
+  "preview_enabled": true,
+  "unlock_hint": "Complete Sidewalk Science.",
   "intro": "You proved the city is alive. Now meet the specialists -- the animals and plants that out-tough the concrete every day of the year.",
   "outro": "Urban ecologists study exactly what you just documented. Your block is on the record now -- and there's a lot more city left.",
   "prerequisites": [
