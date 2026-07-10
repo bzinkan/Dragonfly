@@ -8,6 +8,7 @@ minutes.  Azure scheduled-query alerts consume these numeric fields.
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -16,8 +17,11 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
+from app.core.logging import configure_logging
 
 log = structlog.get_logger()
+
+_STRICT_ENV = "HINTERLAND_OBSERVATION_HEALTH_FAIL_UNHEALTHY"
 
 
 @dataclass(frozen=True)
@@ -27,6 +31,8 @@ class ObservationHealth:
     stale_dispatch_runs: int
     stale_rebuilds: int
     failed_rebuilds: int
+    stale_photo_revocations: int
+    failed_photo_revocations: int
     state_mismatches: int
 
     @property
@@ -68,6 +74,17 @@ _PROBE_SQL = text(
         FROM derived_state_rebuilds
         WHERE status = 'failed' AND attempt_count >= 5
       ) AS failed_rebuilds,
+      (
+        SELECT count(*)
+        FROM photo_revocations
+        WHERE state IN ('pending', 'copying')
+          AND coalesce(last_attempt_at, created_at) < :revocation_cutoff
+      ) AS stale_photo_revocations,
+      (
+        SELECT count(*)
+        FROM photo_revocations
+        WHERE state = 'failed' AND attempt_count >= 5
+      ) AS failed_photo_revocations,
       ((
         SELECT count(*)
         FROM observations AS observation
@@ -111,6 +128,16 @@ _PROBE_SQL = text(
         JOIN observations AS observation ON observation.id = outbox.observation_id
         WHERE outbox.status = 'succeeded'
           AND observation.moderation_status IN ('pending', 'processing', 'failed')
+      ) + (
+        SELECT count(*)
+        FROM photo_revocations AS revocation
+        JOIN photos AS photo ON photo.id = revocation.photo_id
+        WHERE revocation.state = 'succeeded'
+          AND (
+            photo.status <> 'deleted'
+            OR photo.attachment_status <> 'deleted'
+            OR photo.object_name <> revocation.held_object_name
+          )
       )) AS state_mismatches
     """
 )
@@ -131,6 +158,7 @@ async def probe(
                     "pending_photo_cutoff": current - timedelta(hours=1),
                     "dispatch_cutoff": current - timedelta(minutes=10),
                     "rebuild_cutoff": current - timedelta(minutes=15),
+                    "revocation_cutoff": current - timedelta(minutes=15),
                 },
             )
         )
@@ -143,14 +171,21 @@ async def probe(
         stale_dispatch_runs=int(row["stale_dispatch_runs"]),
         stale_rebuilds=int(row["stale_rebuilds"]),
         failed_rebuilds=int(row["failed_rebuilds"]),
+        stale_photo_revocations=int(row["stale_photo_revocations"]),
+        failed_photo_revocations=int(row["failed_photo_revocations"]),
         state_mismatches=int(row["state_mismatches"]),
     )
     log.info("observation.ops_probe", healthy=health.healthy, **asdict(health))
     return health
 
 
-async def main() -> None:
+def _strict_failure_enabled() -> bool:
+    return os.environ.get(_STRICT_ENV, "").strip().lower() in {"1", "true", "yes"}
+
+
+async def main() -> bool:
     settings = get_settings()
+    configure_logging(settings)
     engine = create_async_engine(settings.sqlalchemy_database_url)
     sessions: async_sessionmaker[AsyncSession] = async_sessionmaker(
         engine,
@@ -167,11 +202,16 @@ async def main() -> None:
             f"stale_dispatch_runs={health.stale_dispatch_runs} "
             f"stale_rebuilds={health.stale_rebuilds} "
             f"failed_rebuilds={health.failed_rebuilds} "
+            f"stale_photo_revocations={health.stale_photo_revocations} "
+            f"failed_photo_revocations={health.failed_photo_revocations} "
             f"state_mismatches={health.state_mismatches}"
         )
+        return health.healthy
     finally:
         await engine.dispose()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    is_healthy = asyncio.run(main())
+    if _strict_failure_enabled() and not is_healthy:
+        raise SystemExit(1)

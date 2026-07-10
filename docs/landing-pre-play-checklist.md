@@ -62,7 +62,7 @@ Related docs:
 - [ ] App name in Play Console matches the current listing plan. Production
       listing name: `Hinterland` (renamed per ADR 0013; update the Console
       listing if it was created as `Hinterland`); internal tester device
-      label is `Hinterland Internal` from the `play-internal` build.
+      label is `The Hinterland Guide Internal` from the `play-internal` build.
 - [ ] Package-name caution is understood: the first AAB uploaded to the
       production-intended Play Console app must use `app.thehinterlandguide`, not
       `app.thehinterlandguide.dev` or `app.thehinterlandguide.staging`.

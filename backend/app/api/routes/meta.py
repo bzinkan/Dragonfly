@@ -35,10 +35,19 @@ class ReadinessResponse(BaseModel):
     checks: list[ReadinessCheck]
 
 
+class ObservationCapabilities(BaseModel):
+    photo_helper_enabled: bool
+
+
+class ApiCapabilities(BaseModel):
+    observation: ObservationCapabilities
+
+
 class ApiMetaResponse(BaseModel):
     name: str
     env: Environment
     version: str
+    capabilities: ApiCapabilities
 
 
 def _health_response(settings: Settings) -> HealthResponse:
@@ -105,4 +114,9 @@ def meta(settings: SettingsDep) -> ApiMetaResponse:
         name=settings.app_name,
         env=settings.env,
         version=settings.app_version,
+        capabilities=ApiCapabilities(
+            observation=ObservationCapabilities(
+                photo_helper_enabled=settings.photo_helper_enabled,
+            )
+        ),
     )

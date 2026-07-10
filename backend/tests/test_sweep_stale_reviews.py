@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.sweep_stale_reviews import sweep
 from app.db import models
+from app.moderation.review_service import reject_review_item
 
 
 def _review(
@@ -97,9 +98,36 @@ def fake_session() -> AsyncMock:
     return AsyncMock(spec=AsyncSession)
 
 
+@pytest.fixture(autouse=True)
+def _stub_storage_revocation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep these transaction-shape tests focused on stale-review selection.
+
+    Storage relocation/recovery has dedicated tests; production sweep calls
+    this shared wrapper with the real Blob implementation.
+    """
+
+    async def fake_revoke(
+        session: AsyncSession,
+        **kwargs: object,
+    ) -> models.DerivedStateRebuild | None:
+        rebuild = await reject_review_item(
+            session,
+            review=kwargs["review"],  # type: ignore[arg-type]
+            reviewer_user_id=kwargs["reviewer_user_id"],  # type: ignore[arg-type]
+            nonblocking=True,
+        )
+        await session.commit()
+        return rebuild
+
+    monkeypatch.setattr(
+        "admin.sweep_stale_reviews.revoke_and_reject_review_item",
+        fake_revoke,
+    )
+
+
 async def test_sweep_no_stale_rows_returns_zero(fake_session: AsyncMock) -> None:
     _wire(fake_session, rows=[])
-    count = await sweep(fake_session)
+    count = await sweep(fake_session, storage=MagicMock())
     assert count == 0
     fake_session.commit.assert_not_called()
 
@@ -110,7 +138,7 @@ async def test_sweep_auto_rejects_each_stale_row(fake_session: AsyncMock) -> Non
     obs = _obs()
     _wire(fake_session, rows=[(review, photo, obs)])
 
-    count = await sweep(fake_session)
+    count = await sweep(fake_session, storage=MagicMock())
     assert count == 1
 
     assert review.status == "rejected"
@@ -128,7 +156,7 @@ async def test_sweep_still_rejects_when_observation_already_gone(
     photo = _photo()
     _wire(fake_session, rows=[(review, photo, None)])
 
-    count = await sweep(fake_session)
+    count = await sweep(fake_session, storage=MagicMock())
     assert count == 1
     assert review.status == "rejected"
     assert photo.status == "deleted"
@@ -146,7 +174,7 @@ async def test_sweep_processes_multiple_in_one_pass(fake_session: AsyncMock) -> 
         (_review("r3"), _photo(), _obs()),
     ]
     _wire(fake_session, rows=rows)
-    count = await sweep(fake_session)
+    count = await sweep(fake_session, storage=MagicMock())
     assert count == 3
     assert fake_session.commit.await_count == 3
     assert all(r[0].status == "rejected" for r in rows)

@@ -78,6 +78,25 @@ def _result(value: object) -> MagicMock:
     return result
 
 
+def _lifecycle_result(
+    observation: models.Observation,
+    *,
+    status: str | None = None,
+) -> MagicMock:
+    photo_status = status or observation.moderation_status or "pending"
+    photo = models.Photo(
+        id=observation.photo_id,
+        user_id=observation.user_id,
+        bucket="test",
+        object_name=f"pending/{observation.photo_id}.jpg",
+        status=photo_status,
+        attachment_status="attached",
+    )
+    result = MagicMock()
+    result.one_or_none = MagicMock(return_value=(photo, None))
+    return result
+
+
 def _wire_session(
     fake_session: AsyncMock,
     *,
@@ -94,23 +113,13 @@ def _wire_session(
     obs_result = MagicMock()
     obs_result.scalar_one_or_none = MagicMock(return_value=obs)
 
-    species_result = MagicMock()
-    species_result.scalar_one_or_none = MagicMock(return_value=species_cache_hit)
+    del species_cache_hit
 
     side_effects: list[Any] = [user_result]
     if user is not None:
         side_effects.append(obs_result)
-        if obs is not None and species_cache_hit is not None:
-            # Species cache lookup happens only when taxon_id was set
-            # without an explicit species_name. Tests that don't go down
-            # this path don't pre-stage a species result.
-            side_effects.append(species_result)
-        elif obs is not None and species_cache_hit is None:
-            # Tests can opt in to the cache-miss path by passing
-            # species_cache_hit=None AND a taxon-only payload; the
-            # services helper will execute another query for the row,
-            # which we also stub as None here. Harmless if unused.
-            side_effects.append(species_result)
+        if obs is not None:
+            side_effects.append(_lifecycle_result(obs))
 
     fake_session.execute = AsyncMock(side_effect=side_effects)
     fake_session.commit = AsyncMock()
@@ -258,6 +267,7 @@ def test_identification_uses_catalog_name_and_queues_rebuild(
             MagicMock(),  # per-user advisory lock
             _result(observation),
             _result(catalog),
+            _lifecycle_result(observation, status="clean"),
         ]
     )
     fake_session.commit = AsyncMock()
@@ -313,6 +323,40 @@ def test_identification_revision_conflict_does_not_queue_rebuild(
     response = patch_client.post(
         f"/v1/observations/{_OBS_ID}/identification",
         json={"source": "unknown", "expected_revision": 2},
+        headers={"Authorization": "Bearer fake"},
+    )
+
+    assert response.status_code == 409
+    enqueue.assert_not_awaited()
+
+
+def test_cv_identification_requires_a_clean_attached_photo(
+    monkeypatch: pytest.MonkeyPatch,
+    patch_client: TestClient,
+    fake_session: AsyncMock,
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    observation = _obs_row()
+    observation.identification_revision = 1
+    observation.moderation_status = "pilot_private"
+    fake_session.execute = AsyncMock(
+        side_effect=[
+            _result(_user_row()),
+            MagicMock(),  # per-user advisory lock
+            _result(observation),
+            _lifecycle_result(observation, status="pending"),
+        ]
+    )
+    enqueue = AsyncMock()
+    monkeypatch.setattr("app.api.routes.observations.enqueue_rebuild", enqueue)
+
+    response = patch_client.post(
+        f"/v1/observations/{_OBS_ID}/identification",
+        json={
+            "taxon_id": 12345,
+            "source": "cv",
+            "expected_revision": 1,
+        },
         headers={"Authorization": "Bearer fake"},
     )
 

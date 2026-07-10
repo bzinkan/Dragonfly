@@ -23,6 +23,7 @@ class _StubSignedUrlGenerator:
 
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+        self.get_calls: list[dict[str, object]] = []
         self.fetch_calls: list[tuple[str, str]] = []
         self.bytes_to_return = b"fake-jpeg-bytes"
 
@@ -74,6 +75,13 @@ class _StubSignedUrlGenerator:
         object_name: str,
         expires_in: timedelta,
     ) -> tuple[str, datetime]:
+        self.get_calls.append(
+            {
+                "bucket": bucket,
+                "object_name": object_name,
+                "expires_in": expires_in,
+            }
+        )
         return (
             f"https://storage.googleapis.com/{bucket}/{object_name}?signed=stub-get",
             datetime(2026, 5, 10, 23, 30, 0, tzinfo=UTC),
@@ -335,6 +343,7 @@ def _photo_row(*, owner: str = _USER_ID, status: str = "clean") -> models.Photo:
         bucket="hinterland-photos-test",
         object_name="observations/01J0PHOTOID00000000000ULID.jpg",
         status=status,
+        attachment_status="attached",
         content_type="image/jpeg",
     )
 
@@ -348,6 +357,7 @@ def _wire_photo_url(
     moderation_status: str | None = None,
     observation_group_id: str | None = None,
     observation_owner_id: str | None = None,
+    revocation_active: bool = False,
 ) -> None:
     """Wire user, photo, observation authority, then adult membership."""
     user_result = MagicMock()
@@ -365,6 +375,7 @@ def _wire_photo_url(
             moderation_status or photo.status,
             group_id,
             owner_id,
+            revocation_active,
         )
         if photo is not None
         else None
@@ -419,6 +430,7 @@ def test_photo_url_owner_caller_returns_signed_url(
     monkeypatch: pytest.MonkeyPatch,
     photos_client: TestClient,
     fake_session: AsyncMock,
+    stub_signer: _StubSignedUrlGenerator,
 ) -> None:
     _stub_token_verifier(monkeypatch)
     _wire_photo_url(fake_session, user=_user_row(), photo=_photo_row(owner=_USER_ID))
@@ -427,6 +439,25 @@ def test_photo_url_owner_caller_returns_signed_url(
     body = response.json()
     assert body["url"].startswith("https://storage.googleapis.com/")
     assert body["expires_at"]
+
+    # The server contract is deliberately one minute.
+    assert stub_signer.get_calls[-1]["expires_in"] == timedelta(seconds=60)
+
+
+def test_photo_url_active_revocation_is_denied(
+    monkeypatch: pytest.MonkeyPatch,
+    photos_client: TestClient,
+    fake_session: AsyncMock,
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    _wire_photo_url(
+        fake_session,
+        user=_user_row(),
+        photo=_photo_row(owner=_USER_ID),
+        revocation_active=True,
+    )
+    response = photos_client.get("/v1/photos/x/url", headers={"Authorization": "Bearer fake"})
+    assert response.status_code == 404
 
 
 @pytest.mark.parametrize("photo_status", ["pending", "quarantine", "deleted"])

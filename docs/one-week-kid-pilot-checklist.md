@@ -21,6 +21,9 @@ Sister docs:
 - [`docs/android-internal-pilot-stop-plan.md`](android-internal-pilot-stop-plan.md)
   for the rollback playbook triggered by the hard-stop conditions
   below.
+- [`docs/observation-w1-promotion.md`](observation-w1-promotion.md)
+  for the protected server promotion, evidence contract, and the distinction
+  between W1-ready, W1 fully evidenced, and closed-beta promotion.
 
 ## Scope reminder
 
@@ -34,8 +37,8 @@ exposure is out of scope.
 - Parent / guardian must be present.
 - No classroom-wide rollout.
 - No public production release.
-- No real iNaturalist submission unless explicitly configured and
-  approved by Brian.
+- No iNaturalist CV or public submission in W1. Real Azure Content Safety also
+  remains disabled; W1 is `noop -> pilot_private`.
 - Location policy risk per
   [`docs/risks/0007-google-play-families-location-policy.md`](risks/0007-google-play-families-location-policy.md)
   must be acknowledged.
@@ -57,20 +60,22 @@ curl -sS https://api.thehinterlandguide.app/health
 curl -sS https://api.thehinterlandguide.app/.well-known/hinterland-kid-jwks.json | jq .
 # Expect: {"keys":[{"kty":"RSA","kid":"k1-2026-06",...}]}
 
-# Azure parent/kid smoke (parent signup -> group -> kid -> handoff flow)
+# Azure parent/kid + Observation smoke. The throwaway kid token stays in memory.
 HINTERLAND_API_BASE_URL=https://api.thehinterlandguide.app \
 HINTERLAND_SMOKE_ENTRA_BEARER="<access-token>" \
   python scripts/smoke_azure_parent_kid.py
-# Expect: ALL CHECKS PASSED -- Azure parent/kid handoff flow works end-to-end.
+# Expect: parent/kid handoff, Expedition, and Observation W1 canary all pass.
 # If any step 4xx/5xxs, stop and read the response body BEFORE
 # building the AAB.
 ```
 
 - [ ] `/health` returns 200 with the expected JSON body.
-- [ ] `/.well-known/hinterland-kid-jwks.json` returns a JWKS with kid
-  `k1-2026-06`.
-- [ ] `scripts/smoke_azure_parent_kid.py` exits 0 with
-  `ALL CHECKS PASSED -- Azure parent/kid handoff flow works end-to-end.`
+- [ ] `/.well-known/hinterland-kid-jwks.json` returns the active Hinterland
+  signing key advertised by the deployed revision.
+- [ ] The protected `Observation W1 promotion` workflow passed with a current
+  test-parent token, adult approval, immutable digest, strict database health,
+  authenticated canary, sanitized artifact, and accepted alert test. A green
+  ordinary dev deploy or skipped check does not satisfy this gate.
 
 ### Consent ledger
 
@@ -93,8 +98,7 @@ HINTERLAND_SMOKE_ENTRA_BEARER="<access-token>" \
 - [ ] Confirm effective `INAT_CV_ENABLED=false`,
   `INAT_CV_DISCLOSURE_APPROVED=false`,
   `INAT_CV_BENCHMARK_APPROVED=false`, and
-  `INAT_SUBMIT_ENABLED=false` under active `HINTERLAND_` and
-  compatibility `HINTERLAND_` configuration.
+  `INAT_SUBMIT_ENABLED=false` under the active `HINTERLAND_` configuration.
 - [ ] Confirm endpoint, producer, consumer, replay, and manual boundaries
   reject work; submit/replay jobs are absent and stale Service Bus work cannot
   be processed. Token absence is not the only control. See
@@ -139,9 +143,11 @@ APP_ENV=play-internal npx eas-cli build \
 
 - [ ] EAS build on the `play-internal` profile completes
   successfully.
+- [ ] Record EAS build ID, version code, and SHA-256 of the exact AAB that will
+  be uploaded. Do not substitute a local APK for device evidence.
 - [ ] AAB package name is `app.thehinterlandguide` (NOT `.dev` /
   `.staging`).
-- [ ] Display name on a temporary install is `Hinterland Internal`.
+- [ ] Display name on a temporary install is `The Hinterland Guide Internal`.
 - [ ] AAB `versionCode` is monotonically greater than the last AAB
   uploaded to Play Console on the `play-internal` track. Read the
   resolved value from the EAS build summary URL — `eas.json` sets
@@ -161,8 +167,9 @@ build until this gate closes.
 - [ ] Tester email allowlist created in Play Console and Brian's
   tester email is on it. The allowlist itself stays in the private
   spreadsheet alongside the opt-in URL — NOT in the repo.
-- [ ] Brian's own Android phone installs the build via the opt-in
-  URL; app icon is the `Hinterland Internal` icon and the app opens
+- [ ] A physical Android device with at most 4 GB RAM installs the exact build
+  via the opt-in
+  URL; app icon is the `The Hinterland Guide Internal` icon and the app opens
   to the first-run UI without crashing.
 
 ## Gate 3: before first kid test

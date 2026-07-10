@@ -155,6 +155,7 @@ def _wire_session(
     side_effects: list[Any] = [photo_result]
     side_effects.append(obs_result)
     side_effects.append(outbox_result)
+    side_effects.append(MagicMock())  # Dex representative projection update
 
     fake_session.execute = AsyncMock(side_effect=side_effects)
     fake_session.add = MagicMock()
@@ -449,7 +450,13 @@ def _wire_session_with_outbox_update(
     )
 
     fake_session.execute = AsyncMock(
-        side_effect=[photo_result, obs_result, outbox_result, update_result]
+        side_effect=[
+            photo_result,
+            obs_result,
+            outbox_result,
+            MagicMock(),  # Dex representative projection update
+            update_result,
+        ]
     )
     fake_session.add = MagicMock()
     fake_session.commit = AsyncMock()

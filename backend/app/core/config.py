@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Literal, cast
-from urllib.parse import quote, quote_plus
+from urllib.parse import quote, quote_plus, urlparse
 
 from fastapi import Request
 from pydantic import Field
@@ -232,6 +232,18 @@ class Settings(BaseSettings):
             self.inat_cv_enabled
             and self.inat_cv_disclosure_approved
             and self.inat_cv_benchmark_approved
+        )
+
+    @property
+    def photo_helper_enabled(self) -> bool:
+        """Kid-facing CV capability after every disclosure/config gate."""
+
+        provider_url = urlparse(self.inat_base_url.strip())
+        return bool(
+            self.inat_cv_egress_allowed
+            and provider_url.scheme == "https"
+            and provider_url.netloc
+            and self.inat_oauth_token.strip()
         )
 
     database_host: str = "localhost"

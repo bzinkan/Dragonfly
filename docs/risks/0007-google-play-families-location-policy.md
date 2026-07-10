@@ -26,7 +26,7 @@ Radius-based Expedition rules decline when only coarse/no location is present.
 ## Code State
 
 - `APP_ENV=play-internal` uses package `app.thehinterlandguide` and display name
-  `Hinterland Internal`.
+  `The Hinterland Guide Internal`.
 - `android.blockedPermissions` includes
   `android.permission.ACCESS_FINE_LOCATION`.
 - `android.permissions` includes

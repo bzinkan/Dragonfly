@@ -16,7 +16,26 @@ builds in ACR, runs the required Container Apps jobs, updates the API, and
 smokes the public Hinterland endpoints. Configuration uses `HINTERLAND_*`
 variables only; secrets remain in Key Vault or GitHub Actions secrets.
 
+That workflow is the ordinary development path. Observation W1 promotion uses
+the separate, protected `.github/workflows/observation-w1-promotion.yml`. It
+restores the non-skippable containment, authenticated canary, job/digest,
+lifecycle, database-health, and monitoring checks without restoring retired
+platform scripts or old environment-variable aliases. See
+`docs/observation-w1-promotion.md`.
+
+`observation-w1-monitoring.sh` is the supported provisioning/audit artifact for
+Observation operational alerts:
+
+```bash
+HINTERLAND_ALERT_EMAIL="ops@example.invalid" \
+bash infra-azure/observation-w1-monitoring.sh --apply --verify --synthetic
+```
+
+It is isolated to `hinterland-dev-rg` and refuses `gordi-pilot-rg`. Its optional
+evidence output contains only alert counts, action-group name, timestamp, and
+test acceptance; email receivers are not written to the artifact.
+
 Bootstrap and retired-platform scripts are intentionally absent. Recreate or
 change Azure resources through reviewed infrastructure work, using the names
-in `environments/hinterland-dev.env` and the current deployment workflow as
-the source of truth.
+in `environments/hinterland-dev.env`, the ordinary deploy workflow, the W1
+promotion workflow, and the monitoring artifact as the source of truth.

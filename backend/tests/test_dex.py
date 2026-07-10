@@ -71,8 +71,10 @@ def _dex_row(
     models.Observation,
     models.Photo,
     models.SpeciesCache | None,
-    int,
-    datetime,
+    models.Observation | None,
+    models.Photo | None,
+    models.PhotoRevocation | None,
+    models.PhotoRevocation | None,
 ]:
     obs = models.Observation(
         id=f"01J0OBS{dex_id[-19:]}",
@@ -103,14 +105,20 @@ def _dex_row(
         species_name=species_name,
         first_observation_id=obs.id,
         first_seen_at=first_seen_at,
+        observation_count=observation_count,
+        latest_seen_at=latest_seen_at or first_seen_at,
+        representative_observation_id=(obs.id if photo_status == "clean" else None),
+        representative_photo_id=(photo.id if photo_status == "clean" else None),
     )
     return (
         dex,
         obs,
         photo,
         species_cache,
-        observation_count,
-        latest_seen_at or first_seen_at,
+        obs if photo_status == "clean" else None,
+        photo if photo_status == "clean" else None,
+        None,
+        None,
     )
 
 
@@ -209,10 +217,15 @@ def test_dex_returns_verified_species_with_cache_and_counts(
         "first_observation_id": _id("OBS", 1),
         "first_photo_id": _id("PIC", 1),
         "first_photo_status": "clean",
+        "representative_observation_id": _id("OBS", 1),
+        "representative_photo_id": _id("PIC", 1),
         "first_seen_at": "2026-07-06T12:00:00Z",
         "observation_count": 3,
         "latest_seen_at": "2026-07-07T12:00:00Z",
     }
+    statement = str(fake_session.execute.await_args_list[1].args[0])
+    assert "GROUP BY" not in statement
+    assert "count(observations" not in statement
 
 
 def test_dex_allows_missing_species_cache(
@@ -277,3 +290,45 @@ def test_dex_rejects_malformed_cursor(
         headers={"Authorization": "Bearer fake"},
     )
     assert response.status_code == 422
+
+
+def test_dex_hides_representative_during_active_revocation(
+    monkeypatch: pytest.MonkeyPatch,
+    dex_client: TestClient,
+    fake_session: AsyncMock,
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    seen = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
+    row = list(
+        _dex_row(
+            _id("DEX", 1),
+            taxon_id=12345,
+            species_name="Northern Cardinal",
+            first_seen_at=seen,
+        )
+    )
+    photo = row[2]
+    assert isinstance(photo, models.Photo)
+    revocation = models.PhotoRevocation(
+        photo_id=photo.id,
+        review_id=_id("REV", 1),
+        source="adult_reject",
+        bucket=photo.bucket,
+        source_object_name=photo.object_name,
+        held_object_name=f"rejected/{photo.id}.jpg",
+        expected_byte_count=100,
+        expected_sha256="a" * 64,
+        state="pending",
+        attempt_count=0,
+    )
+    row[-2] = revocation
+    row[-1] = revocation
+    _wire_dex_query(fake_session, user=_user_row(), rows=[tuple(row)])
+
+    response = dex_client.get("/v1/dex/me", headers={"Authorization": "Bearer fake"})
+
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["first_photo_status"] == "deleted"
+    assert item["representative_observation_id"] is None
+    assert item["representative_photo_id"] is None

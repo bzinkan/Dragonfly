@@ -7,8 +7,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import and_, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.core.auth import CurrentUserDep, resolve_current_user_row
 from app.db import models
@@ -29,7 +30,9 @@ class DexListItem(BaseModel):
     iconic_taxon: str | None
     first_observation_id: str
     first_photo_id: str
-    first_photo_status: str
+    first_photo_status: str | None
+    representative_observation_id: str | None
+    representative_photo_id: str | None
     first_seen_at: datetime
     observation_count: int
     latest_seen_at: datetime
@@ -70,19 +73,10 @@ async def list_my_dex(
 ) -> DexListResponse:
     user = await resolve_current_user_row(session, current_user)
 
-    stats = (
-        select(
-            models.Observation.taxon_id.label("taxon_id"),
-            func.count(models.Observation.id).label("observation_count"),
-            func.max(models.Observation.created_at).label("latest_seen_at"),
-        )
-        .where(
-            models.Observation.user_id == user.id,
-            models.Observation.taxon_id.is_not(None),
-        )
-        .group_by(models.Observation.taxon_id)
-        .subquery()
-    )
+    representative_observation = aliased(models.Observation)
+    representative_photo = aliased(models.Photo)
+    first_photo_revocation = aliased(models.PhotoRevocation)
+    representative_revocation = aliased(models.PhotoRevocation)
 
     stmt = (
         select(
@@ -90,17 +84,47 @@ async def list_my_dex(
             models.Observation,
             models.Photo,
             models.SpeciesCache,
-            stats.c.observation_count,
-            stats.c.latest_seen_at,
+            representative_observation,
+            representative_photo,
+            first_photo_revocation,
+            representative_revocation,
         )
         .join(
             models.Observation,
             models.DexEntry.first_observation_id == models.Observation.id,
         )
         .join(models.Photo, models.Observation.photo_id == models.Photo.id)
+        .outerjoin(
+            first_photo_revocation,
+            first_photo_revocation.photo_id == models.Photo.id,
+        )
         .outerjoin(models.SpeciesCache, models.SpeciesCache.taxon_id == models.DexEntry.taxon_id)
-        .outerjoin(stats, stats.c.taxon_id == models.DexEntry.taxon_id)
-        .where(models.DexEntry.user_id == user.id)
+        .outerjoin(
+            representative_observation,
+            and_(
+                representative_observation.id == models.DexEntry.representative_observation_id,
+                representative_observation.rejected_at.is_(None),
+                representative_observation.moderation_status == "clean",
+            ),
+        )
+        .outerjoin(
+            representative_photo,
+            and_(
+                representative_photo.id == models.DexEntry.representative_photo_id,
+                representative_observation.photo_id == representative_photo.id,
+                representative_photo.status == "clean",
+                representative_photo.attachment_status == "attached",
+            ),
+        )
+        .outerjoin(
+            representative_revocation,
+            representative_revocation.photo_id == representative_photo.id,
+        )
+        .where(
+            models.DexEntry.user_id == user.id,
+            models.Observation.rejected_at.is_(None),
+            models.Observation.moderation_status != "rejected",
+        )
     )
 
     if before is not None:
@@ -138,12 +162,35 @@ async def list_my_dex(
             iconic_taxon=species.iconic_taxon if species is not None else None,
             first_observation_id=dex.first_observation_id,
             first_photo_id=first_obs.photo_id,
-            first_photo_status=photo.status,
+            first_photo_status=("deleted" if first_revocation is not None else photo.status),
+            representative_observation_id=(
+                representative_obs.id
+                if representative_obs is not None
+                and clean_photo is not None
+                and clean_revocation is None
+                else None
+            ),
+            representative_photo_id=(
+                clean_photo.id
+                if representative_obs is not None
+                and clean_photo is not None
+                and clean_revocation is None
+                else None
+            ),
             first_seen_at=dex.first_seen_at,
-            observation_count=int(observation_count or 1),
-            latest_seen_at=latest_seen_at or dex.first_seen_at,
+            observation_count=dex.observation_count,
+            latest_seen_at=dex.latest_seen_at,
         )
-        for dex, first_obs, photo, species, observation_count, latest_seen_at in page
+        for (
+            dex,
+            first_obs,
+            photo,
+            species,
+            representative_obs,
+            clean_photo,
+            first_revocation,
+            clean_revocation,
+        ) in page
     ]
 
     return DexListResponse(

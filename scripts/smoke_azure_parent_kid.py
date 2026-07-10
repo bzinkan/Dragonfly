@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Azure-era parent -> group -> kid handoff smoke test.
+"""Azure parent -> group -> kid handoff and Observation W1 smoke.
 
-This is the authenticated parent/kid smoke for the active Azure runtime. The
-parent token is supplied by the operator or GitHub
-Actions secret because Entra CIAM interactive sign-in is intentionally not
-automated in repo code.
+The parent access token is supplied by the operator or the protected GitHub
+Actions environment. This script creates a throwaway kid, keeps that kid's
+session token in process memory, and passes it directly to the Observation W1
+canary. No persistent kid-token secret is required.
 
 Environment:
-    HINTERLAND_API_BASE_URL        default: https://api.thehinterlandguide.app
-    HINTERLAND_SMOKE_ENTRA_BEARER  required: Entra access token for a parent
-    HINTERLAND_SMOKE_PARENT_NAME   default: Smoke Test Parent
-    HINTERLAND_SMOKE_KID_NAME      default: Sparrow
+    HINTERLAND_API_BASE_URL         default: https://api.thehinterlandguide.app
+    HINTERLAND_SMOKE_ENTRA_BEARER   required: Entra access token for a parent
+    HINTERLAND_SMOKE_PARENT_NAME    default: Smoke Test Parent
+    HINTERLAND_SMOKE_KID_NAME       default: Sparrow
+    HINTERLAND_SMOKE_EVIDENCE_PATH optional sanitized JSON result path
 """
 
 from __future__ import annotations
@@ -18,18 +19,25 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
-API_BASE = os.environ.get(
-    "HINTERLAND_API_BASE_URL", "https://api.thehinterlandguide.app"
-).rstrip("/")
+from smoke_observation_w1 import ObservationCanaryEvidence, run_canary
+
+API_BASE = os.environ.get("HINTERLAND_API_BASE_URL", "https://api.thehinterlandguide.app").rstrip(
+    "/"
+)
 PARENT_BEARER = os.environ.get("HINTERLAND_SMOKE_ENTRA_BEARER", "").strip()
 PARENT_NAME = os.environ.get("HINTERLAND_SMOKE_PARENT_NAME", "Smoke Test Parent")
 KID_NAME = os.environ.get("HINTERLAND_SMOKE_KID_NAME", "Sparrow")
+_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 
 def _decode_jwt_payload(token: str) -> dict[str, Any]:
@@ -44,8 +52,8 @@ def _decode_jwt_payload(token: str) -> dict[str, Any]:
     return decoded if isinstance(decoded, dict) else {}
 
 
-def _smoke_email() -> str:
-    claims = _decode_jwt_payload(PARENT_BEARER)
+def _smoke_email(token: str) -> str:
+    claims = _decode_jwt_payload(token)
     email = claims.get("preferred_username") or claims.get("email")
     if isinstance(email, str) and "@" in email:
         return email
@@ -53,12 +61,13 @@ def _smoke_email() -> str:
 
 
 def request(
+    base_url: str,
     method: str,
     path_or_url: str,
     *,
     token: str | None = None,
     body: dict[str, Any] | None = None,
-) -> tuple[int, Any]:
+) -> tuple[int, Any, Mapping[str, str]]:
     encoded = json.dumps(body).encode() if body is not None else None
     headers = {"Accept": "application/json"}
     if body is not None:
@@ -66,19 +75,19 @@ def request(
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    url = path_or_url if path_or_url.startswith("http") else f"{API_BASE}{path_or_url}"
+    url = path_or_url if path_or_url.startswith("http") else f"{base_url}{path_or_url}"
     req = urllib.request.Request(url, data=encoded, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(req) as resp:  # noqa: S310 - internal smoke
+        with urllib.request.urlopen(req) as resp:
             raw = resp.read()
-            return resp.status, json.loads(raw or b"{}")
+            return resp.status, json.loads(raw or b"{}"), dict(resp.headers.items())
     except urllib.error.HTTPError as exc:
         raw = exc.read().decode("utf-8", errors="replace")
         try:
             payload: Any = json.loads(raw)
         except json.JSONDecodeError:
             payload = raw
-        return exc.code, payload
+        return exc.code, payload, dict(exc.headers.items())
 
 
 def expect(
@@ -86,105 +95,183 @@ def expect(
     status: int,
     payload: Any,
     *,
+    headers: Mapping[str, str] | None = None,
     expected_status: int | tuple[int, ...] = 200,
 ) -> None:
     expected = expected_status if isinstance(expected_status, tuple) else (expected_status,)
     if status in expected:
         return
-    print(f"\n[FAIL] {label}: got HTTP {status}, expected {expected}")
-    print(f"  body: {json.dumps(payload, indent=2)[:1200]}")
-    sys.exit(2)
+    normalized = {key.lower(): value for key, value in (headers or {}).items()}
+    request_id = next(
+        (
+            normalized.get(name, "").strip()
+            for name in ("x-request-id", "x-correlation-id", "request-id")
+            if _REQUEST_ID_PATTERN.fullmatch(normalized.get(name, "").strip())
+        ),
+        "unavailable",
+    )
+    error_code = "unavailable"
+    detail = payload.get("detail", {}) if isinstance(payload, dict) else {}
+    candidate = detail.get("code") if isinstance(detail, dict) else None
+    if isinstance(candidate, str) and _REQUEST_ID_PATTERN.fullmatch(candidate):
+        error_code = candidate
+    raise RuntimeError(
+        f"{label} returned HTTP {status}, expected {expected}; "
+        f"request_id={request_id}; error_code={error_code}"
+    )
 
 
-def main() -> int:
-    if not PARENT_BEARER:
-        print("HINTERLAND_SMOKE_ENTRA_BEARER is required.", file=sys.stderr)
-        return 2
+def _record_request_id(headers: Mapping[str, str], request_ids: list[str]) -> None:
+    normalized = {key.lower(): value for key, value in headers.items()}
+    for name in ("x-request-id", "x-correlation-id", "request-id"):
+        value = normalized.get(name, "").strip()
+        if value and _REQUEST_ID_PATTERN.fullmatch(value) and value not in request_ids:
+            request_ids.append(value)
+            return
 
-    parent_email = _smoke_email()
-    print(f"API base: {API_BASE}")
-    print(f"Parent:   {parent_email}")
 
-    print("[1/7] GET /health...")
-    status, payload = request("GET", "/health")
-    expect("/health", status, payload)
+def _write_evidence(
+    path: str | os.PathLike[str],
+    *,
+    request_ids: list[str],
+    observation: ObservationCanaryEvidence,
+) -> None:
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        json.dumps(
+            {
+                "generated_at": datetime.now(UTC).isoformat(),
+                "result": "passed",
+                "parent_kid_handoff": "passed",
+                "starter_expedition_visible": True,
+                "request_ids": request_ids,
+                "observation_canary": observation.to_public_dict(),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
-    print("[2/7] POST /v1/auth/consent...")
-    status, payload = request(
+
+def run_parent_kid_smoke(
+    *,
+    base_url: str,
+    parent_bearer: str,
+    parent_name: str = PARENT_NAME,
+    kid_name: str = KID_NAME,
+    evidence_path: str | os.PathLike[str] | None = None,
+) -> ObservationCanaryEvidence:
+    """Create a throwaway kid and pass its session directly to the W1 canary."""
+
+    base_url = base_url.strip().rstrip("/")
+    parent_bearer = parent_bearer.strip()
+    if not parent_bearer:
+        raise RuntimeError("HINTERLAND_SMOKE_ENTRA_BEARER is required")
+
+    parent_email = _smoke_email(parent_bearer)
+    request_ids: list[str] = []
+    print(f"API base: {base_url}")
+
+    print("[1/9] GET /health...")
+    status, payload, headers = request(base_url, "GET", "/health")
+    _record_request_id(headers, request_ids)
+    expect("/health", status, payload, headers=headers)
+
+    print("[2/9] POST /v1/auth/consent...")
+    status, payload, headers = request(
+        base_url,
         "POST",
         "/v1/auth/consent",
-        body={"email": parent_email, "kid_display_name": KID_NAME},
+        body={"email": parent_email, "kid_display_name": kid_name},
     )
-    expect("/v1/auth/consent", status, payload)
-    consent_id = payload["id"]
-    print(f"      consent_id={consent_id}")
+    _record_request_id(headers, request_ids)
+    expect("/v1/auth/consent", status, payload, headers=headers)
 
-    print("[3/7] POST /v1/auth/parent-signup...")
-    status, payload = request(
+    print("[3/9] POST /v1/auth/parent-signup...")
+    status, payload, headers = request(
+        base_url,
         "POST",
         "/v1/auth/parent-signup",
-        token=PARENT_BEARER,
-        body={"display_name": PARENT_NAME},
+        token=parent_bearer,
+        body={"display_name": parent_name},
     )
-    expect("/v1/auth/parent-signup", status, payload)
-    parent_user_id = payload["id"]
-    assert payload["role"] == "parent", payload
-    print(f"      parent_user_id={parent_user_id}")
+    _record_request_id(headers, request_ids)
+    expect("/v1/auth/parent-signup", status, payload, headers=headers)
+    if payload.get("role") != "parent":
+        raise RuntimeError("parent signup returned an unexpected role")
 
-    print("[4/7] POST /v1/groups...")
-    status, payload = request(
+    print("[4/9] POST /v1/groups...")
+    status, payload, headers = request(
+        base_url,
         "POST",
         "/v1/groups",
-        token=PARENT_BEARER,
+        token=parent_bearer,
         body={"name": f"Smoke Test Family {int(time.time())}"},
     )
-    expect("/v1/groups", status, payload, expected_status=201)
+    _record_request_id(headers, request_ids)
+    expect("/v1/groups", status, payload, headers=headers, expected_status=201)
     group_id = payload["id"]
-    print(f"      group_id={group_id} join_code={payload['join_code']}")
 
-    print("[5/7] POST /v1/groups/{group_id}/kids...")
-    status, payload = request(
+    print("[5/9] POST /v1/groups/{group_id}/kids...")
+    status, payload, headers = request(
+        base_url,
         "POST",
         f"/v1/groups/{group_id}/kids",
-        token=PARENT_BEARER,
-        body={"display_name": KID_NAME, "age_band": "9-10"},
+        token=parent_bearer,
+        body={"display_name": kid_name, "age_band": "9-10"},
     )
-    expect("/v1/groups/{group_id}/kids", status, payload, expected_status=201)
+    _record_request_id(headers, request_ids)
+    expect(
+        "/v1/groups/{group_id}/kids",
+        status,
+        payload,
+        headers=headers,
+        expected_status=201,
+    )
     kid_user_id = payload["id"]
     handoff_token = payload["handoff_token"]
-    print(f"      kid_user_id={kid_user_id}")
 
-    print("[6/7] POST /v1/auth/kid-exchange...")
-    status, payload = request(
+    print("[6/9] POST /v1/auth/kid-exchange...")
+    status, payload, headers = request(
+        base_url,
         "POST",
         "/v1/auth/kid-exchange",
         body={"handoff_token": handoff_token},
     )
-    expect("/v1/auth/kid-exchange", status, payload)
+    _record_request_id(headers, request_ids)
+    expect("/v1/auth/kid-exchange", status, payload, headers=headers)
     kid_session_token = payload["session_token"]
 
-    print("[7/8] GET /v1/me as kid...")
-    status, payload = request("GET", "/v1/me", token=kid_session_token)
-    expect("/v1/me", status, payload)
-    assert payload["uid"] == kid_user_id, payload
-    assert payload["role"] == "kid", payload
-    assert payload["group_id"] == group_id, payload
+    print("[7/9] GET /v1/me as kid...")
+    status, payload, headers = request(base_url, "GET", "/v1/me", token=kid_session_token)
+    _record_request_id(headers, request_ids)
+    expect("/v1/me", status, payload, headers=headers)
+    if (
+        payload.get("uid") != kid_user_id
+        or payload.get("role") != "kid"
+        or payload.get("group_id") != group_id
+    ):
+        raise RuntimeError("kid /v1/me did not match the throwaway handoff")
 
-    print("[8/8] GET /v1/expeditions/available as kid...")
+    print("[8/9] GET /v1/expeditions/available as kid...")
     deadline = time.time() + 90
     last_status: int | None = None
     last_payload: Any = None
     while time.time() < deadline:
-        last_status, last_payload = request(
+        last_status, last_payload, headers = request(
+            base_url,
             "GET",
             "/v1/expeditions/available",
             token=kid_session_token,
         )
+        _record_request_id(headers, request_ids)
         if last_status == 200:
             items = last_payload.get("items") if isinstance(last_payload, dict) else None
             if isinstance(items, list) and any(
-                isinstance(item, dict) and item.get("id") == "backyard_starter"
-                for item in items
+                isinstance(item, dict) and item.get("id") == "backyard_starter" for item in items
             ):
                 print("      starter expedition visible")
                 break
@@ -194,13 +281,37 @@ def main() -> int:
             "/v1/expeditions/available",
             last_status or 0,
             last_payload,
+            headers=headers,
             expected_status=200,
         )
-        print("\n[FAIL] /v1/expeditions/available: backyard_starter not visible")
-        print(f"  body: {json.dumps(last_payload, indent=2)[:1200]}")
-        return 2
+        raise RuntimeError("backyard_starter not visible")
 
-    print("\nALL CHECKS PASSED -- Azure parent/kid handoff + expedition content work.")
+    print("[9/9] Observation W1 canary with in-memory kid session...")
+    observation = run_canary(base_url=base_url, bearer=kid_session_token)
+    if evidence_path:
+        _write_evidence(
+            evidence_path,
+            request_ids=request_ids,
+            observation=observation,
+        )
+
+    print(
+        "\nALL CHECKS PASSED -- Azure parent/kid handoff, Expedition content, "
+        "and Observation W1 canary work."
+    )
+    return observation
+
+
+def main() -> int:
+    try:
+        run_parent_kid_smoke(
+            base_url=API_BASE,
+            parent_bearer=PARENT_BEARER,
+            evidence_path=os.environ.get("HINTERLAND_SMOKE_EVIDENCE_PATH") or None,
+        )
+    except Exception as exc:
+        print(f"Authenticated smoke failed: {exc}", file=sys.stderr)
+        return 2
     return 0
 
 

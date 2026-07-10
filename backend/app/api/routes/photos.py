@@ -29,7 +29,9 @@ router = APIRouter(prefix="/v1/photos", tags=["photos"])
 log = structlog.get_logger()
 
 _PRESIGN_TTL = timedelta(minutes=15)
-_PHOTO_GET_TTL = timedelta(minutes=5)
+# Short-lived reads bound already-issued clean-photo access after a later
+# rejection. Mobile refreshes at 40 seconds and active screens re-check state.
+_PHOTO_GET_TTL = timedelta(seconds=60)
 
 AllowedContentType = Literal["image/jpeg"]
 IdempotencyKeyHeader = Annotated[
@@ -296,13 +298,26 @@ async def photo_get_url(
                 models.Observation.moderation_status,
                 models.Observation.group_id,
                 models.Observation.user_id,
+                select(models.PhotoRevocation.photo_id)
+                .where(models.PhotoRevocation.photo_id == photo.id)
+                .exists()
+                .label("revocation_active"),
             ).where(models.Observation.photo_id == photo.id)
         )
     ).one_or_none()
     if observation_access is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
-    moderation_status, observation_group_id, observation_user_id = observation_access
+    (
+        moderation_status,
+        observation_group_id,
+        observation_user_id,
+        revocation_active,
+    ) = observation_access
     if observation_user_id != photo.user_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+    if revocation_active:
+        # Presence of the durable row is the deny gate, including while copy,
+        # delete, or final database work is being retried.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
 
     is_owner = user_row.id == photo.user_id
@@ -312,9 +327,10 @@ async def photo_get_url(
         caller_user_id=user_row.id,
         observation_group_id=observation_group_id,
     )
-    allowed = (
-        photo.status == "clean" and moderation_status == "clean" and (is_owner or adult_manager)
-    ) or (photo.status == "quarantine" and moderation_status == "quarantine" and adult_manager)
+    allowed = photo.attachment_status == "attached" and (
+        (photo.status == "clean" and moderation_status == "clean" and (is_owner or adult_manager))
+        or (photo.status == "quarantine" and moderation_status == "quarantine" and adult_manager)
+    )
     if not allowed:
         # All lifecycle and authorization denials look absent to prevent ID
         # enumeration and avoid revealing that a peer submitted a photo.

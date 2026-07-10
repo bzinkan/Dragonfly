@@ -20,7 +20,7 @@ The logical product invariants are unchanged:
 | `memberships` | User membership plus leaderboard counters |
 | `photos` | Azure Blob attachment state plus verified canonical metadata |
 | `observations` | Authoritative kid observations, moderation, identification, dispatch status, and persisted rewards |
-| `dex_entries` | First species finds per user |
+| `dex_entries` | Maintained per-user/taxon projection: first find, accepted count/latest seen, and representative clean photo |
 | `expedition_content` | Materialized view of repo-authored expedition JSON |
 | `expedition_progress` | Per-user progress through active expeditions |
 | `review_queue` | Teacher/adult review for quarantined photos |
@@ -35,6 +35,7 @@ The logical product invariants are unchanged:
 | `moderation_outbox` | Committed canonical-photo work awaiting Service Bus relay |
 | `observation_handler_runs` | Versioned per-handler status, state, attempts, and rewards |
 | `derived_state_rebuilds` | Adult-visible rejection/correction compensation jobs |
+| `photo_revocations` | Fail-closed clean-photo relocation/deletion recovery, unique per photo |
 | `expedition_observation_contributions` | One-observation-per-expedition replay gate |
 | `sanctuary_zone_state` | Per-user per-zone observation counts and depth tier |
 | `sanctuary_elements` | Per-user record of which named Sanctuary unlocks have fired |
@@ -49,16 +50,17 @@ The logical product invariants are unchanged:
 | Resolve adult identity | `select * from users where entra_oid = $1` |
 | Load group members | `select * from memberships where group_id = $1` |
 | Group leaderboard | `select * from memberships where group_id = $1 order by dex_count desc` |
-| User observations | `select * from observations where user_id = $1 order by created_at desc` |
+| User Field Journal | Read the child DTO from non-rejected observations by `(user_id, observed_at desc, id desc)` with an opaque observed cursor |
 | Submission replay | Read `observation_idempotency` by `(user_id, idempotency_ulid, operation)` and compare normalized request hash |
 | Group observations | `select * from observations where group_id = $1 order by created_at desc` |
-| User Dex | `select * from dex_entries where user_id = $1 order by first_seen_at desc` |
+| User Dex | Read maintained `dex_entries` by user; do not aggregate observations on the request path |
 | First find | `insert into dex_entries (...) on conflict (user_id, taxon_id) do nothing` |
 | Expedition progress | `select * from expedition_progress where user_id = $1` |
 | Active expedition focus | `select * from expedition_progress where user_id = $1 and focused_at is not null` |
 | Review queue | `select * from review_queue where group_id = $1 and status = 'pending'` |
 | Handler replay claim | Lock pending/failed/blocked `observation_handler_runs` with `FOR UPDATE SKIP LOCKED` |
 | Derived rebuild claim | Coalesce/lock `derived_state_rebuilds` by `user_id` |
+| Photo revocation claim | Lock/create the unique `photo_revocations.photo_id` row before denying new signed URLs |
 | Rarity lookup | `select * from rarity_cache where region_geohash = $1 and taxon_id = $2` |
 | Taxonomy search | Search active `species_cache` normalized/indexed name and aliases; no live fallback |
 | Taxonomy pack | Read active `taxonomy_packs` by pack ID/version and sign the private Blob |
@@ -112,6 +114,13 @@ observation. The photo and observation share a submission ULID unique per user.
 `moderation_source` (`none|noop|azure|adult`) and policy version. Attachment or
 Blob arrival never implies a moderation decision.
 
+Child APIs expose a server-derived `child_presentation_status` rather than raw
+photo lifecycle state: `clean|pending|processing|pilot_private|adult_review|failed`.
+It is `clean` only when both Observation and Photo are clean and no active
+revocation exists. Quarantine becomes `adult_review`; any unknown or mismatched
+combination maps to the most restrictive metadata-only state. Rejected/deleted
+records are absent from child list/detail reads.
+
 Observations record `observed_at`, optional `geohash4`, and
 `location_source=device_coarse|manual_coarse|none|legacy_coarsened`. New raw
 latitude/longitude is not durable data. Compatibility latitude/longitude input
@@ -121,6 +130,26 @@ Identification records a project-catalog taxon ID or manual/Unknown choice,
 `identification_source`, and `identification_revision`. When a taxon ID is
 present, the server ignores client-supplied names and uses the catalog's
 canonical display name. Manual and Unknown observations are Dex-ineligible.
+
+## Maintained Dex Projection
+
+`dex_entries` keeps atomic first-find insertion as its celebration gate and
+also stores `observation_count >= 0`, `latest_seen_at` from accepted
+observations' `observed_at`, and nullable representative clean
+observation/photo references. `first_seen_at` and `first_observation_id` remain
+separate from the representative image.
+
+An accepted backdated observation may replace the earliest first-observation
+metadata without emitting another first-find reward. Every successful
+DexHandler ledger run updates count/latest idempotently; a clean moderation
+transition may update the representative to the newest accepted clean photo.
+Rejection or identification correction replaces the entire user projection
+through the deterministic rebuild. Taxa with zero accepted observations are
+removed. Normal Dex reads never scan/aggregate all Observation rows.
+
+Indexes support `(user_id, first_seen_at, id)` on Dex and
+`(user_id, observed_at DESC, id DESC)` over non-rejected observations. Field
+Journal cursors encode the latter tuple, so equal timestamps are deterministic.
 
 ## Handler And Work Ledgers
 
@@ -136,6 +165,14 @@ forbidden.
 `derived_state_rebuilds` coalesces per user. Rejection and revision-checked
 identification correction enqueue it transactionally. Expedition contribution
 gates prevent one observation from advancing the same step twice under replay.
+
+`photo_revocations` is unique by photo and records source, claim-time review
+status, requesting adult when present, restricted held destination, expected
+SHA-256/length, state, attempt count, last error, and timestamps. Its active
+state denies all new URL issuance before storage mutation begins. Its review
+foreign key is restrictive so review cleanup cannot erase that deny gate.
+Recovery is destination/source idempotent and alerts after bounded retry
+exhaustion.
 
 ## Additive Migration Procedure
 
@@ -161,8 +198,10 @@ edited. Deployment must:
 
 ## Rejection And Identification Correction
 
-Rejection tombstones the authoritative observation, immediately denies photo
-access, and queues a rebuild instead of piecemeal counter decrements. A
+Rejection first claims a durable revocation, immediately denies new photo URL
+issuance, copies/verifies the clean object into the held/rejected prefix, and
+synchronously removes the clean source. It then tombstones the authoritative
+observation and queues a rebuild instead of piecemeal counter decrements. A
 revision-checked identification correction uses the same rebuild path.
 
 The rebuild acquires the same user advisory lock and atomically regenerates

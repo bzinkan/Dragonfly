@@ -65,6 +65,15 @@ export type LocationSource =
 
 export type DispatchStatus = "pending" | "partial" | "complete" | "unverified";
 
+/** Server-derived, fail-closed presentation state for every child surface. */
+export type ChildPresentationStatus =
+  | "clean"
+  | "pending"
+  | "processing"
+  | "pilot_private"
+  | "adult_review"
+  | "failed";
+
 export type ObservationCreate = {
   photo_id: string;
   /** Accepted only for one legacy release; new clients send geohash4. */
@@ -85,8 +94,6 @@ export type Observation = {
   user_id: string;
   group_id: string;
   photo_id: string;
-  latitude: number | null;
-  longitude: number | null;
   geohash4: string | null;
   observed_at: string | null;
   location_source: LocationSource;
@@ -96,7 +103,7 @@ export type Observation = {
   identification_revision: number;
   place_name: string | null;
   ecology_tags?: Record<string, string>;
-  moderation_status: string;
+  child_presentation_status: ChildPresentationStatus;
   dispatch_status: DispatchStatus;
   rewards: ObservationReward[];
 };
@@ -163,24 +170,18 @@ export function identifyObservation(
 
 export type ObservationListItem = {
   id: string;
-  user_id: string;
-  group_id: string;
   photo_id: string;
-  photo_object_name: string;
-  photo_status: string;
-  latitude: number | null;
-  longitude: number | null;
+  submission_ulid?: string | null;
   geohash4: string | null;
-  observed_at: string | null;
+  observed_at: string;
   location_source: LocationSource;
   taxon_id: number | null;
   species_name: string | null;
   identification_source: IdentificationSource;
   place_name: string | null;
   ecology_tags?: Record<string, string>;
-  moderation_status: string;
+  child_presentation_status: ChildPresentationStatus;
   dispatch_status: DispatchStatus;
-  created_at: string;
 };
 
 export type ObservationListResponse = {
@@ -189,12 +190,17 @@ export type ObservationListResponse = {
 };
 
 export function listMyObservations(
-  opts: { limit?: number; before?: string | null } = {},
+  opts: {
+    limit?: number;
+    order?: "observed";
+    cursor?: string | null;
+  } = {},
   signal?: AbortSignal,
 ): Promise<ObservationListResponse> {
   const params = new URLSearchParams();
   if (opts.limit !== undefined) params.set("limit", String(opts.limit));
-  if (opts.before) params.set("before", opts.before);
+  if (opts.order) params.set("order", opts.order);
+  if (opts.cursor) params.set("cursor", opts.cursor);
   const query = params.toString();
   return apiRequest<ObservationListResponse>(
     `/v1/observations/me${query ? `?${query}` : ""}`,

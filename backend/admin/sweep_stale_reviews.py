@@ -28,8 +28,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
+from app.core.storage import BlobSignedUrlGenerator, SignedUrlGenerator
 from app.db import models
-from app.moderation.review_service import ReviewResolutionConflict, reject_review_item
+from app.moderation.review_service import ReviewResolutionConflict
+from app.moderation.revocation import PhotoRevocationPending, revoke_and_reject_review_item
 
 log = structlog.get_logger()
 
@@ -39,7 +41,7 @@ log = structlog.get_logger()
 _STALE_AFTER = timedelta(days=30)
 
 
-async def sweep(session: AsyncSession) -> int:
+async def sweep(session: AsyncSession, *, storage: SignedUrlGenerator) -> int:
     """Auto-reject stale pending reviews. Returns the count resolved."""
     cutoff = datetime.now(UTC) - _STALE_AFTER
 
@@ -64,15 +66,18 @@ async def sweep(session: AsyncSession) -> int:
     resolved = 0
     for review in stale:
         try:
-            await reject_review_item(
+            await revoke_and_reject_review_item(
                 session,
+                storage=storage,
                 review=review,
                 reviewer_user_id=None,
+                source="stale_review",
                 nonblocking=True,
             )
-        except ReviewResolutionConflict:
+        except (ReviewResolutionConflict, PhotoRevocationPending):
             # Another reviewer/sweeper won after the candidate read. Release
-            # this transaction's advisory lock and move on.
+            # this transaction's advisory lock and move on. Revocation
+            # failures retain their durable URL-deny record for replay.
             await session.rollback()
             continue
 
@@ -82,7 +87,6 @@ async def sweep(session: AsyncSession) -> int:
             photo_id=review.photo_id,
             age_days=(now - review.created_at).days,
         )
-        await session.commit()
         resolved += 1
 
     log.info("sweep_stale_reviews.complete", count=resolved)
@@ -93,9 +97,10 @@ async def main() -> None:
     settings = get_settings()
     engine = create_async_engine(settings.sqlalchemy_database_url)
     sessions: async_sessionmaker[AsyncSession] = async_sessionmaker(engine, expire_on_commit=False)
+    storage = BlobSignedUrlGenerator(settings.blob_account_endpoint)
     try:
         async with sessions() as session:
-            count = await sweep(session)
+            count = await sweep(session, storage=storage)
         print(f"sweep_stale_reviews: {count} review(s) auto-rejected")
     finally:
         await engine.dispose()

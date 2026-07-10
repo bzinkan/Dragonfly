@@ -12,7 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.routes.observations import (
     ObservationCreateRequest,
     _create_request_hash,
+    _decode_observed_cursor,
+    _encode_observed_cursor,
     _normalized_location,
+    derive_child_presentation_status,
 )
 from app.core.config import Settings
 from app.core.storage import StorageObjectProperties
@@ -364,8 +367,9 @@ def test_create_happy_path(
     assert body["user_id"] == _USER_ID
     assert body["group_id"] == _GROUP_ID
     assert body["photo_id"] == _PHOTO_ID
-    assert body["latitude"] is None
-    assert body["longitude"] is None
+    assert "latitude" not in body
+    assert "longitude" not in body
+    assert body["child_presentation_status"] == "pending"
     assert body["taxon_id"] == 12345
     assert body["species_name"] == "Northern Cardinal"
     # geohash4 length 4, base32-ish
@@ -711,6 +715,11 @@ def test_create_idempotency_replay_returns_canonical_observation(
         result = MagicMock()
         result.scalar_one_or_none = MagicMock(return_value=value)
         results.append(result)
+    attached_photo = _photo_row()
+    attached_photo.attachment_status = "attached"
+    lifecycle_result = MagicMock()
+    lifecycle_result.one_or_none = MagicMock(return_value=(attached_photo, None))
+    results.append(lifecycle_result)
     fake_session.execute = AsyncMock(side_effect=results)
 
     response = observations_client.post(
@@ -763,13 +772,14 @@ def _obs_with_photo(
     *,
     taxon_id: int | None = None,
     species_name: str | None = None,
-) -> tuple[models.Observation, models.Photo]:
+) -> tuple[models.Observation, models.Photo, None]:
     photo = models.Photo(
         id=f"PHOTO{obs_id[:21]}",
         user_id=_USER_ID,
         bucket="hinterland-photos-test",
         object_name=f"pending/{obs_id}.jpg",
         status="pending",
+        attachment_status="attached",
         content_type="image/jpeg",
     )
     obs = models.Observation(
@@ -783,16 +793,19 @@ def _obs_with_photo(
         taxon_id=taxon_id,
         species_name=species_name,
         place_name=None,
+        moderation_status="pending",
     )
     obs.created_at = datetime(2026, 5, 9, 23, 0, 0, tzinfo=UTC)
-    return obs, photo
+    obs.observed_at = obs.created_at
+    return obs, photo, None
 
 
 def _wire_list_query(
     fake_session: AsyncMock,
     *,
     user: models.User | None,
-    rows: list[tuple[models.Observation, models.Photo]] | None = None,
+    rows: list[tuple[models.Observation, models.Photo, models.PhotoRevocation | None]]
+    | None = None,
 ) -> None:
     user_result = MagicMock()
     user_result.scalar_one_or_none = MagicMock(return_value=user)
@@ -805,6 +818,21 @@ def _wire_list_query(
         side_effects.append(list_result)
 
     fake_session.execute = AsyncMock(side_effect=side_effects)
+
+
+def _revocation(photo: models.Photo) -> models.PhotoRevocation:
+    return models.PhotoRevocation(
+        photo_id=photo.id,
+        review_id="01ARZ3NDEKTSV4RRFFQ69G5FAR",
+        source="adult_reject",
+        bucket=photo.bucket,
+        source_object_name=photo.object_name,
+        held_object_name=f"rejected/{photo.id}.jpg",
+        expected_byte_count=100,
+        expected_sha256="a" * 64,
+        state="pending",
+        attempt_count=0,
+    )
 
 
 def test_list_requires_bearer_token(observations_client: TestClient) -> None:
@@ -871,9 +899,18 @@ def test_list_returns_items_newest_first_no_more_pages(
         "01J0OBS00000000000000001",
     ]
     assert body["next_cursor"] is None
-    # Photo metadata included
-    assert body["items"][0]["photo_object_name"].startswith("pending/")
-    assert body["items"][0]["photo_status"] == "pending"
+    assert body["items"][0]["child_presentation_status"] == "pending"
+    assert body["items"][0]["submission_ulid"] is None
+    forbidden = {
+        "user_id",
+        "group_id",
+        "photo_object_name",
+        "photo_status",
+        "latitude",
+        "longitude",
+        "moderation_status",
+    }
+    assert forbidden.isdisjoint(body["items"][0])
 
 
 def test_list_returns_next_cursor_when_more_pages_exist(
@@ -904,6 +941,30 @@ def test_list_returns_next_cursor_when_more_pages_exist(
     assert body["next_cursor"] == "01J0OBS00000000000000002"
 
 
+def test_list_active_revocation_never_presents_clean(
+    monkeypatch: pytest.MonkeyPatch,
+    observations_client: TestClient,
+    fake_session: AsyncMock,
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    observation, photo, _ = _obs_with_photo("01ARZ3NDEKTSV4RRFFQ69G5FAV")
+    observation.moderation_status = "clean"
+    photo.status = "clean"
+    _wire_list_query(
+        fake_session,
+        user=_user_row(),
+        rows=[(observation, photo, _revocation(photo))],
+    )
+
+    response = observations_client.get(
+        "/v1/observations/me?order=observed",
+        headers={"Authorization": "Bearer fake"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["child_presentation_status"] == "failed"
+
+
 def test_list_rejects_limit_above_max(
     monkeypatch: pytest.MonkeyPatch,
     observations_client: TestClient,
@@ -929,13 +990,125 @@ def test_list_rejects_malformed_cursor(
     assert response.status_code == 422
 
 
+def test_observed_cursor_round_trips_versioned_timestamp_and_id() -> None:
+    observed_at = datetime(2026, 7, 10, 12, 34, 56, tzinfo=UTC)
+    observation_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+
+    cursor = _encode_observed_cursor(observed_at, observation_id)
+
+    assert "=" not in cursor
+    assert _decode_observed_cursor(cursor) == (observed_at, observation_id)
+
+
+def test_list_observed_order_returns_opaque_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+    observations_client: TestClient,
+    fake_session: AsyncMock,
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    rows = [
+        _obs_with_photo("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+        _obs_with_photo("01ARZ3NDEKTSV4RRFFQ69G5FAW"),
+    ]
+    rows[0][0].observed_at = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+    rows[1][0].observed_at = datetime(2026, 7, 9, 12, 0, tzinfo=UTC)
+    _wire_list_query(fake_session, user=_user_row(), rows=rows)
+
+    response = observations_client.get(
+        "/v1/observations/me?order=observed&limit=1",
+        headers={"Authorization": "Bearer fake"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["id"] for item in body["items"]] == [rows[0][0].id]
+    assert body["next_cursor"] != rows[0][0].id
+    assert _decode_observed_cursor(body["next_cursor"]) == (
+        rows[0][0].observed_at,
+        rows[0][0].id,
+    )
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "order=observed&cursor=not-a-json-cursor",
+        "order=observed&before=01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "cursor=eyJ2IjoxfQ",
+    ],
+)
+def test_list_rejects_invalid_or_mixed_observed_cursors(
+    monkeypatch: pytest.MonkeyPatch,
+    observations_client: TestClient,
+    fake_session: AsyncMock,
+    query: str,
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    _wire_list_query(fake_session, user=_user_row(), rows=[])
+
+    response = observations_client.get(
+        f"/v1/observations/me?{query}",
+        headers={"Authorization": "Bearer fake"},
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("observation_status", "photo_status", "expected"),
+    [
+        ("clean", "clean", "clean"),
+        ("pending", "pending", "pending"),
+        ("processing", "pending", "processing"),
+        ("pilot_private", "pending", "pilot_private"),
+        ("quarantine", "quarantine", "adult_review"),
+        ("failed", "pending", "failed"),
+        ("clean", "pending", "failed"),
+        ("unknown", "clean", "failed"),
+    ],
+)
+def test_child_presentation_status_is_exact_and_fail_closed(
+    observation_status: str,
+    photo_status: str,
+    expected: str,
+) -> None:
+    assert (
+        derive_child_presentation_status(
+            observation_status,
+            photo_status,
+            photo_attachment_status="attached",
+        )
+        == expected
+    )
+
+
+def test_child_presentation_status_denies_reserved_or_revoking_photo() -> None:
+    assert (
+        derive_child_presentation_status(
+            "clean",
+            "clean",
+            photo_attachment_status="reserved",
+        )
+        == "failed"
+    )
+    assert (
+        derive_child_presentation_status(
+            "clean",
+            "clean",
+            photo_attachment_status="attached",
+            revocation_active=True,
+        )
+        == "failed"
+    )
+
+
 def test_get_observation_returns_persisted_reconciliation_state(
     monkeypatch: pytest.MonkeyPatch,
     observations_client: TestClient,
     fake_session: AsyncMock,
 ) -> None:
     _stub_token_verifier(monkeypatch)
-    observation, _photo = _obs_with_photo(
+    observation, photo, _revocation = _obs_with_photo(
         "01J0OBS00000000000000003", taxon_id=3, species_name="Cardinal"
     )
     observation.dispatch_status = "partial"
@@ -944,7 +1117,7 @@ def test_get_observation_returns_persisted_reconciliation_state(
     user_result = MagicMock()
     user_result.scalar_one_or_none = MagicMock(return_value=_user_row())
     observation_result = MagicMock()
-    observation_result.scalar_one_or_none = MagicMock(return_value=observation)
+    observation_result.one_or_none = MagicMock(return_value=(observation, photo, None))
     fake_session.execute = AsyncMock(side_effect=[user_result, observation_result])
 
     response = observations_client.get(
@@ -954,3 +1127,32 @@ def test_get_observation_returns_persisted_reconciliation_state(
     assert response.status_code == 200
     assert response.json()["id"] == observation.id
     assert response.json()["dispatch_status"] == "partial"
+    assert response.json()["child_presentation_status"] == "pending"
+    assert "latitude" not in response.json()
+    assert "longitude" not in response.json()
+
+
+def test_get_observation_active_revocation_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    observations_client: TestClient,
+    fake_session: AsyncMock,
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    observation, photo, _ = _obs_with_photo("01ARZ3NDEKTSV4RRFFQ69G5FAV")
+    observation.moderation_status = "clean"
+    photo.status = "clean"
+    user_result = MagicMock()
+    user_result.scalar_one_or_none = MagicMock(return_value=_user_row())
+    observation_result = MagicMock()
+    observation_result.one_or_none = MagicMock(
+        return_value=(observation, photo, _revocation(photo))
+    )
+    fake_session.execute = AsyncMock(side_effect=[user_result, observation_result])
+
+    response = observations_client.get(
+        f"/v1/observations/{observation.id}",
+        headers={"Authorization": "Bearer fake"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["child_presentation_status"] == "failed"

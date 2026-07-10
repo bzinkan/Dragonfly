@@ -15,6 +15,8 @@ Related reading:
   using `thehinterlandguide.app` in Play Console fields.
 - [`one-week-kid-pilot-checklist.md`](one-week-kid-pilot-checklist.md)
   for the day-by-day pilot checklist this doc feeds.
+- [`observation-w1-promotion.md`](observation-w1-promotion.md)
+  for the protected server gate, exact-AAB evidence, and fresh-package cutover.
 - [`risks/0007-google-play-families-location-policy.md`](risks/0007-google-play-families-location-policy.md)
   for the coarse/no-location release gate.
 
@@ -48,8 +50,8 @@ If a Hinterland entry does not yet exist:
 
 1. https://play.google.com/console
 2. **All apps** → **Create app**
-3. App name: **Hinterland** (this is the production-listing display name;
-   pilot tester devices show "Hinterland Internal" because that's what
+3. App name: **The Hinterland Guide** (this is the production-listing display name;
+   pilot tester devices show "The Hinterland Guide Internal" because that's what
    the AAB's `<application android:label>` resolves to from the
    `play-internal` APP_ENV branch in `mobile/app.config.ts`)
 4. Default language: English (United States)
@@ -82,7 +84,7 @@ filename to `.gitignore` if you download it inside the repo.
 
 Expected build properties:
 - Package name: `app.thehinterlandguide`
-- Display name: `Hinterland Internal`
+- Display name: `The Hinterland Guide Internal`
 - App version: `0.1.0` (the `version` field in `mobile/app.config.ts`)
 - Version code: auto-incremented by EAS (the `play-internal` profile
   has `autoIncrement: true`)
@@ -137,7 +139,7 @@ Working directory: `mobile/`.
 
    - [ ] `android.package` is `app.thehinterlandguide` (NOT
      `app.thehinterlandguide.dev` or `app.thehinterlandguide.staging`).
-   - [ ] `name` is `Hinterland Internal` (the `play-internal` branch
+   - [ ] `name` is `The Hinterland Guide Internal` (the `play-internal` branch
      of `displayName()` in `mobile/app.config.ts`).
    - [ ] `version` is `0.1.0` (the `version` field in
      `mobile/app.config.ts`; `android.versionCode` is NOT pinned in
@@ -168,7 +170,8 @@ Working directory: `mobile/`.
 
    When the build finishes, EAS prints a download URL for the
    `.aab` and the resolved `versionCode` in the build summary. Save
-   the URL locally; do NOT commit the `.aab`.
+   the URL locally; do NOT commit the `.aab`. Record the EAS build ID,
+   resolved version code, and local SHA-256 in the private release record.
 
 5. **Upload to Play Console.** Manual upload to the Internal testing
    track — follow §3 below. Do NOT click **Send 1 update for
@@ -178,9 +181,11 @@ Working directory: `mobile/`.
 ### Expected values
 
 - [ ] Package name: `app.thehinterlandguide`
-- [ ] Display name on the device: `Hinterland Internal`
+- [ ] Display name on the device: `The Hinterland Guide Internal`
 - [ ] App version: `0.1.0`
 - [ ] Track: Internal testing (NOT Closed, NOT Open, NOT Production)
+- [ ] EAS build ID, version code, and AAB SHA-256 match the private release
+      record used for the physical-device run.
 - [ ] Tester type: known adult-supervised testers only (1–3
   households). No classroom rollout. No public release.
 
@@ -219,7 +224,7 @@ Working directory: `mobile/`.
 1. Play Console → your Hinterland app → **Testing → Internal testing
    → Testers** tab
 2. **Create email list**
-3. Name: `Hinterland kid pilot W1`
+3. Name: `The Hinterland Guide kid pilot W1`
 4. Add tester email addresses (NOT committed to the repo; keep these
    in a private spreadsheet or password manager). Internal testing
    supports up to 100 testers.
@@ -239,10 +244,10 @@ Working directory: `mobile/`.
    - "Tap the link from the SAME Google account email I used to add you"
    - A 1-2 sentence description of what the app is
    - "This is a private test -- please do not share the link"
-   - A note that the install shows up as **Hinterland Internal** on
+   - A note that the install shows up as **The Hinterland Guide Internal** on
      their phone, not "Hinterland"
 5. Each tester taps the link → "Become a tester" → goes to the Play
-   Store listing for `Hinterland Internal` → **Install**. From then on
+   Store listing for `The Hinterland Guide Internal` → **Install**. From then on
    updates auto-flow when you push a new build.
 
 ## 6. Adult-supervised kid-test rules

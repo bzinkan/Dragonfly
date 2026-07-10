@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import models
-from app.dispatcher.handlers.dex import DexHandler
+from app.dispatcher.handlers.dex import DexHandler, promote_clean_representative
 from app.dispatcher.types import Context
 
 _USER_ID = "01J0KIDID0000000000000ULID"
@@ -119,8 +119,9 @@ async def test_repeat_find_emits_repeat_reward_and_no_counter_bump(
     assert reward.detail == "Another Northern Cardinal"
     assert result.state[DexHandler.STATE_IS_FIRST_FIND] is False
 
-    # Only the dex insert executes; no counter bump on repeat.
-    assert fake_session.execute.await_count == 1
+    # The insert detects a repeat, then the maintained count/latest projection
+    # is updated. The membership Dex counter is not bumped.
+    assert fake_session.execute.await_count == 2
     fake_session.commit.assert_not_awaited()
 
 
@@ -149,3 +150,42 @@ async def test_first_find_falls_back_to_generic_detail_when_no_species_name(
 
     result = await handler.handle(ctx)
     assert result.rewards[0].detail == "First this species in your Dex"
+
+
+async def test_promote_clean_representative_requires_both_clean_states(
+    fake_session: AsyncMock,
+) -> None:
+    ctx = _ctx(fake_session)
+    ctx.observation.moderation_status = "clean"
+    ctx.photo.status = "pending"
+    ctx.photo.attachment_status = "attached"
+
+    await promote_clean_representative(
+        fake_session,
+        observation=ctx.observation,
+        photo=ctx.photo,
+    )
+
+    fake_session.execute.assert_not_awaited()
+
+
+async def test_promote_clean_representative_updates_only_projection(
+    fake_session: AsyncMock,
+) -> None:
+    ctx = _ctx(fake_session)
+    ctx.observation.moderation_status = "clean"
+    ctx.photo.status = "clean"
+    ctx.photo.attachment_status = "attached"
+
+    await promote_clean_representative(
+        fake_session,
+        observation=ctx.observation,
+        photo=ctx.photo,
+    )
+
+    fake_session.execute.assert_awaited_once()
+    statement = fake_session.execute.await_args.args[0]
+    compiled = str(statement.compile(compile_kwargs={"literal_binds": True}))
+    assert "representative_observation_id" in compiled
+    assert "representative_photo_id" in compiled
+    assert "observation_count" not in compiled

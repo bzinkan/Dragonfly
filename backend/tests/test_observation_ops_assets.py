@@ -50,10 +50,13 @@ def test_active_workflow_migrates_before_api_and_removes_retired_aliases() -> No
     workflow = (_ROOT / ".github/workflows/deploy-azure-api-dev.yml").read_text(encoding="utf-8")
 
     retire_jobs = workflow.index("Retire obsolete recovery jobs")
-    pin_jobs = workflow.index("Pin Hinterland jobs to this image")
-    seed_settings = workflow.index("Seed Hinterland job settings")
+    pin_migration_jobs = workflow.index("Pin only preflight and migration jobs to this image")
+    seed_migration_settings = workflow.index("Seed preflight and migration job settings")
     remove_aliases = workflow.index("Remove retired runtime variable aliases")
-    required_jobs = workflow.index("Run required pre-deploy jobs")
+    migrations = workflow.index("Run preflight and additive migrations first")
+    pin_all_jobs = workflow.index("Pin all Hinterland jobs after migration success")
+    seed_all_settings = workflow.index("Seed all Hinterland job settings after migration success")
+    content_jobs = workflow.index("Run taxonomy and Expedition content jobs")
     deploy_api = workflow.index("Deploy API revision")
     rebuild = workflow.index("Rebuild derived state")
     smoke = workflow.index("Smoke public API surfaces")
@@ -61,12 +64,15 @@ def test_active_workflow_migrates_before_api_and_removes_retired_aliases() -> No
 
     assert (
         retire_jobs
-        < pin_jobs
-        < seed_settings
+        < pin_migration_jobs
+        < seed_migration_settings
         < remove_aliases
-        < required_jobs
-        < deploy_api
+        < migrations
+        < pin_all_jobs
+        < seed_all_settings
+        < content_jobs
         < rebuild
+        < deploy_api
         < smoke
         < verify
     )

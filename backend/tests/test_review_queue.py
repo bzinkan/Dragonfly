@@ -237,6 +237,7 @@ def _wire_resolve(
     observation: models.Observation | None = None,
     approve_outbox: bool = False,
     approve_obs_only: bool = False,
+    revocation_active: bool = False,
 ) -> None:
     """Sequence the session.execute side_effects for the approve / reject flows.
 
@@ -267,6 +268,11 @@ def _wire_resolve(
     photo_result = MagicMock()
     photo_result.scalar_one_or_none = MagicMock(return_value=photo)
 
+    revocation_result = MagicMock()
+    revocation_result.scalar_one_or_none = MagicMock(
+        return_value=photo.id if revocation_active and photo is not None else None
+    )
+
     obs_result = MagicMock()
     obs_result.scalar_one_or_none = MagicMock(return_value=observation)
 
@@ -278,17 +284,28 @@ def _wire_resolve(
     lock_result = MagicMock()
     rebuild_result = MagicMock()
     rebuild_result.scalar_one_or_none = MagicMock(return_value=None)
+    representative_update_result = MagicMock()
     outbox_update_result = MagicMock()
 
     side_effects: list[Any] = [user_result, review_result, membership_result]
     if approve_outbox:
         # Approve flow with inat_submit_enabled=True: select(Observation)
         # + update(InatSubmitOutbox).
-        side_effects.extend([photo_result, obs_result, outbox_update_result])
+        side_effects.extend(
+            [
+                photo_result,
+                revocation_result,
+                obs_result,
+                representative_update_result,
+                outbox_update_result,
+            ]
+        )
     elif approve_obs_only:
         # Approve flow with Option B inat_submit_enabled=False: only
         # the select(Observation) lookup; no outbox write.
-        side_effects.extend([photo_result, obs_result])
+        side_effects.extend(
+            [photo_result, revocation_result, obs_result, representative_update_result]
+        )
     elif observation is not None:
         # Reject flow: subject read, outer advisory lock, locked review/photo/
         # observation, then enqueue_rebuild's re-entrant lock and active lookup.
@@ -305,7 +322,7 @@ def _wire_resolve(
         )
     else:
         # Approval/error paths still read the photo after authorization.
-        side_effects.append(photo_result)
+        side_effects.extend([photo_result, revocation_result])
     fake_session.execute = AsyncMock(side_effect=side_effects)
     fake_session.commit = AsyncMock()
     fake_session.flush = AsyncMock()
@@ -360,6 +377,26 @@ def test_approve_409_when_already_resolved(
         review=_review_row(review_status="approved"),
         membership_present=True,
         photo=None,
+    )
+    for client in _build_client(fake_session):
+        response = client.post(
+            f"/v1/review-queue/{_REVIEW_ID}/approve",
+            headers={"Authorization": "Bearer fake"},
+        )
+        assert response.status_code == 409
+
+
+def test_approve_409_when_photo_revocation_is_active(
+    monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    _wire_resolve(
+        fake_session,
+        user=_adult_user(),
+        review=_review_row(),
+        membership_present=True,
+        photo=_photo_row(),
+        revocation_active=True,
     )
     for client in _build_client(fake_session):
         response = client.post(
@@ -518,6 +555,8 @@ def test_approve_happy_path_option_b_skips_outbox(
 def test_reject_tombstones_observation_and_queues_rebuild(
     monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
 ) -> None:
+    from app.moderation.review_service import reject_review_item
+
     _stub_token_verifier(monkeypatch)
     review = _review_row()
     photo = _photo_row()
@@ -529,6 +568,23 @@ def test_reject_tombstones_observation_and_queues_rebuild(
         membership_present=True,
         photo=photo,
         observation=obs,
+    )
+
+    async def fake_revoke(
+        session: AsyncSession,
+        **kwargs: object,
+    ) -> models.DerivedStateRebuild | None:
+        rebuild = await reject_review_item(
+            session,
+            review=kwargs["review"],  # type: ignore[arg-type]
+            reviewer_user_id=kwargs["reviewer_user_id"],  # type: ignore[arg-type]
+        )
+        await session.commit()
+        return rebuild
+
+    monkeypatch.setattr(
+        "app.api.routes.review_queue.revoke_and_reject_review_item",
+        fake_revoke,
     )
 
     for client in _build_client(fake_session):
@@ -564,3 +620,71 @@ def test_reject_tombstones_observation_and_queues_rebuild(
         if "review_queue" in statement and "FOR UPDATE" in statement
     )
     assert advisory_index < review_lock_index
+
+
+def test_revoke_approved_review_uses_clean_revocation_contract(
+    monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    review = _review_row(review_status="approved")
+    original_reviewer = "01J0ORIGINALREVIEWER00ULID"
+    original_resolved_at = datetime(2026, 7, 1, tzinfo=UTC)
+    review.reviewer_user_id = original_reviewer
+    review.resolved_at = original_resolved_at
+    _wire_resolve(
+        fake_session,
+        user=_adult_user(),
+        review=review,
+        membership_present=True,
+        photo=None,
+    )
+    captured: dict[str, object] = {}
+
+    async def fake_revoke(
+        session: AsyncSession,
+        **kwargs: object,
+    ) -> models.DerivedStateRebuild | None:
+        del session
+        captured.update(kwargs)
+        review.status = "revoked"
+        return None
+
+    monkeypatch.setattr(
+        "app.api.routes.review_queue.revoke_and_reject_review_item",
+        fake_revoke,
+    )
+
+    for client in _build_client(fake_session):
+        response = client.post(
+            f"/v1/review-queue/{_REVIEW_ID}/revoke",
+            headers={"Authorization": "Bearer fake"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "revoked"
+    assert captured["claim_review_status"] == "approved"
+    assert captured["source"] == "adult_revocation"
+    assert captured["reviewer_user_id"] == _USER_ID
+    assert review.reviewer_user_id == original_reviewer
+    assert review.resolved_at == original_resolved_at
+
+
+def test_revoke_requires_an_approved_review(
+    monkeypatch: pytest.MonkeyPatch, fake_session: AsyncMock
+) -> None:
+    _stub_token_verifier(monkeypatch)
+    _wire_resolve(
+        fake_session,
+        user=_adult_user(),
+        review=_review_row(review_status="pending"),
+        membership_present=True,
+        photo=None,
+    )
+
+    for client in _build_client(fake_session):
+        response = client.post(
+            f"/v1/review-queue/{_REVIEW_ID}/revoke",
+            headers={"Authorization": "Bearer fake"},
+        )
+
+    assert response.status_code == 409

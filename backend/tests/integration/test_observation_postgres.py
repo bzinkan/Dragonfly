@@ -9,6 +9,7 @@ module, and removes the container.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 import math
@@ -17,6 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
 from typing import ClassVar
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
@@ -34,6 +36,7 @@ from ulid import ULID
 
 from admin.dispatcher_replay import replay as replay_dispatcher
 from admin.moderation_consumer import process_one as process_moderation_message
+from admin.observation_health_probe import probe as probe_observation_health
 from admin.observation_legacy_reconcile import reconcile_legacy_pending
 from admin.sweep_stale_reviews import sweep
 from app.api.routes.review_queue import _load_review_for_resolution
@@ -47,14 +50,17 @@ from app.derived_state.rebuild import (
     rebuild_user_state,
 )
 from app.dispatcher.core import dispatch
+from app.dispatcher.handlers.dex import DexHandler
 from app.dispatcher.handlers.expedition import ExpeditionHandler
 from app.dispatcher.types import Context, HandlerResult, Reward
 from app.moderation.review_service import ReviewResolutionConflict, reject_review_item
+from app.moderation.revocation import PhotoRevocationPending, revoke_and_reject_review_item
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
 _DATABASE_ENV = "OBSERVATION_TEST_DATABASE_URL"
-_EXPECTED_ALEMBIC_HEAD = "20260709_0015"
+_EXPECTED_ALEMBIC_HEAD = "20260710_0017"
+_CANONICAL_BYTES = b"x" * 1024
 
 
 @dataclass(frozen=True)
@@ -83,6 +89,58 @@ class ObservationRows:
 class ReviewRows:
     observation: ObservationRows
     review_id: str
+
+
+class RevocationStorage:
+    """Small verified-object store for real-Postgres revocation tests."""
+
+    def __init__(self, objects: dict[str, bytes], *, fail_copy: bool = False) -> None:
+        self.objects = dict(objects)
+        self.fail_copy = fail_copy
+
+    def get_object_properties(
+        self,
+        *,
+        bucket: str,
+        object_name: str,
+    ) -> StorageObjectProperties:
+        del bucket
+        try:
+            value = self.objects[object_name]
+        except KeyError as exc:
+            raise FileNotFoundError(object_name) from exc
+        return StorageObjectProperties(len(value), "image/jpeg", "etag")
+
+    def fetch_object_bytes(self, *, bucket: str, object_name: str) -> bytes:
+        del bucket
+        try:
+            return self.objects[object_name]
+        except KeyError as exc:
+            raise FileNotFoundError(object_name) from exc
+
+    def copy_object(
+        self,
+        *,
+        src_bucket: str,
+        src_object: str,
+        dst_bucket: str,
+        dst_object: str,
+        expected_size: int | None = None,
+        expected_sha256: str | None = None,
+    ) -> None:
+        del src_bucket, dst_bucket
+        if self.fail_copy:
+            raise RuntimeError("injected copy failure")
+        value = self.objects[src_object]
+        assert expected_size is None or len(value) == expected_size
+        assert expected_sha256 is None or hashlib.sha256(value).hexdigest() == expected_sha256
+        existing = self.objects.get(dst_object)
+        assert existing is None or existing == value
+        self.objects[dst_object] = value
+
+    def delete_object(self, *, bucket: str, object_name: str) -> None:
+        del bucket
+        self.objects.pop(object_name, None)
 
 
 @pytest.fixture
@@ -205,7 +263,7 @@ async def _add_photo(
             byte_count=1024,
             width_px=100,
             height_px=100,
-            sha256="a" * 64,
+            sha256=hashlib.sha256(_CANONICAL_BYTES).hexdigest(),
             verified_at=datetime.now(UTC),
         )
     )
@@ -378,6 +436,13 @@ async def test_migrations_reach_head_with_observation_constraints(pg_harness: Pg
                             "uq_observations_user_submission",
                             "observation_idempotency_pkey",
                             "expedition_observation_contributions_pkey",
+                            "ck_dex_entries_observation_count",
+                            "fk_dex_entries_representative_observation_id_observations",
+                            "fk_dex_entries_representative_photo_id_photos",
+                            "photo_revocations_pkey",
+                            "ck_photo_revocations_state",
+                            "ck_photo_revocations_attempt_count",
+                            "uq_photo_revocations_review_id",
                         ]
                     },
                 )
@@ -396,6 +461,22 @@ async def test_migrations_reach_head_with_observation_constraints(pg_harness: Pg
                 )
             ).all()
         )
+        journal_indexes = set(
+            (
+                await connection.execute(
+                    text(
+                        "SELECT indexname FROM pg_indexes "
+                        "WHERE schemaname = 'public' AND indexname = ANY(:names)"
+                    ),
+                    {
+                        "names": [
+                            "ix_dex_entries_user_first_seen",
+                            "ix_observations_user_observed_active",
+                        ]
+                    },
+                )
+            ).scalars()
+        )
 
     assert version == _EXPECTED_ALEMBIC_HEAD
     assert str(postgres_version).startswith("16.")
@@ -407,11 +488,30 @@ async def test_migrations_reach_head_with_observation_constraints(pg_harness: Pg
         "uq_observations_user_submission",
         "observation_idempotency_pkey",
         "expedition_observation_contributions_pkey",
+        "ck_dex_entries_observation_count",
+        "fk_dex_entries_representative_observation_id_observations",
+        "fk_dex_entries_representative_photo_id_photos",
+        "photo_revocations_pkey",
+        "ck_photo_revocations_state",
+        "ck_photo_revocations_attempt_count",
+        "uq_photo_revocations_review_id",
+    }
+    assert journal_indexes == {
+        "ix_dex_entries_user_first_seen",
+        "ix_observations_user_observed_active",
     }
     # Migrations run before the API deployment. Keep these additive columns
     # nullable for the one-release compatibility window so the old API can
     # continue inserting rows between migration and rollout.
     assert submission_key_nullability == {"photos": "YES", "observations": "YES"}
+
+
+async def test_observation_health_probe_compiles_against_current_schema(
+    pg_harness: PgHarness,
+) -> None:
+    async with pg_harness.sessions() as session:
+        health = await probe_observation_health(session)
+    assert health.healthy
 
 
 async def test_legacy_cutover_new_user_adoption_queues_rebuild_before_replay(
@@ -1216,7 +1316,7 @@ async def test_approve_lock_wins_over_reject_and_stale_sweep(pg_harness: PgHarne
     async def stale_loser() -> int:
         await lock_acquired.wait()
         async with pg_harness.sessions() as session:
-            return await sweep(session)
+            return await sweep(session, storage=MagicMock())
 
     winner_task = asyncio.create_task(approve_winner())
     await lock_acquired.wait()
@@ -1280,7 +1380,7 @@ async def test_reject_lock_wins_over_approve_and_stale_sweep(pg_harness: PgHarne
     async def stale_loser() -> int:
         await lock_acquired.wait()
         async with pg_harness.sessions() as session:
-            return await sweep(session)
+            return await sweep(session, storage=MagicMock())
 
     winner_task = asyncio.create_task(reject_winner())
     await lock_acquired.wait()
@@ -1505,6 +1605,8 @@ async def test_rebuild_promotes_surviving_observation_to_dex_first_find(
             )
         ).scalar_one()
         assert initial_dex.first_observation_id == first.observation_id
+        assert initial_dex.observation_count == 2
+        assert initial_dex.latest_seen_at == second_time
 
         first_observation = await session.get(models.Observation, first.observation_id)
         assert first_observation is not None
@@ -1536,6 +1638,8 @@ async def test_rebuild_promotes_surviving_observation_to_dex_first_find(
     assert membership.last_observed_at == second_time
     assert dex.first_observation_id == second.observation_id
     assert dex.first_seen_at == second_time
+    assert dex.observation_count == 1
+    assert dex.latest_seen_at == second_time
     assert rejected is not None
     assert rejected.rewards == []
     assert rejected.dispatch_status == "unverified"
@@ -1543,6 +1647,250 @@ async def test_rebuild_promotes_surviving_observation_to_dex_first_find(
     assert surviving.dispatch_status == "complete"
     assert any(reward["type"] == "first_find" for reward in surviving.rewards)
     assert rejected_run_count == 0
+
+
+async def test_rejected_repeat_does_not_change_dex_count_or_latest_seen(
+    pg_harness: PgHarness,
+) -> None:
+    accepted_time = datetime.now(UTC) - timedelta(days=2)
+    rejected_time = accepted_time + timedelta(days=1)
+    async with pg_harness.sessions() as session:
+        identity = await _seed_identity(session)
+        accepted = await _add_observation_for_identity(
+            session,
+            identity,
+            taxon_id=3,
+            observed_at=accepted_time,
+        )
+        rejected = await _add_observation_for_identity(
+            session,
+            identity,
+            taxon_id=3,
+            observed_at=rejected_time,
+        )
+        rejected_observation = await session.get(models.Observation, rejected.observation_id)
+        assert rejected_observation is not None
+        rejected_observation.moderation_status = "rejected"
+        rejected_observation.rejected_at = datetime.now(UTC)
+        await session.commit()
+
+        async with session.begin():
+            await rebuild_user_state(session, user_id=identity.user_id)
+
+    async with pg_harness.sessions() as session:
+        dex = (
+            await session.execute(
+                select(models.DexEntry).where(models.DexEntry.user_id == identity.user_id)
+            )
+        ).scalar_one()
+
+    assert dex.first_observation_id == accepted.observation_id
+    assert dex.first_seen_at == accepted_time
+    assert dex.observation_count == 1
+    assert dex.latest_seen_at == accepted_time
+
+
+async def test_backdated_repeat_updates_first_seen_without_second_celebration(
+    pg_harness: PgHarness,
+) -> None:
+    newer_time = datetime.now(UTC) - timedelta(days=1)
+    older_time = newer_time - timedelta(days=2)
+    async with pg_harness.sessions() as session:
+        identity = await _seed_identity(session)
+        newer = await _add_observation_for_identity(
+            session,
+            identity,
+            taxon_id=3,
+            observed_at=newer_time,
+        )
+        first_rewards = await dispatch(await _context(session, newer), [DexHandler()])
+
+        older = await _add_observation_for_identity(
+            session,
+            identity,
+            taxon_id=3,
+            observed_at=older_time,
+        )
+        repeat_rewards = await dispatch(await _context(session, older), [DexHandler()])
+
+    async with pg_harness.sessions() as session:
+        membership = await session.get(models.Membership, identity.membership_id)
+        dex = (
+            await session.execute(
+                select(models.DexEntry).where(models.DexEntry.user_id == identity.user_id)
+            )
+        ).scalar_one()
+
+    assert [reward.type for reward in first_rewards] == ["first_find"]
+    assert [reward.type for reward in repeat_rewards] == ["repeat_find"]
+    assert membership is not None and membership.dex_count == 1
+    assert dex.first_observation_id == older.observation_id
+    assert dex.first_seen_at == older_time
+    assert dex.observation_count == 2
+    assert dex.latest_seen_at == newer_time
+
+
+async def test_rejection_revokes_bytes_before_tombstone_and_queues_rebuild(
+    pg_harness: PgHarness,
+) -> None:
+    async with pg_harness.sessions() as session:
+        rows = await _seed_quarantine_review(session)
+        review = await session.get(models.ReviewQueueItem, rows.review_id)
+        photo = await session.get(models.Photo, rows.observation.photo_id)
+        assert review is not None
+        assert photo is not None
+        source_object = photo.object_name
+        held_object = f"rejected/held/{photo.id}.jpg"
+        storage = RevocationStorage({source_object: _CANONICAL_BYTES})
+        rebuild = await revoke_and_reject_review_item(
+            session,
+            storage=storage,  # type: ignore[arg-type]
+            review=review,
+            reviewer_user_id=rows.observation.identity.parent_id,
+            source="adult_review",
+        )
+
+    async with pg_harness.sessions() as session:
+        review = await session.get(models.ReviewQueueItem, rows.review_id)
+        photo = await session.get(models.Photo, rows.observation.photo_id)
+        observation = await session.get(models.Observation, rows.observation.observation_id)
+        revocation = await session.get(models.PhotoRevocation, rows.observation.photo_id)
+
+    assert source_object not in storage.objects
+    assert storage.objects[held_object] == _CANONICAL_BYTES
+    assert review is not None and review.status == "rejected"
+    assert photo is not None and photo.status == "deleted"
+    assert photo.object_name == held_object
+    assert observation is not None and observation.moderation_status == "rejected"
+    assert revocation is not None and revocation.state == "succeeded"
+    assert rebuild is not None and rebuild.user_id == rows.observation.identity.user_id
+
+
+async def test_approved_clean_photo_can_be_revoked_and_deny_gate_outlives_review(
+    pg_harness: PgHarness,
+) -> None:
+    approved_at = datetime.now(UTC) - timedelta(hours=1)
+    async with pg_harness.sessions() as session:
+        rows = await _seed_quarantine_review(session)
+        review = await session.get(models.ReviewQueueItem, rows.review_id)
+        photo = await session.get(models.Photo, rows.observation.photo_id)
+        observation = await session.get(models.Observation, rows.observation.observation_id)
+        assert review is not None
+        assert photo is not None
+        assert observation is not None
+        review.status = "approved"
+        review.reviewer_user_id = rows.observation.identity.parent_id
+        review.resolved_at = approved_at
+        photo.status = "clean"
+        photo.attachment_status = "attached"
+        photo.object_name = f"observations/{photo.id}.jpg"
+        photo.canonical_object_name = photo.object_name
+        observation.moderation_status = "clean"
+        observation.moderation_source = "adult"
+        observation.moderation_policy_version = "adult-review-v1"
+        await session.commit()
+
+        clean_source = photo.object_name
+        held_object = f"rejected/held/{photo.id}.jpg"
+        storage = RevocationStorage({clean_source: _CANONICAL_BYTES})
+        rebuild = await revoke_and_reject_review_item(
+            session,
+            storage=storage,  # type: ignore[arg-type]
+            review=review,
+            reviewer_user_id=rows.observation.identity.parent_id,
+            source="adult_revocation",
+            claim_review_status="approved",
+        )
+
+    assert clean_source not in storage.objects
+    assert storage.objects[held_object] == _CANONICAL_BYTES
+    assert rebuild is not None
+
+    async with pg_harness.sessions() as session:
+        review = await session.get(models.ReviewQueueItem, rows.review_id)
+        photo = await session.get(models.Photo, rows.observation.photo_id)
+        observation = await session.get(models.Observation, rows.observation.observation_id)
+        revocation = await session.get(models.PhotoRevocation, rows.observation.photo_id)
+        assert review is not None and review.status == "revoked"
+        assert review.reviewer_user_id == rows.observation.identity.parent_id
+        assert review.resolved_at == approved_at
+        assert photo is not None and photo.status == "deleted"
+        assert photo.object_name == held_object
+        assert observation is not None
+        assert observation.moderation_status == "rejected"
+        assert observation.moderation_policy_version == "adult-revocation-v1"
+        assert revocation is not None
+        assert revocation.state == "succeeded"
+        assert revocation.claim_review_status == "approved"
+        assert revocation.requesting_actor_user_id == rows.observation.identity.parent_id
+
+        await session.delete(review)
+        with pytest.raises(IntegrityError):
+            await session.commit()
+        await session.rollback()
+        assert await session.get(models.PhotoRevocation, rows.observation.photo_id) is not None
+
+
+async def test_rejection_recovers_after_db_failure_once_clean_source_is_gone(
+    pg_harness: PgHarness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with pg_harness.sessions() as session:
+        rows = await _seed_quarantine_review(session)
+        review = await session.get(models.ReviewQueueItem, rows.review_id)
+        photo = await session.get(models.Photo, rows.observation.photo_id)
+        assert review is not None
+        assert photo is not None
+        source_object = photo.object_name
+        held_object = f"rejected/held/{photo.id}.jpg"
+        storage = RevocationStorage({source_object: _CANONICAL_BYTES})
+
+        original_commit = session.commit
+        commit_count = 0
+
+        async def fail_final_commit() -> None:
+            nonlocal commit_count
+            commit_count += 1
+            if commit_count == 2:
+                raise RuntimeError("injected final commit failure")
+            await original_commit()
+
+        monkeypatch.setattr(session, "commit", fail_final_commit)
+        with pytest.raises(PhotoRevocationPending):
+            await revoke_and_reject_review_item(
+                session,
+                storage=storage,  # type: ignore[arg-type]
+                review=review,
+                reviewer_user_id=rows.observation.identity.parent_id,
+                source="adult_review",
+            )
+
+    assert source_object not in storage.objects
+    assert storage.objects[held_object] == _CANONICAL_BYTES
+    async with pg_harness.sessions() as session:
+        review = await session.get(models.ReviewQueueItem, rows.review_id)
+        photo = await session.get(models.Photo, rows.observation.photo_id)
+        revocation = await session.get(models.PhotoRevocation, rows.observation.photo_id)
+        assert review is not None and review.status == "pending"
+        assert photo is not None and photo.status == "quarantine"
+        assert revocation is not None and revocation.state == "copying"
+
+        await revoke_and_reject_review_item(
+            session,
+            storage=storage,  # type: ignore[arg-type]
+            review=review,
+            reviewer_user_id=rows.observation.identity.parent_id,
+            source="adult_review",
+        )
+
+    async with pg_harness.sessions() as session:
+        review = await session.get(models.ReviewQueueItem, rows.review_id)
+        photo = await session.get(models.Photo, rows.observation.photo_id)
+        revocation = await session.get(models.PhotoRevocation, rows.observation.photo_id)
+    assert review is not None and review.status == "rejected"
+    assert photo is not None and photo.status == "deleted"
+    assert revocation is not None and revocation.state == "succeeded"
+    assert revocation.attempt_count == 2
 
 
 class ProbeHandler:

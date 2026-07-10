@@ -24,13 +24,13 @@ export function conservationLabel(statusName: string | null): string | null {
  * rather than showing an empty "About this species" header.
  */
 export function factsAreEmpty(facts: {
-  summary: string | null;
+  /** Compatibility-only upstream field; deliberately never considered renderable. */
+  summary?: unknown;
   observations_worldwide: number | null;
   conservation_status: string | null;
   scientific_name: string | null;
 }): boolean {
   return (
-    facts.summary === null &&
     worldwideLine(facts.observations_worldwide) === null &&
     facts.conservation_status === null &&
     facts.scientific_name === null

@@ -3,8 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { getPhotoUrl } from "@/src/api/photos";
 import { useAuthSession } from "@/src/auth/session";
 
+export const PHOTO_URL_STALE_MS = 40_000;
+export const PHOTO_URL_GC_MS = 60_000;
+
 /**
- * Signed GET URL for one photo, cached just under the server's 5-minute
+ * Signed GET URL for one photo, cached under the server's 60-second
  * SAS TTL so a rendered <Image> never holds a URL that expires mid-load,
  * and scrolling back to a card within the window reuses the same URL
  * (which also lets the native image cache hit instead of refetching
@@ -26,9 +29,9 @@ export function usePhotoUrl(photoId: string, enabled: boolean) {
     queryKey: ["photo-url", ownerUserId ?? "anonymous", photoId],
     queryFn: ({ signal }) => getPhotoUrl(photoId, signal),
     enabled: enabled && ownerUserId != null,
-    staleTime: 4 * 60 * 1000,
-    gcTime: 5 * 60 * 1000,
-    refetchInterval: 4 * 60 * 1000,
+    staleTime: PHOTO_URL_STALE_MS,
+    gcTime: PHOTO_URL_GC_MS,
+    refetchInterval: PHOTO_URL_STALE_MS,
     // No retry override: inherit the client default, which already
     // retries network/5xx and skips 4xx.
   });

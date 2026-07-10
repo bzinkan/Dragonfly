@@ -8,8 +8,12 @@ export type DexListItem = {
   scientific_name: string | null;
   iconic_taxon: string | null;
   first_observation_id: string;
-  first_photo_id: string;
-  first_photo_status: string;
+  /** First-seen metadata is separate from the clean representative image. */
+  representative_observation_id?: string | null;
+  representative_photo_id?: string | null;
+  /** One-release compatibility fields; new clients never infer visibility from them. */
+  first_photo_id?: string | null;
+  first_photo_status?: string | null;
   first_seen_at: string;
   observation_count: number;
   latest_seen_at: string;
