@@ -18,6 +18,8 @@ Sister docs:
   test.
 - [`docs/risks/0007-google-play-families-location-policy.md`](risks/0007-google-play-families-location-policy.md)
   for the coarse/no-location gate below.
+- [`docs/observation-w1-promotion.md`](observation-w1-promotion.md)
+  for the server promotion and exact-AAB evidence contract.
 
 This pilot is **adult-supervised, known-family kid testing only** —
 1–3 kids age 9–12, with at least one adult per session, on the Play
@@ -30,7 +32,10 @@ Internal testing track. No classroom rollout. No public release.
   [`docs/one-week-kid-pilot-checklist.md`](one-week-kid-pilot-checklist.md).
   The opt-in URL lives in the private tester list (location outside
   this repo).
-- [ ] Home-screen app name reads **"Hinterland Internal"**. If it reads
+- [ ] Confirm the installed build's EAS build ID, version code, and AAB SHA-256
+  match the W1 release record. Use a device with at most 4 GB RAM for the
+  required low-end evidence run.
+- [ ] Home-screen app name reads **"The Hinterland Guide Internal"**. If it reads
   bare "Hinterland", the AAB came from the `production` profile, not
   `play-internal` — stop and follow
   [`docs/android-internal-pilot-stop-plan.md`](android-internal-pilot-stop-plan.md).
@@ -121,9 +126,12 @@ the tapping.
   the reveal modal must NOT appear and the existing success screen
   stays unchanged. See `docs/sanctuary.md` section 10
   "new-arrival reveal".
-- [ ] Observation appears in Home / My Observations within ~10
-  seconds. (Soft latency target; the success screen itself is the
-  hard gate, the list-refresh is best-effort.)
+- [ ] Observation appears once in the **Field Journal** in observed-time order.
+  W1 must show the metadata-only private card and exact text, “This photo is
+  private during the pilot.” No image placeholder may trigger a photo request,
+  and the photo helper is hidden while its capability is false.
+- [ ] The Maestro release flow asserts that saved card, private status, and
+  absence of photo bytes—not merely that the Field Journal screen exists.
 - [ ] Adult confirms no crash, no confusing screen, no surprise dialog
   (no consent re-prompt, no third-party SDK login dialog, no
   unexpected permission prompt).
@@ -141,6 +149,9 @@ the tapping.
   photo state is invisible.
 - [ ] Sign back in as the original kid and resume or explicitly discard only
   that kid's work.
+- [ ] Destroy/recreate the Android picker activity and verify the selected
+  result recovers. Deny location and verify save still succeeds; an imported
+  library image never inherits current-device location.
 
 ## Adult review (parent account, after the kid step)
 

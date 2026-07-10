@@ -1,0 +1,886 @@
+name: Observation W1 promotion
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type PROMOTE_OBSERVATION_W1 after reviewing the W1 runbook
+        required: true
+        type: string
+
+concurrency:
+  group: observation-w1-promotion
+  cancel-in-progress: false
+
+env:
+  AZURE_RESOURCE_GROUP: hinterland-dev-rg
+  AZURE_SUBSCRIPTION_ID_EXPECTED: 3ac5dfb0-91b7-47d3-8187-9dc8d6305e96
+  AZURE_TENANT_ID_EXPECTED: 18dbd7fa-c411-49bc-82fc-9ccaa26e3404
+  AZURE_ACR_NAME: hinterlandacrdev
+  AZURE_CONTAINER_APP: hinterland-api
+  AZURE_STORAGE_ACCOUNT: hinterlandphotosdev
+  AZURE_UAMI_NAME: hinterland-api-mi
+  IMAGE_REPOSITORY: hinterland-api
+  SERVICE_BUS_NAMESPACE: hinterland-sb-dev
+  MODERATION_QUEUE: moderation-pending
+  INAT_QUEUE: inat-submit
+  HINTERLAND_KID_JWKS_PATH: /.well-known/hinterland-kid-jwks.json
+
+jobs:
+  promote:
+    name: Strict server promotion and evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    environment:
+      name: w1-promotion
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize sanitized promotion evidence
+        env:
+          PROMOTION_CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          test "${PROMOTION_CONFIRMATION}" = "PROMOTE_OBSERVATION_W1"
+          mkdir -p promotion-artifact
+          jq -n \
+            --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg commit_sha "${GITHUB_SHA}" \
+            --arg run_id "${GITHUB_RUN_ID}" \
+            '{schema_version:1, generated_at:$generated_at, commit_sha:$commit_sha,
+              workflow_run_id:$run_id, classification:"sanitized-operational-evidence",
+              result:"running"}' > promotion-artifact/promotion.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Require a usable protected test-parent credential
+        env:
+          HINTERLAND_SMOKE_ENTRA_BEARER: ${{ secrets.HINTERLAND_SMOKE_ENTRA_BEARER }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import time
+
+          token = os.environ.get("HINTERLAND_SMOKE_ENTRA_BEARER", "").strip()
+          if not token:
+              raise SystemExit("HINTERLAND_SMOKE_ENTRA_BEARER is required; authenticated checks never skip")
+          try:
+              payload = token.split(".", 2)[1]
+              payload += "=" * (-len(payload) % 4)
+              claims = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")))
+              expires_at = int(claims["exp"])
+          except Exception as exc:
+              raise SystemExit("test-parent credential is not a JWT with an exp claim") from exc
+          remaining = expires_at - int(time.time())
+          if remaining < 1800:
+              raise SystemExit(
+                  f"test-parent credential has only {remaining}s remaining; at least 1800s is required"
+              )
+          print(f"test-parent credential lifetime accepted ({remaining}s remaining)")
+          PY
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install locked backend development dependencies
+        working-directory: backend
+        run: uv sync --locked
+
+      - name: Verify the full Observation contract on disposable PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          source backend/.venv/bin/activate
+          pwsh -NoProfile -File scripts/verify_observation_postgres.ps1 \
+            -DispatcherSamples 50
+          jq '.postgres_verification={result:"passed", dispatcher_samples:50}' \
+            promotion-artifact/promotion.json > promotion-artifact/promotion.tmp
+          mv promotion-artifact/promotion.tmp promotion-artifact/promotion.json
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify the isolated Azure target and record baseline
+        run: |
+          set -euo pipefail
+          test "${AZURE_RESOURCE_GROUP}" = "hinterland-dev-rg"
+          test "${AZURE_RESOURCE_GROUP}" != "gordi-pilot-rg"
+          test "$(az account show --query id --output tsv)" = "${AZURE_SUBSCRIPTION_ID_EXPECTED}"
+          test "$(az account show --query tenantId --output tsv)" = "${AZURE_TENANT_ID_EXPECTED}"
+          az group show --name "${AZURE_RESOURCE_GROUP}" --output none
+
+          BASELINE_IMAGE="$(az containerapp show \
+            --name "${AZURE_CONTAINER_APP}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query 'properties.template.containers[0].image' --output tsv)"
+          BASELINE_REVISION="$(az containerapp show \
+            --name "${AZURE_CONTAINER_APP}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query properties.latestReadyRevisionName --output tsv)"
+          JOB_COUNT="$(az containerapp job list \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query "length([?starts_with(name, 'hinterland-')])" --output tsv)"
+          jq \
+            --arg subscription "${AZURE_SUBSCRIPTION_ID_EXPECTED}" \
+            --arg resource_group "${AZURE_RESOURCE_GROUP}" \
+            --arg baseline_image "${BASELINE_IMAGE}" \
+            --arg baseline_revision "${BASELINE_REVISION}" \
+            --argjson baseline_job_count "${JOB_COUNT}" \
+            '.azure={subscription:$subscription, resource_group:$resource_group,
+              baseline_image:$baseline_image, baseline_revision:$baseline_revision,
+              baseline_job_count:$baseline_job_count}' \
+            promotion-artifact/promotion.json > promotion-artifact/promotion.tmp
+          mv promotion-artifact/promotion.tmp promotion-artifact/promotion.json
+
+      - name: Apply W1 deny-by-default runtime settings
+        run: |
+          set -euo pipefail
+
+          remove_inat_token_from_app() {
+            local count
+            count="$(az containerapp show \
+              --name "${AZURE_CONTAINER_APP}" \
+              --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --query "length(properties.template.containers[0].env[?name=='HINTERLAND_INAT_OAUTH_TOKEN'])" \
+              --output tsv)"
+            if [[ "$count" != 0 ]]; then
+              az containerapp update \
+                --name "${AZURE_CONTAINER_APP}" \
+                --resource-group "${AZURE_RESOURCE_GROUP}" \
+                --remove-env-vars HINTERLAND_INAT_OAUTH_TOKEN \
+                --output none
+            fi
+          }
+
+          remove_inat_token_from_app
+          az containerapp update \
+            --name "${AZURE_CONTAINER_APP}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --set-env-vars \
+              HINTERLAND_MODERATION_PROVIDER=noop \
+              HINTERLAND_INAT_CV_ENABLED=false \
+              HINTERLAND_INAT_CV_DISCLOSURE_APPROVED=false \
+              HINTERLAND_INAT_CV_BENCHMARK_APPROVED=false \
+              HINTERLAND_INAT_SUBMIT_ENABLED=false \
+              HINTERLAND_OBSERVATION_IDEMPOTENCY_REQUIRED=true \
+            --output none
+
+          mapfile -t jobs < <(az containerapp job list \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query "[?starts_with(name, 'hinterland-')].name" --output tsv)
+          for job in "${jobs[@]}"; do
+            [[ -n "$job" ]] || continue
+            token_count="$(az containerapp job show \
+              --name "$job" --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --query "length(properties.template.containers[0].env[?name=='HINTERLAND_INAT_OAUTH_TOKEN'])" \
+              --output tsv)"
+            if [[ "$token_count" != 0 ]]; then
+              az containerapp job update \
+                --name "$job" --resource-group "${AZURE_RESOURCE_GROUP}" \
+                --remove-env-vars HINTERLAND_INAT_OAUTH_TOKEN --output none
+            fi
+            az containerapp job update \
+              --name "$job" --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --set-env-vars \
+                HINTERLAND_MODERATION_PROVIDER=noop \
+                HINTERLAND_INAT_CV_ENABLED=false \
+                HINTERLAND_INAT_CV_DISCLOSURE_APPROVED=false \
+                HINTERLAND_INAT_CV_BENCHMARK_APPROVED=false \
+                HINTERLAND_INAT_SUBMIT_ENABLED=false \
+                HINTERLAND_OBSERVATION_IDEMPOTENCY_REQUIRED=true \
+              --output none
+          done
+
+          mapfile -t forbidden_jobs < <(az containerapp job list \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query "[?starts_with(name, 'hinterland-') && (contains(name, 'inat') || contains(name, 'inaturalist'))].name" \
+            --output tsv)
+          for job in "${forbidden_jobs[@]}"; do
+            [[ -n "$job" ]] || continue
+            az containerapp job delete \
+              --name "$job" --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --yes --output none
+          done
+          remaining_forbidden="$(az containerapp job list \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query "length([?starts_with(name, 'hinterland-') && (contains(name, 'inat') || contains(name, 'inaturalist'))])" \
+            --output tsv)"
+          test "$remaining_forbidden" = 0
+
+      - name: Contain and reject direct BlobCreated moderation drift
+        run: |
+          set -euo pipefail
+          storage_id="$(az storage account show \
+            --name "${AZURE_STORAGE_ACCOUNT}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query id --output tsv)"
+          drift=0
+          mapfile -t topics < <(az eventgrid system-topic list \
+            --query '[].[name,resourceGroup]' --output tsv)
+          for topic_row in "${topics[@]}"; do
+            [[ -n "$topic_row" ]] || continue
+            IFS=$'\t' read -r topic topic_resource_group <<< "$topic_row"
+            [[ -n "$topic" && -n "$topic_resource_group" ]] || continue
+            source="$(az eventgrid system-topic show \
+              --name "$topic" --resource-group "$topic_resource_group" \
+              --query source --output tsv)"
+            [[ "${source,,}" == "${storage_id,,}" ]] || continue
+            subscriptions="$(az eventgrid system-topic event-subscription list \
+              --system-topic-name "$topic" \
+              --resource-group "$topic_resource_group" --output json)"
+            mapfile -t dangerous < <(jq -r \
+              --arg moderation "/queues/${MODERATION_QUEUE}" '
+              .[]
+              | select(
+                  (((.filter.includedEventTypes // []) | length) == 0)
+                  or ((.filter.includedEventTypes // []) | index("Microsoft.Storage.BlobCreated"))
+                )
+              | select(
+                  ((.destination.resourceId // "") | ascii_downcase | contains($moderation))
+                  or ((.filter.subjectBeginsWith // "") | ascii_downcase | contains("/blobs/pending/"))
+                )
+              | .name' <<< "$subscriptions")
+            for subscription in "${dangerous[@]}"; do
+              [[ -n "$subscription" ]] || continue
+              drift=1
+              az eventgrid system-topic event-subscription delete \
+                --system-topic-name "$topic" \
+                --resource-group "$topic_resource_group" \
+                --name "$subscription" --yes --output none
+            done
+          done
+
+          # Resource-scoped subscriptions can be created through an implicit
+          # system topic. Querying the storage resource ID is the Azure-supported
+          # exhaustive view and prevents an unnamed/implicit topic from escaping
+          # the explicit system-topic inventory above.
+          resource_subscriptions="$(az eventgrid event-subscription list \
+            --source-resource-id "$storage_id" --output json)"
+          mapfile -t resource_dangerous < <(jq -r '
+            .[]
+            | select(
+                (((.filter.includedEventTypes // []) | length) == 0)
+                or ((.filter.includedEventTypes // []) | index("Microsoft.Storage.BlobCreated"))
+              )
+            | select(
+                ((.name // "") | ascii_downcase | contains("moderation"))
+                or ((.destination // {}) | tostring | ascii_downcase | contains("moderation"))
+                or ((.filter.subjectBeginsWith // "") | ascii_downcase | contains("/blobs/pending/"))
+              )
+            | .name' <<< "$resource_subscriptions")
+          for subscription in "${resource_dangerous[@]}"; do
+            [[ -n "$subscription" ]] || continue
+            drift=1
+            az eventgrid event-subscription delete \
+              --source-resource-id "$storage_id" \
+              --name "$subscription" \
+              --output none
+          done
+          if [[ "$drift" == 1 ]]; then
+            echo "::error::Direct BlobCreated moderation drift was contained. Review the drift, then rerun promotion."
+            exit 1
+          fi
+
+      - name: Prove inert iNaturalist queue isolation
+        run: |
+          set -euo pipefail
+          uami_principal="$(az identity show \
+            --name "${AZURE_UAMI_NAME}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query principalId --output tsv)"
+          uami_id="$(az identity show \
+            --name "${AZURE_UAMI_NAME}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query id --output tsv)"
+          assert_only_runtime_identity() {
+            local kind="$1" name="$2" identity
+            if [[ "$kind" == app ]]; then
+              identity="$(az containerapp show --name "$name" \
+                --resource-group "${AZURE_RESOURCE_GROUP}" --query identity --output json)"
+            else
+              identity="$(az containerapp job show --name "$name" \
+                --resource-group "${AZURE_RESOURCE_GROUP}" --query identity --output json)"
+            fi
+            jq -e --arg expected "${uami_id,,}" '
+              .type == "UserAssigned"
+              and ((.userAssignedIdentities // {}) | length == 1)
+              and ([((.userAssignedIdentities // {}) | keys[]) | ascii_downcase]
+                   | index($expected) != null)
+            ' <<< "$identity" >/dev/null
+          }
+          assert_only_runtime_identity app "${AZURE_CONTAINER_APP}"
+          mapfile -t identity_jobs < <(az containerapp job list \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query "[?starts_with(name, 'hinterland-')].name" --output tsv)
+          for job in "${identity_jobs[@]}"; do
+            [[ -n "$job" ]] || continue
+            assert_only_runtime_identity job "$job"
+          done
+          queue_id="/subscriptions/${AZURE_SUBSCRIPTION_ID_EXPECTED}/resourceGroups/${AZURE_RESOURCE_GROUP}/providers/Microsoft.ServiceBus/namespaces/${SERVICE_BUS_NAMESPACE}/queues/${INAT_QUEUE}"
+          az servicebus queue show \
+            --namespace-name "${SERVICE_BUS_NAMESPACE}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --name "${INAT_QUEUE}" --output none
+          for role in \
+            "Azure Service Bus Data Sender" \
+            "Azure Service Bus Data Receiver" \
+            "Azure Service Bus Data Owner"; do
+            count="$(az role assignment list \
+              --assignee-object-id "$uami_principal" \
+              --scope "$queue_id" --include-inherited \
+              --query "[?roleDefinitionName=='${role}'] | length(@)" \
+              --output tsv)"
+            test "$count" = 0
+          done
+
+      - name: Build one immutable image
+        run: |
+          set -euo pipefail
+          login_server="$(az acr show \
+            --name "${AZURE_ACR_NAME}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query loginServer --output tsv)"
+          az acr build \
+            --registry "${AZURE_ACR_NAME}" \
+            --image "${IMAGE_REPOSITORY}:${GITHUB_SHA}" \
+            --file backend/Dockerfile .
+          digest="$(az acr repository show \
+            --name "${AZURE_ACR_NAME}" \
+            --image "${IMAGE_REPOSITORY}:${GITHUB_SHA}" \
+            --query digest --output tsv)"
+          test -n "$digest"
+          echo "IMAGE=${login_server}/${IMAGE_REPOSITORY}@${digest}" >> "$GITHUB_ENV"
+          echo "IMAGE_DIGEST=${digest}" >> "$GITHUB_ENV"
+
+      - name: Install smoke and migration tooling
+        run: python -m pip install ./backend
+
+      - name: Resolve the additive Alembic head
+        run: |
+          set -euo pipefail
+          heads="$(cd backend && alembic heads | awk '{print $1}')"
+          test "$(wc -w <<< "$heads")" = 1
+          echo "ALEMBIC_HEAD=${heads}" >> "$GITHUB_ENV"
+
+      - name: Require the complete W1 job inventory and database secret contract
+        run: |
+          set -euo pipefail
+          required_jobs=(
+            hinterland-moderation-job
+            hinterland-rarity-refresh
+            hinterland-sweep-stale-reviews
+            hinterland-sync-expeditions
+            hinterland-obs-preflight
+            hinterland-migrate
+            hinterland-taxa-catalog-ingest
+            hinterland-state-rebuild
+            hinterland-mod-outbox-relay
+            hinterland-dispatcher-replay
+            hinterland-obs-retention
+            hinterland-obs-health
+            hinterland-expedition-funnel
+          )
+          optional_jobs=(hinterland-photo-revocation-replay)
+          mapfile -t actual_jobs < <(az containerapp job list \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query "[?starts_with(name, 'hinterland-')].name" --output tsv)
+          for required in "${required_jobs[@]}"; do
+            printf '%s\n' "${actual_jobs[@]}" | grep -Fxq "$required"
+          done
+          for actual in "${actual_jobs[@]}"; do
+            printf '%s\n' "${required_jobs[@]}" "${optional_jobs[@]}" | grep -Fxq "$actual" || {
+              echo "Unexpected Hinterland job in promotion inventory: $actual" >&2
+              exit 1
+            }
+          done
+
+          for job in "${actual_jobs[@]}"; do
+            [[ -n "$job" ]] || continue
+            secret_names="$(az containerapp job secret list \
+              --name "$job" --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --query '[].name' --output tsv)"
+            grep -Fxq pg-password <<< "$secret_names"
+            password_ref="$(az containerapp job show \
+              --name "$job" --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --query "properties.template.containers[0].env[?name=='HINTERLAND_DATABASE_PASSWORD'].secretRef | [0]" \
+              --output tsv)"
+            test "$password_ref" = pg-password
+          done
+
+          mapfile -t shared_env < <(
+            az containerapp show \
+              --name "${AZURE_CONTAINER_APP}" \
+              --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --query 'properties.template.containers[0].env' --output json |
+            jq -r '
+              .[]
+              | select(.name != "HINTERLAND_APP_VERSION")
+              | select(.name != "HINTERLAND_DEV_AUTH_ENABLED")
+              | select(.name != "HINTERLAND_DEV_AUTH_TOKEN")
+              | select(.name != "HINTERLAND_DATABASE_PASSWORD")
+              | select(.secretRef | not)
+              | select(.value != null)
+              | "\(.name)=\(.value)"
+            '
+          )
+          test "${#shared_env[@]}" -gt 0
+
+          # Only read-only preflight and migration receive the new image before
+          # Alembic succeeds. Scheduled consumers remain on the old digest.
+          for job in hinterland-obs-preflight hinterland-migrate; do
+            az containerapp job update \
+              --name "$job" \
+              --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --image "${IMAGE}" \
+              --set-env-vars \
+                "${shared_env[@]}" \
+                HINTERLAND_APP_VERSION="${GITHUB_SHA}" \
+                HINTERLAND_MODERATION_PROVIDER=noop \
+                HINTERLAND_INAT_CV_ENABLED=false \
+                HINTERLAND_INAT_CV_DISCLOSURE_APPROVED=false \
+                HINTERLAND_INAT_CV_BENCHMARK_APPROVED=false \
+                HINTERLAND_INAT_SUBMIT_ENABLED=false \
+                HINTERLAND_OBSERVATION_IDEMPOTENCY_REQUIRED=true \
+                HINTERLAND_DATABASE_PASSWORD=secretref:pg-password \
+              --output none
+          done
+
+
+      - name: Run read-only preflight and additive migrations first
+        run: |
+          set -euo pipefail
+          echo '[]' > promotion-artifact/job-executions.json
+
+          run_job() {
+            local job="$1" execution status=""
+            execution="$(az containerapp job start \
+              --name "$job" \
+              --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --query name --output tsv)"
+            for _ in $(seq 1 90); do
+              status="$(az containerapp job execution show \
+                --name "$job" \
+                --job-execution-name "$execution" \
+                --resource-group "${AZURE_RESOURCE_GROUP}" \
+                --query properties.status --output tsv)"
+              case "$status" in
+                Succeeded|Failed|Canceled) break ;;
+              esac
+              sleep 10
+            done
+            jq \
+              --arg job "$job" --arg execution "$execution" --arg status "$status" \
+              '. + [{job:$job, execution:$execution, status:$status}]' \
+              promotion-artifact/job-executions.json > promotion-artifact/job-executions.tmp
+            mv promotion-artifact/job-executions.tmp promotion-artifact/job-executions.json
+            test "$status" = Succeeded
+          }
+
+          run_job hinterland-obs-preflight
+          run_job hinterland-migrate
+
+      - name: Pin every consumer and job only after migration success
+        run: |
+          set -euo pipefail
+          mapfile -t actual_jobs < <(az containerapp job list \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query "[?starts_with(name, 'hinterland-')].name" --output tsv)
+          mapfile -t shared_env < <(
+            az containerapp show \
+              --name "${AZURE_CONTAINER_APP}" \
+              --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --query 'properties.template.containers[0].env' --output json |
+            jq -r '
+              .[]
+              | select(.name != "HINTERLAND_APP_VERSION")
+              | select(.name != "HINTERLAND_DEV_AUTH_ENABLED")
+              | select(.name != "HINTERLAND_DEV_AUTH_TOKEN")
+              | select(.name != "HINTERLAND_DATABASE_PASSWORD")
+              | select(.secretRef | not)
+              | select(.value != null)
+              | "\(.name)=\(.value)"
+            '
+          )
+          test "${#shared_env[@]}" -gt 0
+          for job in "${actual_jobs[@]}"; do
+            [[ -n "$job" ]] || continue
+            az containerapp job update \
+              --name "$job" \
+              --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --image "${IMAGE}" \
+              --set-env-vars \
+                "${shared_env[@]}" \
+                HINTERLAND_APP_VERSION="${GITHUB_SHA}" \
+                HINTERLAND_MODERATION_PROVIDER=noop \
+                HINTERLAND_INAT_CV_ENABLED=false \
+                HINTERLAND_INAT_CV_DISCLOSURE_APPROVED=false \
+                HINTERLAND_INAT_CV_BENCHMARK_APPROVED=false \
+                HINTERLAND_INAT_SUBMIT_ENABLED=false \
+                HINTERLAND_OBSERVATION_IDEMPOTENCY_REQUIRED=true \
+                HINTERLAND_DATABASE_PASSWORD=secretref:pg-password \
+              --output none
+          done
+          az containerapp job update \
+            --name hinterland-obs-health \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --set-env-vars HINTERLAND_OBSERVATION_HEALTH_FAIL_UNHEALTHY=true \
+            --output none
+          az containerapp job update \
+            --name hinterland-state-rebuild \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --set-env-vars \
+              HINTERLAND_DERIVED_REBUILD_STRICT_DRAIN=true \
+              HINTERLAND_DERIVED_REBUILD_MAX_PASSES=20 \
+            --output none
+
+      - name: Run catalog, Expeditions, and strict drained rebuild
+        run: |
+          set -euo pipefail
+          run_job() {
+            local job="$1" execution status=""
+            execution="$(az containerapp job start \
+              --name "$job" \
+              --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --query name --output tsv)"
+            for _ in $(seq 1 90); do
+              status="$(az containerapp job execution show \
+                --name "$job" \
+                --job-execution-name "$execution" \
+                --resource-group "${AZURE_RESOURCE_GROUP}" \
+                --query properties.status --output tsv)"
+              case "$status" in
+                Succeeded) break ;;
+                Failed|Canceled) break ;;
+              esac
+              sleep 10
+            done
+            jq \
+              --arg job "$job" --arg execution "$execution" --arg status "$status" \
+              '. + [{job:$job, execution:$execution, status:$status}]' \
+              promotion-artifact/job-executions.json > promotion-artifact/job-executions.tmp
+            mv promotion-artifact/job-executions.tmp promotion-artifact/job-executions.json
+            test "$status" = Succeeded
+          }
+
+          run_job hinterland-taxa-catalog-ingest
+          run_job hinterland-sync-expeditions
+          run_job hinterland-state-rebuild
+
+      - name: Deploy the API only after migrations and rebuild
+        run: |
+          set -euo pipefail
+          az containerapp update \
+            --name "${AZURE_CONTAINER_APP}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --image "${IMAGE}" \
+            --set-env-vars \
+              HINTERLAND_APP_VERSION="${GITHUB_SHA}" \
+              HINTERLAND_MODERATION_PROVIDER=noop \
+              HINTERLAND_INAT_CV_ENABLED=false \
+              HINTERLAND_INAT_CV_DISCLOSURE_APPROVED=false \
+              HINTERLAND_INAT_CV_BENCHMARK_APPROVED=false \
+              HINTERLAND_INAT_SUBMIT_ENABLED=false \
+              HINTERLAND_OBSERVATION_IDEMPOTENCY_REQUIRED=true \
+            --output none
+
+      - name: Apply and verify the W1 storage lifecycle
+        run: |
+          set -euo pipefail
+          az storage account management-policy create \
+            --account-name "${AZURE_STORAGE_ACCOUNT}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --policy @infra-azure/policies/observation-w1-lifecycle.json \
+            --output none
+          az storage account management-policy show \
+            --account-name "${AZURE_STORAGE_ACCOUNT}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" --output json \
+            > /tmp/lifecycle.json
+          jq -e '
+            [.policy.rules[] | select(.enabled == true) |
+              {name, days:.definition.actions.baseBlob.delete.daysAfterModificationGreaterThan,
+               prefixes:.definition.filters.prefixMatch}]
+            | any(.name == "observation-unattached-upload-24h" and .days == 1)
+              and any(.name == "observation-pilot-private-7d" and .days == 7)
+              and any(.name == "observation-quarantine-rejected-90d" and .days == 90)
+          ' /tmp/lifecycle.json >/dev/null
+
+      - name: Smoke public readiness surfaces
+        run: |
+          set -euo pipefail
+          fqdn="$(az containerapp show \
+            --name "${AZURE_CONTAINER_APP}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query properties.configuration.ingress.fqdn --output tsv)"
+          echo "HINTERLAND_API_BASE_URL=https://${fqdn}" >> "$GITHUB_ENV"
+          for base_url in "https://${fqdn}" "https://api.thehinterlandguide.app"; do
+            curl --fail --silent --show-error "${base_url}/health" >/dev/null
+            curl --fail --silent --show-error "${base_url}/ready" >/dev/null
+            curl --fail --silent --show-error \
+              "${base_url}${HINTERLAND_KID_JWKS_PATH}" >/dev/null
+          done
+
+      - name: Non-skipped authenticated handoff and Observation canary
+        env:
+          HINTERLAND_SMOKE_ENTRA_BEARER: ${{ secrets.HINTERLAND_SMOKE_ENTRA_BEARER }}
+          HINTERLAND_SMOKE_EVIDENCE_PATH: promotion-artifact/authenticated-smoke.json
+        run: |
+          set -euo pipefail
+          test -n "${HINTERLAND_SMOKE_ENTRA_BEARER}"
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import time
+
+          token = os.environ["HINTERLAND_SMOKE_ENTRA_BEARER"]
+          payload = token.split(".", 2)[1]
+          payload += "=" * (-len(payload) % 4)
+          expires_at = int(json.loads(base64.urlsafe_b64decode(payload))["exp"])
+          if expires_at - int(time.time()) < 300:
+              raise SystemExit("test-parent credential is too close to expiry for authenticated canaries")
+          PY
+          python scripts/smoke_azure_parent_kid.py
+
+      - name: Strict post-canary database health
+        run: |
+          set -euo pipefail
+          execution="$(az containerapp job start \
+            --name hinterland-obs-health \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query name --output tsv)"
+          status=""
+          for _ in $(seq 1 60); do
+            status="$(az containerapp job execution show \
+              --name hinterland-obs-health \
+              --job-execution-name "$execution" \
+              --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --query properties.status --output tsv)"
+            case "$status" in
+              Succeeded|Failed|Canceled) break ;;
+            esac
+            sleep 10
+          done
+          jq \
+            --arg job hinterland-obs-health \
+            --arg execution "$execution" --arg status "$status" \
+            '. + [{job:$job, execution:$execution, status:$status}]' \
+            promotion-artifact/job-executions.json > promotion-artifact/job-executions.tmp
+          mv promotion-artifact/job-executions.tmp promotion-artifact/job-executions.json
+          test "$status" = Succeeded
+
+      - name: Provision, verify, and synthetically test required alerts
+        env:
+          HINTERLAND_ALERT_EMAIL: ${{ secrets.HINTERLAND_ALERT_EMAIL }}
+          HINTERLAND_MONITORING_EVIDENCE_PATH: promotion-artifact/monitoring.json
+        run: |
+          set -euo pipefail
+          bash infra-azure/observation-w1-monitoring.sh \
+            --apply --verify --synthetic
+
+      - name: Assert final W1 runtime, queue, and digest state
+        run: |
+          set -euo pipefail
+          assert_env() {
+            local kind="$1" name="$2" variable="$3" expected="$4" value
+            if [[ "$kind" == app ]]; then
+              value="$(az containerapp show --name "$name" \
+                --resource-group "${AZURE_RESOURCE_GROUP}" \
+                --query "properties.template.containers[0].env[?name=='${variable}'].value | [0]" \
+                --output tsv)"
+            else
+              value="$(az containerapp job show --name "$name" \
+                --resource-group "${AZURE_RESOURCE_GROUP}" \
+                --query "properties.template.containers[0].env[?name=='${variable}'].value | [0]" \
+                --output tsv)"
+            fi
+            test "$value" = "$expected"
+          }
+          uami_id="$(az identity show \
+            --name "${AZURE_UAMI_NAME}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query id --output tsv)"
+          assert_only_runtime_identity() {
+            local kind="$1" name="$2" identity
+            if [[ "$kind" == app ]]; then
+              identity="$(az containerapp show --name "$name" \
+                --resource-group "${AZURE_RESOURCE_GROUP}" --query identity --output json)"
+            else
+              identity="$(az containerapp job show --name "$name" \
+                --resource-group "${AZURE_RESOURCE_GROUP}" --query identity --output json)"
+            fi
+            jq -e --arg expected "${uami_id,,}" '
+              .type == "UserAssigned"
+              and ((.userAssignedIdentities // {}) | length == 1)
+              and ([((.userAssignedIdentities // {}) | keys[]) | ascii_downcase]
+                   | index($expected) != null)
+            ' <<< "$identity" >/dev/null
+          }
+
+          api_image="$(az containerapp show \
+            --name "${AZURE_CONTAINER_APP}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query 'properties.template.containers[0].image' --output tsv)"
+          test "$api_image" = "$IMAGE"
+          assert_only_runtime_identity app "${AZURE_CONTAINER_APP}"
+          for pair in \
+            HINTERLAND_MODERATION_PROVIDER=noop \
+            HINTERLAND_INAT_CV_ENABLED=false \
+            HINTERLAND_INAT_CV_DISCLOSURE_APPROVED=false \
+            HINTERLAND_INAT_CV_BENCHMARK_APPROVED=false \
+            HINTERLAND_INAT_SUBMIT_ENABLED=false \
+            HINTERLAND_OBSERVATION_IDEMPOTENCY_REQUIRED=true; do
+            assert_env app "${AZURE_CONTAINER_APP}" "${pair%%=*}" "${pair#*=}"
+          done
+          api_token_count="$(az containerapp show \
+            --name "${AZURE_CONTAINER_APP}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query "length(properties.template.containers[0].env[?name=='HINTERLAND_INAT_OAUTH_TOKEN'])" \
+            --output tsv)"
+          test "$api_token_count" = 0
+
+          mapfile -t jobs < <(az containerapp job list \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query "[?starts_with(name, 'hinterland-')].name" --output tsv)
+          for job in "${jobs[@]}"; do
+            assert_only_runtime_identity job "$job"
+            image="$(az containerapp job show --name "$job" \
+              --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --query 'properties.template.containers[0].image' --output tsv)"
+            test "$image" = "$IMAGE"
+            password_ref="$(az containerapp job show --name "$job" \
+              --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --query "properties.template.containers[0].env[?name=='HINTERLAND_DATABASE_PASSWORD'].secretRef | [0]" \
+              --output tsv)"
+            test "$password_ref" = pg-password
+            token_count="$(az containerapp job show --name "$job" \
+              --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --query "length(properties.template.containers[0].env[?name=='HINTERLAND_INAT_OAUTH_TOKEN'])" \
+              --output tsv)"
+            test "$token_count" = 0
+            for pair in \
+              HINTERLAND_MODERATION_PROVIDER=noop \
+              HINTERLAND_INAT_CV_ENABLED=false \
+              HINTERLAND_INAT_CV_DISCLOSURE_APPROVED=false \
+              HINTERLAND_INAT_CV_BENCHMARK_APPROVED=false \
+              HINTERLAND_INAT_SUBMIT_ENABLED=false \
+              HINTERLAND_OBSERVATION_IDEMPOTENCY_REQUIRED=true; do
+              assert_env job "$job" "${pair%%=*}" "${pair#*=}"
+            done
+          done
+          assert_env job hinterland-obs-health \
+            HINTERLAND_OBSERVATION_HEALTH_FAIL_UNHEALTHY true
+          assert_env job hinterland-state-rebuild \
+            HINTERLAND_DERIVED_REBUILD_STRICT_DRAIN true
+
+          queue_json="$(az servicebus queue show \
+            --namespace-name "${SERVICE_BUS_NAMESPACE}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --name "${MODERATION_QUEUE}" --output json)"
+          active="$(jq -r '.countDetails.activeMessageCount // 0' <<< "$queue_json")"
+          deadletter="$(jq -r '.countDetails.deadLetterMessageCount // 0' <<< "$queue_json")"
+          test "$active" = 0
+          test "$deadletter" = 0
+
+          revision="$(az containerapp show \
+            --name "${AZURE_CONTAINER_APP}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query properties.latestReadyRevisionName --output tsv)"
+          jq \
+            --arg image "$IMAGE" --arg digest "$IMAGE_DIGEST" \
+            --arg revision "$revision" --arg alembic_head "$ALEMBIC_HEAD" \
+            --argjson job_count "${#jobs[@]}" \
+            --argjson moderation_active "$active" \
+            --argjson moderation_deadletter "$deadletter" \
+            '.deployment={image:$image, digest:$digest, api_revision:$revision,
+              alembic_head:$alembic_head, job_count:$job_count}
+             | .queues={moderation_active:$moderation_active,
+                moderation_deadletter:$moderation_deadletter}' \
+            promotion-artifact/promotion.json > promotion-artifact/promotion.tmp
+          mv promotion-artifact/promotion.tmp promotion-artifact/promotion.json
+
+      - name: Restore temporary strict job modes
+        if: always()
+        run: |
+          set -euo pipefail
+          if ! az account show --output none >/dev/null 2>&1; then
+            exit 0
+          fi
+          remove_if_present() {
+            local job="$1" variable="$2" count
+            if ! az containerapp job show --name "$job" \
+              --resource-group "${AZURE_RESOURCE_GROUP}" --output none >/dev/null 2>&1; then
+              return
+            fi
+            count="$(az containerapp job show --name "$job" \
+              --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --query "length(properties.template.containers[0].env[?name=='${variable}'])" \
+              --output tsv)"
+            if [[ "$count" != 0 ]]; then
+              az containerapp job update --name "$job" \
+                --resource-group "${AZURE_RESOURCE_GROUP}" \
+                --remove-env-vars "$variable" --output none
+            fi
+          }
+          remove_if_present hinterland-obs-health \
+            HINTERLAND_OBSERVATION_HEALTH_FAIL_UNHEALTHY
+          remove_if_present hinterland-state-rebuild \
+            HINTERLAND_DERIVED_REBUILD_STRICT_DRAIN
+          remove_if_present hinterland-state-rebuild \
+            HINTERLAND_DERIVED_REBUILD_MAX_PASSES
+
+      - name: Finalize sanitized evidence
+        if: always()
+        env:
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          test -f promotion-artifact/promotion.json || {
+            mkdir -p promotion-artifact
+            jq -n --arg result "$JOB_RESULT" \
+              --arg commit_sha "$GITHUB_SHA" \
+              '{schema_version:1, commit_sha:$commit_sha, result:$result}' \
+              > promotion-artifact/promotion.json
+          }
+          jq --arg result "$JOB_RESULT" '.result=$result' \
+            promotion-artifact/promotion.json > promotion-artifact/promotion.tmp
+          mv promotion-artifact/promotion.tmp promotion-artifact/promotion.json
+          if [[ -f promotion-artifact/job-executions.json ]]; then
+            jq --slurpfile jobs promotion-artifact/job-executions.json \
+              '.job_executions=$jobs[0]' \
+              promotion-artifact/promotion.json > promotion-artifact/promotion.tmp
+            mv promotion-artifact/promotion.tmp promotion-artifact/promotion.json
+          fi
+          if [[ -f promotion-artifact/authenticated-smoke.json ]]; then
+            jq --slurpfile smoke promotion-artifact/authenticated-smoke.json \
+              '.authenticated_smoke=$smoke[0]' \
+              promotion-artifact/promotion.json > promotion-artifact/promotion.tmp
+            mv promotion-artifact/promotion.tmp promotion-artifact/promotion.json
+          fi
+          if [[ -f promotion-artifact/monitoring.json ]]; then
+            jq --slurpfile monitoring promotion-artifact/monitoring.json \
+              '.monitoring=$monitoring[0]' \
+              promotion-artifact/promotion.json > promotion-artifact/promotion.tmp
+            mv promotion-artifact/promotion.tmp promotion-artifact/promotion.json
+          fi
+
+      - name: Publish promotion evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: observation-w1-promotion-${{ github.run_id }}
+          path: promotion-artifact/promotion.json
+          if-no-files-found: error
+          retention-days: 30

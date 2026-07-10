@@ -1,5 +1,6 @@
 import {
   createObservation,
+  listMyObservations,
   presignPhoto,
   updateObservationIdentification,
 } from "@/src/api/observations";
@@ -70,5 +71,19 @@ describe("observation idempotency contract", () => {
         }),
       }),
     );
+  });
+
+  it("uses only the opaque observed-order Journal cursor contract", async () => {
+    await listMyObservations({
+      order: "observed",
+      cursor: "opaque.cursor.value",
+      limit: 20,
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "http://jest.invalid/v1/observations/me?limit=20&order=observed&cursor=opaque.cursor.value",
+      expect.anything(),
+    );
+    expect(String((globalThis.fetch as jest.Mock).mock.calls[0][0])).not.toContain("before=");
   });
 });

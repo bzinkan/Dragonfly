@@ -1,4 +1,5 @@
 import type { RewardType } from "@/src/api/observations";
+import { childPhotoPresentation } from "@/src/observation/journalLogic";
 
 export const OBSERVATION_FLOW_STEPS = [
   { key: "photo", label: "Photo" },
@@ -24,25 +25,7 @@ export function flowStepState(
 }
 
 export function photoStatusLabel(status: string): string {
-  switch (status) {
-    case "pending":
-      return "Review pending";
-    case "processing":
-      return "Review in progress";
-    case "clean":
-      return "Approved";
-    case "pilot_private":
-      return "Saved privately";
-    case "quarantine":
-      return "Needs review";
-    case "deleted":
-    case "rejected":
-      return "Removed";
-    case "failed":
-      return "Review delayed";
-    default:
-      return status || "Unknown";
-  }
+  return childPhotoPresentation(status).message ?? "Approved";
 }
 
 export type PhotoStatusTone = "neutral" | "success" | "warning" | "danger";
@@ -52,6 +35,7 @@ export function photoStatusTone(status: string): PhotoStatusTone {
     case "clean":
       return "success";
     case "quarantine":
+    case "adult_review":
     case "failed":
       return "warning";
     case "deleted":

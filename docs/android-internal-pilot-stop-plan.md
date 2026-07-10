@@ -14,10 +14,9 @@ Sister docs:
   for the tester walkthrough that a clean rerun must pass before
   resuming.
 - [`docs/runbook.md`](runbook.md)
-  for canonical operational commands. The runbook is GCP/Cloud-Run-
-  shaped; the W1 pilot runs against the Azure Container App per the
-  in-flight Phase 11 migration, so the rollback patterns here cite
-  the runbook's logic but use `az containerapp` equivalents.
+  for canonical Azure operational commands.
+- [`docs/observation-w1-promotion.md`](observation-w1-promotion.md)
+  for the protected promotion gate and sanitized evidence contract.
 
 Philosophy: **stop fast, preserve evidence, communicate honestly.**
 Speed of stopping matters more than knowing the root cause. Do not
@@ -105,34 +104,27 @@ In priority order. Do the cheap, immediate-effect actions first.
   at the Container App env-var layer. The W1 pilot runs on Azure
   Container Apps; use `az containerapp revision` / `az containerapp
   update --set-env-vars` patterns.
-  - **iNat submission**: confirm `HINTERLAND_INAT_OAUTH_TOKEN` is
-    unset (it should already be unset for W1 per
-    [`docs/risks/0002-async-workers-production-unwired.md`](risks/0002-async-workers-production-unwired.md);
-    if it somehow got set, unset it). This is the canonical gate
-    that keeps observations off the public iNaturalist project.
-  - **Moderation**: in W1, moderation runs the noop path because
-    `HINTERLAND_MODERATION_PROVIDER=cloud_vision_safesearch` is
-    intentionally NOT set per risk 0002 (Cloud Vision API not yet
-    enabled; cost meter starts on flip). No moderation kill-switch
-    is needed during W1. If you suspect moderation has been flipped
-    on out-of-band, confirm via `az containerapp show` + grep for
-    `HINTERLAND_MODERATION_PROVIDER` and unset it.
-  - **Internal worker routes**: `/internal/*` can be hard-disabled
-    by clearing either `HINTERLAND_INTERNAL_OIDC_AUDIENCE` or
-    `HINTERLAND_INTERNAL_OIDC_ALLOWED_SERVICE_ACCOUNTS`. The backend
-    then fail-closes every `/internal/*` request with
-    `503 internal_oidc_misconfigured`. This is the documented kill
-    lever for moderation / iNat worker routes.
+  - **iNaturalist**: immediately set
+    `HINTERLAND_INAT_CV_ENABLED=false` and
+    `HINTERLAND_INAT_SUBMIT_ENABLED=false`, remove
+    `HINTERLAND_INAT_OAUTH_TOKEN`, delete any iNaturalist-named Container
+    Apps job, and verify the runtime identity has no inherited Sender,
+    Receiver, or Owner role on the inert `inat-submit` queue.
+  - **Moderation**: immediately restore
+    `HINTERLAND_MODERATION_PROVIDER=noop`, stop any running
+    `hinterland-moderation-job` / `hinterland-mod-outbox-relay` execution,
+    and enumerate all Event Grid topics sourced by photo storage. Delete any
+    BlobCreated subscription that can reach moderation. Preserve PostgreSQL
+    outbox rows and Service Bus messages for later reconciliation.
   - **If the bug is in the API itself** (not config): do a
-    revision-pinned rollback. The runbook documents the Cloud Run
-    pattern (`gcloud run services update-traffic hinterland-api
-    --region us-central1 --to-revisions REVISION_NAME=100`); the
-    Azure-side equivalent is `az containerapp revision set-mode
-    single --revision <previous>` (or the multiple-revision
-    weighted equivalent). After rollback, re-run smoke probes
+    revision-pinned Azure rollback. Switch to multiple-revision mode,
+    activate the known-good revision, and set its ingress traffic weight to
+    100 with `az containerapp ingress traffic set`; do not point traffic at a
+    revision that predates W1 containment. After rollback, re-run smoke probes
     (`/health`, `/ready`, `/v1/meta`) per
     [`docs/runbook.md`](runbook.md) and check logs for
     `api.startup`, `api.shutdown`, and `api.unhandled_exception`.
+    There is no Cloud Run rollback path.
 - [ ] **Do NOT clear logs.** Do NOT delete the affected
   `parent_consent_records` row. Do NOT delete the kid's `users.id`
   row or the parent's `users.id` row. Evidence > speed. The consent

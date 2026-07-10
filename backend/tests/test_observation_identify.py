@@ -111,13 +111,14 @@ def _user_row() -> models.User:
 
 def _obs_with_photo(
     *, photo_status: str = "clean", moderation_status: str = "clean"
-) -> tuple[models.Observation, models.Photo]:
+) -> tuple[models.Observation, models.Photo, None]:
     photo = models.Photo(
         id=_PHOTO_ID,
         user_id=_USER_ID,
         bucket="hinterland-photos-test",
         object_name=f"observations/{_PHOTO_ID}.jpg",
         status=photo_status,
+        attachment_status="attached",
         content_type="image/jpeg",
         sha256="a" * 64,
     )
@@ -130,14 +131,19 @@ def _obs_with_photo(
         longitude=-84.5,
         moderation_status=moderation_status,
     )
-    return obs, photo
+    return obs, photo, None
 
 
 def _wire_session(
     fake_session: AsyncMock,
     *,
     user: models.User | None,
-    obs_photo: tuple[models.Observation, models.Photo] | None = None,
+    obs_photo: tuple[
+        models.Observation,
+        models.Photo,
+        models.PhotoRevocation | None,
+    ]
+    | None = None,
     cache: models.CvSuggestionCache | None = None,
     catalog_rows: list[models.SpeciesCache] | None = None,
 ) -> None:

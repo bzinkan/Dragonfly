@@ -26,8 +26,10 @@ from app.core.config import Settings, get_request_settings
 from app.core.storage import SignedUrlGeneratorDep
 from app.db import models
 from app.db.session import DbSessionDep
+from app.dispatcher.handlers.dex import promote_clean_representative
 from app.inat.enqueue import enqueue_inat_submit
-from app.moderation.review_service import ReviewResolutionConflict, reject_review_item
+from app.moderation.review_service import ReviewResolutionConflict
+from app.moderation.revocation import PhotoRevocationPending, revoke_and_reject_review_item
 
 router = APIRouter(prefix="/v1/review-queue", tags=["review_queue"])
 
@@ -98,7 +100,7 @@ async def list_pending(
     limit: Annotated[int, Query(ge=1, le=_MAX_LIMIT)] = _DEFAULT_LIMIT,
     before: Annotated[str | None, Query(min_length=26, max_length=26)] = None,
     review_status: Annotated[
-        Literal["pending", "approved", "rejected"], Query(alias="status")
+        Literal["pending", "approved", "rejected", "revoked"], Query(alias="status")
     ] = "pending",
 ) -> ReviewQueueListResponse:
     user = await _resolve_adult_user(session, current_user)
@@ -148,6 +150,7 @@ async def _load_review_for_resolution(
     review_id: str,
     *,
     lock: bool = True,
+    expected_status: Literal["pending", "approved"] = "pending",
 ) -> models.ReviewQueueItem:
     statement = select(models.ReviewQueueItem).where(models.ReviewQueueItem.id == review_id)
     if lock:
@@ -169,7 +172,7 @@ async def _load_review_for_resolution(
         # Not in this group as an adult -> 404 like missing (no enumeration).
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review item not found")
 
-    if review.status != "pending":
+    if review.status != expected_status:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Review item is already {review.status}",
@@ -208,6 +211,20 @@ async def approve_review(
     if photo is None:
         # Inconsistent state; treat as gone.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo gone")
+    revocation_active = (
+        await session.execute(
+            select(models.PhotoRevocation.photo_id).where(
+                models.PhotoRevocation.photo_id == photo.id
+            )
+        )
+    ).scalar_one_or_none()
+    if revocation_active is not None:
+        # Once rejection has claimed the deny gate, approval must not race it
+        # back into the clean prefix.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Photo rejection is already in progress",
+        )
 
     # Write and verify the destination first. The quarantined source remains
     # authoritative until the database commit succeeds.
@@ -252,6 +269,11 @@ async def approve_review(
             observation.moderation_status = "clean"
             observation.moderation_source = "adult"
             observation.moderation_policy_version = "adult-review-v1"
+            await promote_clean_representative(
+                session,
+                observation=observation,
+                photo=photo,
+            )
             if settings.inat_submit_enabled:
                 session.add(
                     models.InatSubmitOutbox(
@@ -317,6 +339,7 @@ async def reject_review(
     review_id: str,
     current_user: CurrentUserDep,
     session: DbSessionDep,
+    storage: SignedUrlGeneratorDep,
     settings: Annotated[Settings, Depends(get_request_settings)],
 ) -> ResolveResponse:
     user = await _resolve_adult_user(session, current_user)
@@ -325,18 +348,27 @@ async def reject_review(
     review = await _load_review_for_resolution(session, user, review_id, lock=False)
 
     try:
-        rebuild = await reject_review_item(
+        rebuild = await revoke_and_reject_review_item(
             session,
+            storage=storage,
             review=review,
             reviewer_user_id=user.id,
+            source="adult_review",
         )
     except ReviewResolutionConflict as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
-
-    await session.commit()
+    except PhotoRevocationPending as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Photo is private and the rejection is awaiting operator repair"
+                if exc.terminal
+                else "Photo is private and the rejection will retry"
+            ),
+        ) from exc
 
     log.info(
         "review_queue.rejected",
@@ -347,6 +379,67 @@ async def reject_review(
     return ResolveResponse(
         id=review.id,
         status="rejected",
+        photo_status="deleted",
+        rebuild_id=rebuild.id if rebuild is not None else None,
+        rebuild_status=rebuild.status if rebuild is not None else None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/review-queue/{id}/revoke
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{review_id}/revoke", response_model=ResolveResponse)
+async def revoke_approved_review(
+    review_id: str,
+    current_user: CurrentUserDep,
+    session: DbSessionDep,
+    storage: SignedUrlGeneratorDep,
+) -> ResolveResponse:
+    """Correct a prior approval while preserving its original audit fields."""
+
+    user = await _resolve_adult_user(session, current_user)
+    review = await _load_review_for_resolution(
+        session,
+        user,
+        review_id,
+        lock=False,
+        expected_status="approved",
+    )
+    try:
+        rebuild = await revoke_and_reject_review_item(
+            session,
+            storage=storage,
+            review=review,
+            reviewer_user_id=user.id,
+            source="adult_revocation",
+            claim_review_status="approved",
+        )
+    except ReviewResolutionConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except PhotoRevocationPending as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Photo is private and the revocation is awaiting operator repair"
+                if exc.terminal
+                else "Photo is private and the revocation will retry"
+            ),
+        ) from exc
+
+    log.info(
+        "review_queue.approval_revoked",
+        review_id=review_id,
+        photo_id=review.photo_id,
+        revoker=user.id,
+    )
+    return ResolveResponse(
+        id=review.id,
+        status="revoked",
         photo_status="deleted",
         rebuild_id=rebuild.id if rebuild is not None else None,
         rebuild_status=rebuild.status if rebuild is not None else None,

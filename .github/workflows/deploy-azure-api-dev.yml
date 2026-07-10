@@ -53,11 +53,10 @@ jobs:
             az containerapp job delete --name "${job}" --resource-group "${AZURE_RESOURCE_GROUP}" --yes --output none
           done
 
-      - name: Pin Hinterland jobs to this image
+      - name: Pin only preflight and migration jobs to this image
         run: |
           set -euo pipefail
-          mapfile -t jobs < <(az containerapp job list --resource-group "${AZURE_RESOURCE_GROUP}" --query "[?starts_with(name, 'hinterland-')].name" --output tsv)
-          test "${#jobs[@]}" -gt 0
+          jobs=(hinterland-obs-preflight hinterland-migrate)
           for job in "${jobs[@]}"; do
             az containerapp job update \
               --name "${job}" \
@@ -66,7 +65,7 @@ jobs:
               --output none
           done
 
-      - name: Seed Hinterland job settings
+      - name: Seed preflight and migration job settings
         run: |
           set -euo pipefail
           mapfile -t shared_env < <(
@@ -83,7 +82,7 @@ jobs:
               '
           )
           test "${#shared_env[@]}" -gt 0
-          mapfile -t jobs < <(az containerapp job list --resource-group "${AZURE_RESOURCE_GROUP}" --query "[?starts_with(name, 'hinterland-')].name" --output tsv)
+          jobs=(hinterland-obs-preflight hinterland-migrate)
           for job in "${jobs[@]}"; do
             secret_names="$(az containerapp job secret list --name "${job}" --resource-group "${AZURE_RESOURCE_GROUP}" --query '[].name' --output tsv)"
             grep -qx 'pg-password' <<< "${secret_names}"
@@ -122,7 +121,7 @@ jobs:
             remove_aliases job "${job}"
           done
 
-      - name: Run required pre-deploy jobs
+      - name: Run preflight and additive migrations first
         run: |
           set -euo pipefail
           run_job() {
@@ -142,17 +141,68 @@ jobs:
           }
           run_job hinterland-obs-preflight
           run_job hinterland-migrate
-          run_job hinterland-taxa-catalog-ingest
-          run_job hinterland-sync-expeditions
 
-      - name: Deploy API revision
+      - name: Pin all Hinterland jobs after migration success
         run: |
           set -euo pipefail
-          az containerapp update \
-            --name "${AZURE_CONTAINER_APP}" \
-            --resource-group "${AZURE_RESOURCE_GROUP}" \
-            --image "${IMAGE}" \
-            --output none
+          mapfile -t jobs < <(az containerapp job list --resource-group "${AZURE_RESOURCE_GROUP}" --query "[?starts_with(name, 'hinterland-')].name" --output tsv)
+          test "${#jobs[@]}" -gt 0
+          for job in "${jobs[@]}"; do
+            az containerapp job update \
+              --name "${job}" \
+              --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --image "${IMAGE}" \
+              --output none
+          done
+
+      - name: Seed all Hinterland job settings after migration success
+        run: |
+          set -euo pipefail
+          mapfile -t shared_env < <(
+            az containerapp show --name "${AZURE_CONTAINER_APP}" --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --query 'properties.template.containers[0].env[?starts_with(name, `HINTERLAND_`)]' --output json |
+              jq -r '
+                .[] |
+                select(.name != "HINTERLAND_APP_VERSION") |
+                select(.name != "HINTERLAND_DEV_AUTH_ENABLED") |
+                select(.name != "HINTERLAND_DEV_AUTH_TOKEN") |
+                select(.secretRef | not) |
+                select(.value != null) |
+                "\(.name)=\(.value)"
+              '
+          )
+          test "${#shared_env[@]}" -gt 0
+          mapfile -t jobs < <(az containerapp job list --resource-group "${AZURE_RESOURCE_GROUP}" --query "[?starts_with(name, 'hinterland-')].name" --output tsv)
+          for job in "${jobs[@]}"; do
+            secret_names="$(az containerapp job secret list --name "${job}" --resource-group "${AZURE_RESOURCE_GROUP}" --query '[].name' --output tsv)"
+            grep -qx 'pg-password' <<< "${secret_names}"
+            az containerapp job update \
+              --name "${job}" \
+              --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --set-env-vars "${shared_env[@]}" HINTERLAND_DATABASE_PASSWORD=secretref:pg-password \
+              --output none
+          done
+
+      - name: Run taxonomy and Expedition content jobs
+        run: |
+          set -euo pipefail
+          run_job() {
+            local job="$1"
+            local execution
+            execution="$(az containerapp job start --name "${job}" --resource-group "${AZURE_RESOURCE_GROUP}" --query name --output tsv)"
+            for attempt in $(seq 1 60); do
+              status="$(az containerapp job execution show --name "${job}" --job-execution-name "${execution}" --resource-group "${AZURE_RESOURCE_GROUP}" --query properties.status --output tsv)"
+              case "${status}" in
+                Succeeded) return 0 ;;
+                Failed|Canceled) echo "${job} failed." >&2; return 1 ;;
+              esac
+              sleep 10
+            done
+            echo "${job} timed out." >&2
+            return 1
+          }
+          run_job hinterland-taxa-catalog-ingest
+          run_job hinterland-sync-expeditions
 
       - name: Rebuild derived state
         run: |
@@ -174,6 +224,15 @@ jobs:
           }
           run_job hinterland-state-rebuild
 
+      - name: Deploy API revision
+        run: |
+          set -euo pipefail
+          az containerapp update \
+            --name "${AZURE_CONTAINER_APP}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --image "${IMAGE}" \
+            --output none
+
       - name: Smoke public API surfaces
         run: |
           set -euo pipefail
@@ -189,6 +248,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Install authenticated smoke dependencies
+        run: python -m pip install ./backend
 
       - name: Authenticated parent and kid smoke
         env:

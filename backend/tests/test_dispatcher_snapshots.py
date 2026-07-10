@@ -119,9 +119,9 @@ def _wire_for_dex_first_then_rarity(
     rarity_update_result = MagicMock()
 
     side_effects: list[Any] = [dex_insert_result]
-    is_first_find = dex_inserted_id is not None
-    if is_first_find:
-        side_effects.append(dex_update_result)
+    # First finds bump membership.dex_count; repeats update the maintained
+    # Dex observation_count/latest_seen projection.
+    side_effects.append(dex_update_result)
     side_effects.append(rarity_species_result)
     if rarity_species_row is None:
         side_effects.append(rarity_region_result)

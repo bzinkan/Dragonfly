@@ -131,13 +131,19 @@ truth. Postgres tables are materialized views synced by scripts/CI.
 
 ## Deployment And Observability
 
-Active API deploys use `.github/workflows/deploy-azure-api-dev.yml`: contain the
-old revision by removing its iNaturalist token aliases and discovering storage
-system topics, build one immutable ACR digest from the repo root, run the
-read-only Observation preflight and additive Alembic migrations, sync taxonomy
-and Expedition content, reconcile legacy pending bytes, rebuild derived state,
-pin every worker/job, cut API traffic, reconcile/rebuild the old-revision race,
-then run public, auth, and Observation canaries.
+Ordinary API deploys use `.github/workflows/deploy-azure-api-dev.yml`: build one
+immutable ACR digest from the repo root, pin only the preflight/migration jobs,
+run the read-only Observation preflight and additive Alembic migrations, then
+pin the remaining workers/jobs, sync taxonomy and Expedition content, rebuild
+derived state, and finally deploy/smoke the API.
+
+Observation W1 promotion is a separate protected manual control in
+`.github/workflows/observation-w1-promotion.yml`. It adds non-skippable parent/
+kid and Observation canaries, deny-by-default setting assertions, subscription-
+wide Event Grid containment, iNaturalist queue/identity isolation, strict
+health/rebuild checks, lifecycle and alert verification, and a sanitized
+evidence artifact. A green ordinary development deployment is not promotion
+evidence.
 
 The legacy `.github/workflows/deploy-cloud-run-dev.yml` is intentionally
 manual/no-op. It must not deploy or recreate Cloud Run after ADR 0010.

@@ -83,6 +83,51 @@ def test_v1_meta_returns_versioned_api_metadata(client: TestClient) -> None:
         "name": "Hinterland API",
         "env": "local",
         "version": "test",
+        "capabilities": {
+            "observation": {"photo_helper_enabled": False},
+        },
+    }
+
+
+def test_v1_meta_enables_photo_helper_only_after_every_gate() -> None:
+    app = create_app(
+        Settings(
+            env="local",
+            app_version="test",
+            inat_cv_enabled=True,
+            inat_cv_disclosure_approved=True,
+            inat_cv_benchmark_approved=True,
+            inat_oauth_token="configured-token",
+            inat_base_url="https://api.inaturalist.org/v1",
+        )
+    )
+
+    with TestClient(app) as test_client:
+        response = test_client.get("/v1/meta")
+
+    assert response.status_code == 200
+    assert response.json()["capabilities"]["observation"] == {
+        "photo_helper_enabled": True,
+    }
+
+
+def test_v1_meta_keeps_photo_helper_disabled_without_provider_credentials() -> None:
+    app = create_app(
+        Settings(
+            env="local",
+            app_version="test",
+            inat_cv_enabled=True,
+            inat_cv_disclosure_approved=True,
+            inat_cv_benchmark_approved=True,
+            inat_oauth_token="",
+        )
+    )
+
+    with TestClient(app) as test_client:
+        response = test_client.get("/v1/meta")
+
+    assert response.json()["capabilities"]["observation"] == {
+        "photo_helper_enabled": False,
     }
 
 

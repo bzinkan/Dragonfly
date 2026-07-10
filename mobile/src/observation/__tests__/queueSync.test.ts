@@ -49,8 +49,6 @@ const observation: Observation = {
   user_id: "kid-1",
   group_id: "group-1",
   photo_id: "photo-1",
-  latitude: null,
-  longitude: null,
   geohash4: null,
   observed_at: "2026-07-09T12:00:00.000Z",
   location_source: "none",
@@ -59,7 +57,7 @@ const observation: Observation = {
   identification_source: "unknown",
   identification_revision: 1,
   place_name: null,
-  moderation_status: "pilot_private",
+  child_presentation_status: "pilot_private",
   dispatch_status: "complete",
   rewards: [],
 };

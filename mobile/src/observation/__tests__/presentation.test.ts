@@ -13,11 +13,11 @@ describe("observation presentation helpers", () => {
   });
 
   it("maps photo moderation states to kid-facing labels and tones", () => {
-    expect(photoStatusLabel("pending")).toBe("Review pending");
+    expect(photoStatusLabel("pending")).toBe("This photo is being checked.");
     expect(photoStatusTone("pending")).toBe("neutral");
     expect(photoStatusLabel("clean")).toBe("Approved");
     expect(photoStatusTone("clean")).toBe("success");
-    expect(photoStatusLabel("quarantine")).toBe("Needs review");
+    expect(photoStatusLabel("quarantine")).toBe("An adult is reviewing this photo.");
     expect(photoStatusTone("quarantine")).toBe("warning");
   });
 

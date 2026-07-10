@@ -9,8 +9,8 @@ const PAGE_SIZE = 20;
  * Cursor-paginated infinite query over GET /v1/observations/me.
  *
  * Pages flatten via `data.pages.flatMap(p => p.items)`. `getNextPageParam`
- * returns the server's `next_cursor`, which the next page passes back as
- * `before`.
+ * returns the server's opaque observed-time cursor, which is passed back
+ * verbatim. The mobile client never mixes this contract with legacy `before`.
  */
 export function useMyObservations() {
   const ownerUserId = useAuthSession((state) =>
@@ -21,7 +21,8 @@ export function useMyObservations() {
     queryFn: ({ pageParam, signal }) =>
       listMyObservations({
         limit: PAGE_SIZE,
-        before: typeof pageParam === "string" ? pageParam : null,
+        order: "observed",
+        cursor: typeof pageParam === "string" ? pageParam : null,
       }, signal),
     initialPageParam: null,
     getNextPageParam: (last) => last.next_cursor,

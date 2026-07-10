@@ -8,8 +8,9 @@
 import { env } from "@/src/config/env";
 import {
   bearerTokenSnapshotIsCurrent,
-  getBearerToken,
+  clearBearerToken,
   getBearerTokenSnapshot,
+  type BearerTokenSnapshot,
 } from "@/src/auth/token";
 import { runImperativeRequest } from "@/src/auth/requestBoundary";
 
@@ -67,6 +68,7 @@ async function performApiRequest<T>(
     Accept: "application/json",
     ...options.headers,
   };
+  let authSnapshot: BearerTokenSnapshot | null = null;
 
   if (options.body !== undefined) {
     headers["Content-Type"] = "application/json";
@@ -74,12 +76,11 @@ async function performApiRequest<T>(
 
   if (!options.unauthenticated) {
     try {
-      const snapshot = boundarySignal
-        ? await getBearerTokenSnapshot()
-        : { token: await getBearerToken(), generation: null };
+      const snapshot = await getBearerTokenSnapshot();
+      authSnapshot = snapshot;
       if (
         combined.signal?.aborted ||
-        (snapshot.generation !== null && !bearerTokenSnapshotIsCurrent(snapshot))
+        !bearerTokenSnapshotIsCurrent(snapshot)
       ) {
         throw abortError();
       }
@@ -108,6 +109,17 @@ async function performApiRequest<T>(
         body = (await res.json()) as ApiErrorBody;
       } catch {
         // Non-JSON response (proxy 502, etc.) -- leave body null.
+      }
+      // An authenticated 401 is a privacy boundary, not an empty state. Clear
+      // only the credential that made this request: a late response from an
+      // old account must never erase a replacement token.
+      if (
+        res.status === 401 &&
+        !options.unauthenticated &&
+        authSnapshot !== null &&
+        bearerTokenSnapshotIsCurrent(authSnapshot)
+      ) {
+        await clearBearerToken();
       }
       const message = body?.error?.message ?? `${options.method ?? "GET"} ${path} -> ${res.status}`;
       throw new ApiError(res.status, body, message);

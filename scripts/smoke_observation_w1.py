@@ -1,15 +1,51 @@
-"""Operator W1 canary for the deployed Azure Observation path."""
+#!/usr/bin/env python3
+"""Strict W1 canary for the deployed Azure Observation path.
+
+The parent/kid smoke imports :func:`run_canary` and passes its throwaway kid
+session directly in memory. Operators may still run this file on its own with
+``HINTERLAND_SMOKE_BEARER``. The optional evidence file contains only bounded
+request IDs and pass/fail facts; it never contains the bearer, SAS URL, image,
+child text, or location.
+"""
 
 from __future__ import annotations
 
 import io
+import json
 import os
+import re
 import time
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 from PIL import Image
 from ulid import ULID
+
+_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+_FORBIDDEN_CHILD_FIELDS = {
+    "latitude",
+    "longitude",
+    "moderation_status",
+    "photo_object_name",
+    "photo_status",
+}
+
+
+@dataclass(frozen=True)
+class ObservationCanaryEvidence:
+    result: str
+    request_ids: list[str]
+    block_blob_header: bool
+    idempotent_replay: bool
+    field_journal_exactly_once: bool
+    child_presentation_status: str
+    signed_photo_denied: bool
+    child_dto_minimized: bool
+
+    def to_public_dict(self) -> dict[str, object]:
+        return asdict(self)
 
 
 def _required(name: str) -> str:
@@ -21,28 +57,111 @@ def _required(name: str) -> str:
 
 def _jpeg() -> bytes:
     output = io.BytesIO()
-    Image.new("RGB", (96, 96), color=(76, 116, 74)).save(
-        output, format="JPEG", quality=80
-    )
+    Image.new("RGB", (96, 96), color=(76, 116, 74)).save(output, format="JPEG", quality=80)
     return output.getvalue()
 
 
 def _expect(response: httpx.Response, *statuses: int) -> None:
     if response.status_code not in statuses:
+        request_id = next(
+            (
+                response.headers.get(header, "").strip()
+                for header in (
+                    "x-request-id",
+                    "x-correlation-id",
+                    "request-id",
+                    "x-ms-request-id",
+                )
+                if _REQUEST_ID_PATTERN.fullmatch(response.headers.get(header, "").strip())
+            ),
+            "unavailable",
+        )
+        error_code = "unavailable"
+        try:
+            body = response.json()
+            detail = body.get("detail", {}) if isinstance(body, dict) else {}
+            candidate = detail.get("code") if isinstance(detail, dict) else None
+            if isinstance(candidate, str) and _REQUEST_ID_PATTERN.fullmatch(candidate):
+                error_code = candidate
+        except ValueError:
+            pass
         raise RuntimeError(
-            f"{response.request.method} {response.request.url} returned "
-            f"{response.status_code}: {response.text[:500]}"
+            f"{response.request.method} {response.request.url.path} returned "
+            f"{response.status_code}; request_id={request_id}; error_code={error_code}"
         )
 
 
-def main() -> None:
-    base_url = _required("HINTERLAND_API_BASE_URL").rstrip("/")
-    bearer = _required("HINTERLAND_SMOKE_BEARER")
+def _record_request_id(response: httpx.Response, request_ids: list[str]) -> None:
+    for header in (
+        "x-request-id",
+        "x-correlation-id",
+        "request-id",
+        "x-ms-request-id",
+    ):
+        value = response.headers.get(header, "").strip()
+        if value and _REQUEST_ID_PATTERN.fullmatch(value) and value not in request_ids:
+            request_ids.append(value)
+            return
+
+
+def _request(
+    client: httpx.Client,
+    request_ids: list[str],
+    method: str,
+    url: str,
+    **kwargs: object,
+) -> httpx.Response:
+    try:
+        response = client.request(method, url, **kwargs)
+    except httpx.HTTPError:
+        # In particular, never let an upload transport exception stringify the
+        # SAS query from the raw URL into Actions logs.
+        raise RuntimeError(
+            f"{method} {httpx.URL(url).path} failed; request_id=unavailable; "
+            "error_code=transport_error"
+        ) from None
+    _record_request_id(response, request_ids)
+    return response
+
+
+def _assert_child_dto_minimized(item: dict[str, object]) -> None:
+    exposed = _FORBIDDEN_CHILD_FIELDS.intersection(item)
+    if exposed:
+        raise RuntimeError(
+            "Field Journal exposed forbidden child fields: " + ", ".join(sorted(exposed))
+        )
+
+
+def _write_evidence(path: str | os.PathLike[str], evidence: dict[str, object]) -> None:
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def run_canary(
+    *,
+    base_url: str,
+    bearer: str,
+    evidence_path: str | os.PathLike[str] | None = None,
+) -> ObservationCanaryEvidence:
+    """Run the W1 Observation canary using an already-minted kid session."""
+
+    base_url = base_url.strip().rstrip("/")
+    bearer = bearer.strip()
+    if not base_url:
+        raise RuntimeError("base_url is required")
+    if not bearer:
+        raise RuntimeError("kid bearer is required")
+
     key = str(ULID())
     auth = {"Authorization": f"Bearer {bearer}"}
+    request_ids: list[str] = []
 
     with httpx.Client(timeout=30.0, follow_redirects=False) as client:
-        presign = client.post(
+        presign = _request(
+            client,
+            request_ids,
+            "POST",
             f"{base_url}/v1/photos/presign",
             headers={**auth, "Idempotency-Key": key},
             json={"content_type": "image/jpeg"},
@@ -55,8 +174,14 @@ def main() -> None:
         if not reservation.get("upload_url"):
             raise RuntimeError("new reservation omitted upload_url")
 
-        upload = client.put(
-            reservation["upload_url"], headers=upload_headers, content=_jpeg()
+        # Do not record or persist the SAS URL or bytes in promotion evidence.
+        upload = _request(
+            client,
+            request_ids,
+            "PUT",
+            reservation["upload_url"],
+            headers=upload_headers,
+            content=_jpeg(),
         )
         _expect(upload, 200, 201)
 
@@ -66,7 +191,10 @@ def main() -> None:
             "location_source": "none",
             "identification_source": "unknown",
         }
-        created = client.post(
+        created = _request(
+            client,
+            request_ids,
+            "POST",
             f"{base_url}/v1/observations",
             headers={**auth, "Idempotency-Key": key},
             json=payload,
@@ -74,7 +202,10 @@ def main() -> None:
         _expect(created, 201)
         observation = created.json()
 
-        replay = client.post(
+        replay = _request(
+            client,
+            request_ids,
+            "POST",
             f"{base_url}/v1/observations",
             headers={**auth, "Idempotency-Key": key},
             json=payload,
@@ -87,14 +218,20 @@ def main() -> None:
         if replay.json().get("rewards") != observation.get("rewards"):
             raise RuntimeError("replay returned different persisted rewards")
 
-        conflict = client.post(
+        conflict = _request(
+            client,
+            request_ids,
+            "POST",
             f"{base_url}/v1/observations",
             headers={**auth, "Idempotency-Key": key},
             json={**payload, "observed_at": datetime.now(UTC).isoformat()},
         )
         _expect(conflict, 409)
 
-        attached_presign = client.post(
+        attached_presign = _request(
+            client,
+            request_ids,
+            "POST",
             f"{base_url}/v1/photos/presign",
             headers={**auth, "Idempotency-Key": key},
             json={"content_type": "image/jpeg"},
@@ -103,45 +240,101 @@ def main() -> None:
         attached = attached_presign.json()
         if attached.get("photo_id") != reservation["photo_id"]:
             raise RuntimeError("presign replay returned a different photo")
-        if attached.get("observation_id") != observation["id"] or attached.get(
-            "upload_url"
-        ):
+        if attached.get("observation_id") != observation["id"] or attached.get("upload_url"):
             raise RuntimeError("attached presign did not reconcile")
 
-        listing = client.get(f"{base_url}/v1/observations/me?limit=50", headers=auth)
+        listing = _request(
+            client,
+            request_ids,
+            "GET",
+            f"{base_url}/v1/observations/me?order=observed&limit=50",
+            headers=auth,
+        )
         _expect(listing, 200)
         matches = [
-            item
-            for item in listing.json().get("items", [])
-            if item.get("id") == observation["id"]
+            item for item in listing.json().get("items", []) if item.get("id") == observation["id"]
         ]
         if len(matches) != 1:
             raise RuntimeError(f"Field Journal contained {len(matches)} copies")
+        _assert_child_dto_minimized(matches[0])
 
         deadline = time.monotonic() + 180
-        moderation_status = "pending"
+        presentation_status = "pending"
         while time.monotonic() < deadline:
-            detail = client.get(
-                f"{base_url}/v1/observations/{observation['id']}", headers=auth
+            detail = _request(
+                client,
+                request_ids,
+                "GET",
+                f"{base_url}/v1/observations/{observation['id']}",
+                headers=auth,
             )
             _expect(detail, 200)
-            moderation_status = detail.json().get("moderation_status", "")
-            if moderation_status == "pilot_private":
+            detail_payload = detail.json()
+            _assert_child_dto_minimized(detail_payload)
+            presentation_status = detail_payload.get("child_presentation_status", "")
+            if presentation_status == "pilot_private":
                 break
-            if moderation_status in {"clean", "quarantine"}:
-                raise RuntimeError(f"W1 entered forbidden state {moderation_status}")
+            if presentation_status in {"clean", "adult_review", "failed"}:
+                raise RuntimeError(f"W1 entered forbidden child state {presentation_status}")
+            if presentation_status not in {"pending", "processing"}:
+                raise RuntimeError(f"W1 returned unknown child state {presentation_status!r}")
             time.sleep(5)
-        if moderation_status != "pilot_private":
-            raise RuntimeError(f"NoOp did not reach pilot_private: {moderation_status}")
+        if presentation_status != "pilot_private":
+            raise RuntimeError(f"NoOp did not reach pilot_private: {presentation_status}")
 
-        photo_url = client.get(
-            f"{base_url}/v1/photos/{reservation['photo_id']}/url", headers=auth
+        final_listing = _request(
+            client,
+            request_ids,
+            "GET",
+            f"{base_url}/v1/observations/me?order=observed&limit=50",
+            headers=auth,
+        )
+        _expect(final_listing, 200)
+        final_matches = [
+            item
+            for item in final_listing.json().get("items", [])
+            if item.get("id") == observation["id"]
+        ]
+        if len(final_matches) != 1:
+            raise RuntimeError("pilot-private Field Journal record was not stable")
+        _assert_child_dto_minimized(final_matches[0])
+        if final_matches[0].get("child_presentation_status") != "pilot_private":
+            raise RuntimeError("Field Journal did not expose pilot_private presentation")
+
+        photo_url = _request(
+            client,
+            request_ids,
+            "GET",
+            f"{base_url}/v1/photos/{reservation['photo_id']}/url",
+            headers=auth,
         )
         _expect(photo_url, 404)
 
+    evidence = ObservationCanaryEvidence(
+        result="passed",
+        request_ids=request_ids,
+        block_blob_header=True,
+        idempotent_replay=True,
+        field_journal_exactly_once=True,
+        child_presentation_status="pilot_private",
+        signed_photo_denied=True,
+        child_dto_minimized=True,
+    )
+    if evidence_path:
+        _write_evidence(evidence_path, evidence.to_public_dict())
+    return evidence
+
+
+def main() -> None:
+    evidence = run_canary(
+        base_url=_required("HINTERLAND_API_BASE_URL"),
+        bearer=_required("HINTERLAND_SMOKE_BEARER"),
+        evidence_path=os.environ.get("HINTERLAND_SMOKE_EVIDENCE_PATH") or None,
+    )
     print(
         "W1 canary passed: BlockBlob upload, conflict-safe exactly-one replay, "
-        "pilot_private, and no signed photo URL"
+        f"{evidence.child_presentation_status}, minimized child DTO, and no "
+        "signed photo URL"
     )
 
 

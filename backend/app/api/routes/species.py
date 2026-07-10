@@ -1,12 +1,10 @@
 """Species facts for the kid-facing observation detail screen.
 
-`GET /v1/species/{taxon_id}` serves a small factual "about this species"
-sheet extracted from the cached iNaturalist taxon payload
-(`species_cache.source_payload` -- the raw `/taxa/{id}` JSON). The
-summary text is iNat's Wikipedia extract: real reference content, never
-runtime-generated (ADR 0002 forbids kid-facing runtime LLM output; the
-Phase-13 follow-up layers author-time REVIEWED blurbs on top of this
-same response shape).
+`GET /v1/species/{taxon_id}` serves a small structured "about this species"
+sheet extracted from the audited local catalog. Raw Wikipedia/iNaturalist
+prose stays retained only as ingest evidence and is never exposed to a child.
+A future reviewed kid-blurb pipeline may populate a separately approved and
+versioned field without changing this W1 safety posture.
 
 The audited PostgreSQL catalog is the only runtime authority. Missing source
 facts degrade to `facts_available=false`; child requests never trigger a live
@@ -15,10 +13,7 @@ iNaturalist lookup.
 
 from __future__ import annotations
 
-import html
-import re
 from typing import Annotated
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Path, status
 from pydantic import BaseModel
@@ -30,46 +25,19 @@ from app.db.session import DbSessionDep
 
 router = APIRouter(prefix="/v1/species", tags=["species"])
 
-_TAG_RE = re.compile(r"<[^>]+>")
-
-
 class SpeciesFactsResponse(BaseModel):
     taxon_id: int
     common_name: str | None
     scientific_name: str | None
     rank: str | None
     iconic_taxon: str | None
-    # Wikipedia extract via iNat, HTML stripped. A future reviewed
-    # kid-blurb (ADR 0002 follow-up) overrides this field server-side;
-    # the client contract doesn't change.
+    # Reserved for a separately reviewed/versioned kid-blurb pipeline.
+    # Raw cached upstream prose is never returned.
     summary: str | None
     wikipedia_url: str | None
     observations_worldwide: int | None
     conservation_status: str | None
     facts_available: bool = True
-
-
-def _plain_text(value: object) -> str | None:
-    """Strip tags + unescape entities to a fixpoint.
-
-    The summary is world-editable Wikipedia content mirrored by iNat, so
-    entity-escaped markup (`&lt;script&gt;`, or double-escaped variants)
-    must never survive into the plain-text contract -- a single
-    strip-then-unescape pass would synthesize literal tags from escaped
-    ones. Input that never stabilizes is dropped outright.
-    """
-    if not isinstance(value, str):
-        return None
-    text = value
-    for _ in range(5):
-        stripped = html.unescape(_TAG_RE.sub("", text))
-        if stripped == text:
-            break
-        text = stripped
-    else:
-        return None
-    text = text.strip()
-    return text or None
 
 
 def _str_field(payload: dict[str, object], key: str) -> str | None:
@@ -90,25 +58,6 @@ def _conservation_status(payload: dict[str, object]) -> str | None:
     return name if isinstance(name, str) and name else None
 
 
-def _wikipedia_url(payload: dict[str, object]) -> str | None:
-    """Only ever hand the client a real https Wikipedia link.
-
-    The payload is world-editable upstream; anything that isn't
-    `https://*.wikipedia.org` is dropped rather than passed through to a
-    surface that might one day render it tappable.
-    """
-    url = _str_field(payload, "wikipedia_url")
-    if url is None:
-        return None
-    parsed = urlparse(url)
-    if parsed.scheme != "https":
-        return None
-    host = parsed.netloc.lower()
-    if host == "wikipedia.org" or host.endswith(".wikipedia.org"):
-        return url
-    return None
-
-
 def facts_from_payload(taxon_id: int, payload: dict[str, object]) -> SpeciesFactsResponse:
     """Pure extraction from a raw iNat `/taxa/{id}` result dict.
 
@@ -121,8 +70,8 @@ def facts_from_payload(taxon_id: int, payload: dict[str, object]) -> SpeciesFact
         scientific_name=_str_field(payload, "name"),
         rank=_str_field(payload, "rank"),
         iconic_taxon=_str_field(payload, "iconic_taxon_name"),
-        summary=_plain_text(payload.get("wikipedia_summary")),
-        wikipedia_url=_wikipedia_url(payload),
+        summary=None,
+        wikipedia_url=None,
         observations_worldwide=_int_field(payload, "observations_count"),
         conservation_status=_conservation_status(payload),
         facts_available=True,

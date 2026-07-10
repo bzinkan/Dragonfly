@@ -114,3 +114,81 @@ async def reject_review_item(
     review.reviewer_user_id = reviewer_user_id
     review.resolved_at = now
     return rebuild
+
+
+async def revoke_approved_review_item(
+    session: AsyncSession,
+    *,
+    review: models.ReviewQueueItem,
+    nonblocking: bool = False,
+) -> models.DerivedStateRebuild | None:
+    """Tombstone an approved clean item without rewriting its approval audit.
+
+    The durable ``PhotoRevocation`` owns the revoking actor.  The review keeps
+    its original ``reviewer_user_id`` and ``resolved_at`` and moves only from
+    ``approved`` to the distinct terminal ``revoked`` state.
+    """
+    subject_user_id = await _subject_user_id(session, review)
+    if nonblocking:
+        if not await try_acquire_user_lock(session, subject_user_id):
+            raise ReviewResolutionConflict("Review subject is already being resolved")
+    else:
+        await acquire_user_lock(session, subject_user_id)
+
+    statement = (
+        select(models.ReviewQueueItem)
+        .where(models.ReviewQueueItem.id == review.id)
+        .execution_options(populate_existing=True)
+    )
+    statement = (
+        statement.with_for_update(skip_locked=True)
+        if nonblocking
+        else statement.with_for_update()
+    )
+    locked_review = (await session.execute(statement)).scalar_one_or_none()
+    if locked_review is None:
+        raise ReviewResolutionConflict("Review item no longer exists")
+    if locked_review.status != "approved":
+        raise ReviewResolutionConflict(f"Review item is already {locked_review.status}")
+
+    now = datetime.now(UTC)
+    photo = (
+        await session.execute(
+            select(models.Photo)
+            .where(models.Photo.id == locked_review.photo_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if photo is None or photo.status != "clean" or photo.attachment_status != "attached":
+        raise ReviewResolutionConflict("Approved review no longer has an attached clean photo")
+    photo.status = "deleted"
+    photo.attachment_status = "deleted"
+    photo.moderated_at = now
+
+    rebuild: models.DerivedStateRebuild | None = None
+    if locked_review.observation_id is not None:
+        observation = (
+            await session.execute(
+                select(models.Observation)
+                .where(models.Observation.id == locked_review.observation_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if (
+            observation is None
+            or observation.moderation_status != "clean"
+            or observation.rejected_at is not None
+        ):
+            raise ReviewResolutionConflict("Approved review no longer has a clean observation")
+        observation.moderation_status = "rejected"
+        observation.moderation_source = "adult"
+        observation.moderation_policy_version = "adult-revocation-v1"
+        observation.rejected_at = now
+        rebuild = await enqueue_rebuild(
+            session,
+            user_id=observation.user_id,
+            trigger_observation_id=observation.id,
+        )
+
+    locked_review.status = "revoked"
+    return rebuild

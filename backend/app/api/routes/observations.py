@@ -27,7 +27,10 @@ this list returns metadata only.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Annotated, Literal
@@ -144,13 +147,65 @@ class RewardDTO(BaseModel):
         )
 
 
+ChildPresentationStatus = Literal[
+    "clean",
+    "pending",
+    "processing",
+    "pilot_private",
+    "adult_review",
+    "failed",
+]
+
+
+def derive_child_presentation_status(
+    observation_status: str | None,
+    photo_status: str | None,
+    *,
+    photo_attachment_status: str | None = None,
+    revocation_active: bool = False,
+) -> ChildPresentationStatus:
+    """Return the only lifecycle state a child surface may interpret.
+
+    A clean image requires matching clean database state and no active
+    revocation. Every unknown or mismatched pair collapses to ``failed``, a
+    metadata-only state. Rejected/deleted rows are filtered by the owning
+    query; mapping them here still fails closed for callers that make a stale
+    decision.
+    """
+
+    if revocation_active:
+        return "failed"
+    if photo_status is not None and photo_attachment_status != "attached":
+        return "failed"
+    if observation_status == "failed" and photo_status != "deleted":
+        return "failed"
+    if photo_status is None:
+        # Create/replay responses already have an authoritative Observation
+        # lifecycle but do not reload the joined Photo. Restrictive states may
+        # be represented without granting image access; clean may not.
+        restrictive_statuses: dict[str, ChildPresentationStatus] = {
+            "pending": "pending",
+            "processing": "processing",
+            "pilot_private": "pilot_private",
+            "quarantine": "adult_review",
+        }
+        return restrictive_statuses.get(observation_status or "", "failed")
+
+    expected_pairs: dict[tuple[str, str], ChildPresentationStatus] = {
+        ("pending", "pending"): "pending",
+        ("processing", "pending"): "processing",
+        ("pilot_private", "pending"): "pilot_private",
+        ("quarantine", "quarantine"): "adult_review",
+        ("clean", "clean"): "clean",
+    }
+    return expected_pairs.get((observation_status or "", photo_status or ""), "failed")
+
+
 class ObservationResponse(BaseModel):
     id: str
     user_id: str
     group_id: str
     photo_id: str
-    latitude: float | None
-    longitude: float | None
     geohash4: str | None
     observed_at: datetime | None
     location_source: str
@@ -160,7 +215,7 @@ class ObservationResponse(BaseModel):
     identification_revision: int
     place_name: str | None
     ecology_tags: dict[str, str] = Field(default_factory=dict)
-    moderation_status: str
+    child_presentation_status: ChildPresentationStatus
     dispatch_status: str
     rewards: list[RewardDTO] = Field(default_factory=list)
 
@@ -169,14 +224,15 @@ class ObservationResponse(BaseModel):
         cls,
         obs: models.Observation,
         rewards: list[Reward] | None = None,
+        *,
+        photo: models.Photo | None = None,
+        revocation_active: bool = False,
     ) -> ObservationResponse:
         return cls(
             id=obs.id,
             user_id=obs.user_id,
             group_id=obs.group_id,
             photo_id=obs.photo_id,
-            latitude=obs.latitude,
-            longitude=obs.longitude,
             geohash4=obs.geohash4,
             observed_at=getattr(obs, "observed_at", None),
             location_source=getattr(obs, "location_source", None) or "legacy_coarsened",
@@ -186,7 +242,12 @@ class ObservationResponse(BaseModel):
             identification_revision=getattr(obs, "identification_revision", None) or 1,
             place_name=obs.place_name,
             ecology_tags=dict(obs.ecology_tags or {}),
-            moderation_status=getattr(obs, "moderation_status", None) or "pending",
+            child_presentation_status=derive_child_presentation_status(
+                getattr(obs, "moderation_status", None),
+                getattr(photo, "status", None),
+                photo_attachment_status=getattr(photo, "attachment_status", None),
+                revocation_active=revocation_active,
+            ),
             dispatch_status=getattr(obs, "dispatch_status", None) or "unverified",
             rewards=(
                 [RewardDTO.from_reward(r) for r in rewards]
@@ -194,6 +255,34 @@ class ObservationResponse(BaseModel):
                 else [RewardDTO.model_validate(r) for r in (getattr(obs, "rewards", None) or [])]
             ),
         )
+
+
+async def _persisted_observation_response(
+    session: DbSessionDep,
+    observation: models.Observation,
+    rewards: list[Reward] | None = None,
+) -> ObservationResponse:
+    """Load lifecycle evidence before deriving a child presentation state."""
+
+    row = (
+        await session.execute(
+            select(models.Photo, models.PhotoRevocation)
+            .outerjoin(
+                models.PhotoRevocation,
+                models.PhotoRevocation.photo_id == models.Photo.id,
+            )
+            .where(models.Photo.id == observation.photo_id)
+        )
+    ).one_or_none()
+    if row is None:
+        return ObservationResponse.from_model(observation, rewards=rewards)
+    photo, revocation = row
+    return ObservationResponse.from_model(
+        observation,
+        rewards=rewards,
+        photo=photo,
+        revocation_active=revocation is not None,
+    )
 
 
 async def _catalog_species(session: DbSessionDep, taxon_id: int) -> models.SpeciesCache:
@@ -306,14 +395,20 @@ async def _create_replay(
         )
     observation = (
         await session.execute(
-            select(models.Observation).where(
+            select(models.Observation)
+            .join(models.Photo, models.Observation.photo_id == models.Photo.id)
+            .where(
                 models.Observation.id == record.resource_id,
                 models.Observation.user_id == user_id,
+                models.Observation.rejected_at.is_(None),
+                models.Observation.moderation_status != "rejected",
+                models.Photo.status != "deleted",
+                models.Photo.attachment_status != "deleted",
             )
         )
     ).scalar_one_or_none()
     if observation is None:
-        raise _idempotency_conflict("Idempotency record references a missing observation")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Observation not found")
     return observation
 
 
@@ -364,7 +459,7 @@ async def create_observation(
         if replay is not None:
             response.status_code = status.HTTP_200_OK
             response.headers["Idempotency-Replayed"] = "true"
-            return ObservationResponse.from_model(replay)
+            return await _persisted_observation_response(session, replay)
 
     photo = (
         await session.execute(
@@ -397,7 +492,7 @@ async def create_observation(
         if replay is not None:
             response.status_code = status.HTTP_200_OK
             response.headers["Idempotency-Replayed"] = "true"
-            return ObservationResponse.from_model(replay)
+            return await _persisted_observation_response(session, replay)
 
     species_name = (payload.species_name or "").strip() or None
     identification_source = "manual_text" if species_name else "unknown"
@@ -446,7 +541,7 @@ async def create_observation(
     if replay is not None:
         response.status_code = status.HTTP_200_OK
         response.headers["Idempotency-Replayed"] = "true"
-        return ObservationResponse.from_model(replay)
+        return await _persisted_observation_response(session, replay)
 
     locked_photo = (
         await session.execute(
@@ -512,6 +607,8 @@ async def create_observation(
         place_name=(payload.place_name or "").strip() or None,
         ecology_tags=payload.ecology_tags,
         dispatch_status="pending",
+        moderation_status="pending",
+        moderation_source="none",
     )
     photo.attachment_status = "attached"
     photo.submission_key = key
@@ -567,13 +664,13 @@ async def create_observation(
             raise
         response.status_code = status.HTTP_200_OK
         response.headers["Idempotency-Replayed"] = "true"
-        return ObservationResponse.from_model(replay)
+        return await _persisted_observation_response(session, replay)
 
     # Everything represented by this DTO is durable after the base commit.
     # Keep an immutable fallback before any dispatcher I/O so a broken
     # connection during dispatch *or recovery* can never turn a successfully
     # saved observation into a 500 or expose dirty, uncommitted ORM state.
-    saved_response = ObservationResponse.from_model(observation)
+    saved_response = ObservationResponse.from_model(observation, photo=photo)
 
     # The canonical object is now the sole database reference. Raw cleanup is
     # best-effort so a transient Blob failure can never roll back the save.
@@ -633,9 +730,9 @@ async def create_observation(
                 observation_id=obs_id,
             )
             return saved_response
-        return ObservationResponse.from_model(observation)
+        return ObservationResponse.from_model(observation, photo=photo)
 
-    return ObservationResponse.from_model(observation, rewards=rewards)
+    return ObservationResponse.from_model(observation, rewards=rewards, photo=photo)
 
 
 # ---------------------------------------------------------------------------
@@ -647,36 +744,73 @@ async def create_observation(
 # and pages by 20 by default. Higher caps invite accidental N+1 fetches.
 _DEFAULT_LIMIT = 20
 _MAX_LIMIT = 50
+_MAX_CURSOR_LENGTH = 512
+_OBSERVED_CURSOR_VERSION = 1
+_ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+
+
+def _encode_observed_cursor(observed_at: datetime, observation_id: str) -> str:
+    payload = json.dumps(
+        {
+            "v": _OBSERVED_CURSOR_VERSION,
+            "observed_at": observed_at.astimezone(UTC).isoformat(),
+            "id": observation_id,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _decode_observed_cursor(cursor: str) -> tuple[datetime, str]:
+    """Decode the opaque observed-order cursor or raise a public 422."""
+
+    invalid = HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail="Invalid observed-order cursor",
+    )
+    if len(cursor) > _MAX_CURSOR_LENGTH or not re.fullmatch(r"[A-Za-z0-9_-]+", cursor):
+        raise invalid
+    try:
+        padding = "=" * (-len(cursor) % 4)
+        raw = base64.b64decode(cursor + padding, altchars=b"-_", validate=True)
+        if len(raw) > 256:
+            raise ValueError("decoded cursor is too large")
+        payload = json.loads(raw.decode("utf-8"))
+        if not isinstance(payload, dict) or set(payload) != {"v", "observed_at", "id"}:
+            raise ValueError("cursor shape")
+        if payload["v"] != _OBSERVED_CURSOR_VERSION:
+            raise ValueError("cursor version")
+        observation_id = payload["id"]
+        raw_observed_at = payload["observed_at"]
+        if not isinstance(observation_id, str) or _ULID_RE.fullmatch(observation_id) is None:
+            raise ValueError("cursor id")
+        if not isinstance(raw_observed_at, str):
+            raise ValueError("cursor timestamp")
+        observed_at = datetime.fromisoformat(raw_observed_at.replace("Z", "+00:00"))
+        if observed_at.tzinfo is None:
+            raise ValueError("cursor timestamp timezone")
+    except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise invalid from exc
+    return observed_at.astimezone(UTC), observation_id
 
 
 class ObservationListItem(BaseModel):
-    """Single observation in the list response.
-
-    Includes enough photo metadata that the client can render a placeholder
-    + request a signed GET URL on demand. The signed URL endpoint is a
-    follow-up slice; we deliberately don't bake URLs into the list because
-    they'd expire mid-scroll.
-    """
+    """Minimal metadata required by a child Field Journal card."""
 
     id: str
-    user_id: str
-    group_id: str
     photo_id: str
-    photo_object_name: str
-    photo_status: str
-    latitude: float | None
-    longitude: float | None
+    submission_ulid: str | None
     geohash4: str | None
-    observed_at: datetime | None
+    observed_at: datetime
     location_source: str
     taxon_id: int | None
     species_name: str | None
     identification_source: str
     place_name: str | None
     ecology_tags: dict[str, str] = Field(default_factory=dict)
-    moderation_status: str
+    child_presentation_status: ChildPresentationStatus
     dispatch_status: str
-    created_at: datetime
 
 
 class ObservationListResponse(BaseModel):
@@ -684,7 +818,8 @@ class ObservationListResponse(BaseModel):
     next_cursor: str | None = Field(
         default=None,
         description=(
-            "Pass back as `before` to fetch the next page. Null when this is the last page."
+            "Pass back as `cursor` for observed order or `before` for legacy saved order. "
+            "Null when this is the last page."
         ),
     )
 
@@ -695,23 +830,62 @@ async def list_my_observations(
     session: DbSessionDep,
     limit: Annotated[int, Query(ge=1, le=_MAX_LIMIT)] = _DEFAULT_LIMIT,
     before: Annotated[str | None, Query(min_length=26, max_length=26)] = None,
+    order: Annotated[Literal["saved", "observed"], Query()] = "saved",
+    cursor: Annotated[
+        str | None,
+        Query(min_length=1, max_length=_MAX_CURSOR_LENGTH),
+    ] = None,
 ) -> ObservationListResponse:
     user_row = await resolve_current_user_row(session, current_user)
+
+    if before is not None and (order == "observed" or cursor is not None):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="before cannot be combined with observed order or cursor",
+        )
+    if cursor is not None and order != "observed":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="cursor requires order=observed",
+        )
 
     # ULIDs are lex-sortable AND time-sortable, so DESC on id gives newest
     # first without a separate created_at index. Cursor is just the last id
     # we returned; "give me rows older than this".
     stmt = (
-        select(models.Observation, models.Photo)
+        select(models.Observation, models.Photo, models.PhotoRevocation)
         .join(models.Photo, models.Observation.photo_id == models.Photo.id)
+        .outerjoin(
+            models.PhotoRevocation,
+            models.PhotoRevocation.photo_id == models.Photo.id,
+        )
         .where(
             models.Observation.user_id == user_row.id,
+            models.Observation.rejected_at.is_(None),
             models.Observation.moderation_status != "rejected",
+            models.Photo.status != "deleted",
+            models.Photo.attachment_status != "deleted",
         )
     )
-    if before is not None:
-        stmt = stmt.where(models.Observation.id < before)
-    stmt = stmt.order_by(desc(models.Observation.id)).limit(limit + 1)
+    if order == "observed":
+        if cursor is not None:
+            cursor_observed_at, cursor_id = _decode_observed_cursor(cursor)
+            stmt = stmt.where(
+                (models.Observation.observed_at < cursor_observed_at)
+                | (
+                    (models.Observation.observed_at == cursor_observed_at)
+                    & (models.Observation.id < cursor_id)
+                )
+            )
+        stmt = stmt.order_by(
+            desc(models.Observation.observed_at),
+            desc(models.Observation.id),
+        )
+    else:
+        if before is not None:
+            stmt = stmt.where(models.Observation.id < before)
+        stmt = stmt.order_by(desc(models.Observation.id))
+    stmt = stmt.limit(limit + 1)
 
     rows = (await session.execute(stmt)).all()
 
@@ -721,31 +895,36 @@ async def list_my_observations(
     items = [
         ObservationListItem(
             id=obs.id,
-            user_id=obs.user_id,
-            group_id=obs.group_id,
             photo_id=obs.photo_id,
-            photo_object_name=photo.object_name,
-            photo_status=photo.status,
-            latitude=obs.latitude,
-            longitude=obs.longitude,
+            submission_ulid=obs.submission_key,
             geohash4=obs.geohash4,
-            observed_at=getattr(obs, "observed_at", None),
+            observed_at=obs.observed_at,
             location_source=getattr(obs, "location_source", None) or "legacy_coarsened",
             taxon_id=obs.taxon_id,
             species_name=obs.species_name,
             identification_source=getattr(obs, "identification_source", None) or "legacy",
             place_name=obs.place_name,
             ecology_tags=dict(obs.ecology_tags or {}),
-            moderation_status=getattr(obs, "moderation_status", None) or "pending",
+            child_presentation_status=derive_child_presentation_status(
+                getattr(obs, "moderation_status", None),
+                getattr(photo, "status", None),
+                photo_attachment_status=getattr(photo, "attachment_status", None),
+                revocation_active=revocation is not None,
+            ),
             dispatch_status=getattr(obs, "dispatch_status", None) or "unverified",
-            created_at=obs.created_at,
         )
-        for obs, photo in page
+        for obs, photo, revocation in page
     ]
 
     return ObservationListResponse(
         items=items,
-        next_cursor=items[-1].id if has_more and items else None,
+        next_cursor=(
+            _encode_observed_cursor(items[-1].observed_at, items[-1].id)
+            if has_more and items and order == "observed"
+            else items[-1].id
+            if has_more and items
+            else None
+        ),
     )
 
 
@@ -757,18 +936,32 @@ async def get_observation(
 ) -> ObservationResponse:
     """Return the canonical persisted result used for queue reconciliation."""
     user_row = await resolve_current_user_row(session, current_user)
-    observation = (
+    row = (
         await session.execute(
-            select(models.Observation).where(
+            select(models.Observation, models.Photo, models.PhotoRevocation)
+            .join(models.Photo, models.Observation.photo_id == models.Photo.id)
+            .outerjoin(
+                models.PhotoRevocation,
+                models.PhotoRevocation.photo_id == models.Photo.id,
+            )
+            .where(
                 models.Observation.id == observation_id,
                 models.Observation.user_id == user_row.id,
+                models.Observation.rejected_at.is_(None),
                 models.Observation.moderation_status != "rejected",
+                models.Photo.status != "deleted",
+                models.Photo.attachment_status != "deleted",
             )
         )
-    ).scalar_one_or_none()
-    if observation is None:
+    ).one_or_none()
+    if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Observation not found")
-    return ObservationResponse.from_model(observation)
+    observation, photo, revocation = row
+    return ObservationResponse.from_model(
+        observation,
+        photo=photo,
+        revocation_active=revocation is not None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -813,19 +1006,35 @@ async def identify_observation(
     # missing, no enumeration leak.
     obs_photo = (
         await session.execute(
-            select(models.Observation, models.Photo)
+            select(models.Observation, models.Photo, models.PhotoRevocation)
             .join(models.Photo, models.Observation.photo_id == models.Photo.id)
+            .outerjoin(
+                models.PhotoRevocation,
+                models.PhotoRevocation.photo_id == models.Photo.id,
+            )
             .where(
                 models.Observation.id == observation_id,
                 models.Observation.user_id == user_row.id,
+                models.Observation.rejected_at.is_(None),
+                models.Observation.moderation_status != "rejected",
+                models.Photo.status != "deleted",
+                models.Photo.attachment_status != "deleted",
             )
         )
     ).one_or_none()
     if obs_photo is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Observation not found")
-    obs, photo = obs_photo
+    obs, photo, revocation = obs_photo
 
-    if obs.moderation_status != "clean" or photo.status != "clean":
+    if (
+        revocation is not None
+        or derive_child_presentation_status(
+            obs.moderation_status,
+            photo.status,
+            photo_attachment_status=photo.attachment_status,
+        )
+        != "clean"
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Identification is available only after adult-approved moderation",
@@ -981,9 +1190,15 @@ async def patch_observation(
 
     obs = (
         await session.execute(
-            select(models.Observation).where(
+            select(models.Observation)
+            .join(models.Photo, models.Observation.photo_id == models.Photo.id)
+            .where(
                 models.Observation.id == observation_id,
                 models.Observation.user_id == user_row.id,
+                models.Observation.rejected_at.is_(None),
+                models.Observation.moderation_status != "rejected",
+                models.Photo.status != "deleted",
+                models.Photo.attachment_status != "deleted",
             )
         )
     ).scalar_one_or_none()
@@ -1001,7 +1216,7 @@ async def patch_observation(
         observation_id=observation_id,
         fields=list(fields.keys()),
     )
-    return ObservationResponse.from_model(obs)
+    return await _persisted_observation_response(session, obs)
 
 
 # ---------------------------------------------------------------------------
@@ -1083,6 +1298,37 @@ async def update_identification(
             detail="Identification has changed; refresh before trying again",
         )
 
+    if payload.source == "cv":
+        cv_photo_row = (
+            await session.execute(
+                select(models.Photo, models.PhotoRevocation)
+                .outerjoin(
+                    models.PhotoRevocation,
+                    models.PhotoRevocation.photo_id == models.Photo.id,
+                )
+                .where(models.Photo.id == observation.photo_id)
+            )
+        ).one_or_none()
+        if cv_photo_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="CV identification requires an approved photo",
+            )
+        cv_photo, cv_revocation = cv_photo_row
+        if (
+            derive_child_presentation_status(
+                observation.moderation_status,
+                cv_photo.status,
+                photo_attachment_status=cv_photo.attachment_status,
+                revocation_active=cv_revocation is not None,
+            )
+            != "clean"
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="CV identification requires an approved photo",
+            )
+
     species_name: str | None = None
     if payload.source in {"catalog", "cv"}:
         assert payload.taxon_id is not None  # guaranteed by the request validator
@@ -1115,7 +1361,7 @@ async def update_identification(
         rebuild_id=rebuild.id,
     )
     return IdentificationUpdateResponse(
-        observation=ObservationResponse.from_model(observation),
+        observation=await _persisted_observation_response(session, observation),
         rebuild_id=rebuild.id,
         rebuild_status=rebuild.status,
     )

@@ -35,7 +35,6 @@ describe("factsAreEmpty", () => {
   it("is empty when nothing is renderable", () => {
     expect(
       factsAreEmpty({
-        summary: null,
         observations_worldwide: 12, // below the fun-fact floor
         conservation_status: null,
         scientific_name: null,
@@ -43,18 +42,20 @@ describe("factsAreEmpty", () => {
     ).toBe(true);
   });
 
-  it("is not empty when any fact renders", () => {
+  it("ignores unreviewed summary prose even if an older response contains it", () => {
     expect(
       factsAreEmpty({
-        summary: "A bird.",
+        summary: "Unreviewed upstream prose",
         observations_worldwide: null,
         conservation_status: null,
         scientific_name: null,
       }),
-    ).toBe(false);
+    ).toBe(true);
+  });
+
+  it("is not empty when a structured fact renders", () => {
     expect(
       factsAreEmpty({
-        summary: null,
         observations_worldwide: 5000,
         conservation_status: null,
         scientific_name: null,

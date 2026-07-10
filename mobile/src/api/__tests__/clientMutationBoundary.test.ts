@@ -1,6 +1,6 @@
 import * as SecureStore from "expo-secure-store";
 
-import { apiRequest } from "@/src/api/client";
+import { ApiError, apiRequest } from "@/src/api/client";
 import { ImperativeRequestSupersededError } from "@/src/auth/requestBoundary";
 import { setBearerToken } from "@/src/auth/token";
 
@@ -15,6 +15,9 @@ const getItemAsync = SecureStore.getItemAsync as jest.MockedFunction<
 >;
 const setItemAsync = SecureStore.setItemAsync as jest.MockedFunction<
   typeof SecureStore.setItemAsync
+>;
+const deleteItemAsync = SecureStore.deleteItemAsync as jest.MockedFunction<
+  typeof SecureStore.deleteItemAsync
 >;
 
 function deferred<T>() {
@@ -89,5 +92,37 @@ describe("global authenticated mutation boundary", () => {
       "http://jest.invalid/v1/read",
       expect.objectContaining({ signal: controller.signal }),
     );
+  });
+
+  it("clears the current authenticated session on a 401", async () => {
+    globalThis.fetch = jest.fn(async () => ({
+      ok: false,
+      status: 401,
+      json: async () => ({
+        error: { code: "unauthorized", message: "raw", request_id: "req-401" },
+      }),
+    })) as unknown as typeof fetch;
+
+    await expect(apiRequest("/v1/private")).rejects.toBeInstanceOf(ApiError);
+    expect(deleteItemAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let a late 401 from an old token erase a replacement", async () => {
+    const response = deferred<any>();
+    globalThis.fetch = jest.fn(() => response.promise) as unknown as typeof fetch;
+    const request = apiRequest("/v1/private");
+    await flushUntil(() => (globalThis.fetch as jest.Mock).mock.calls.length === 1);
+
+    await setBearerToken("replacement-token");
+    response.resolve({
+      ok: false,
+      status: 401,
+      json: async () => ({
+        error: { code: "unauthorized", message: "raw", request_id: "late-401" },
+      }),
+    });
+
+    await expect(request).rejects.toBeInstanceOf(ApiError);
+    expect(deleteItemAsync).not.toHaveBeenCalled();
   });
 });

@@ -111,7 +111,60 @@ privacy alone is insufficient.
 | `rejected`, deleted | no | no | no | no |
 
 Same-group membership never grants child-to-child photo access. Signed URLs are
-not logged or cached across canonical-user changes.
+not logged or cached across canonical-user changes. Child signed URLs expire in
+60 seconds; mobile treats them as stale after 40 seconds and keeps a 10-second
+request safety margin. An active `photo_revocations` row denies a fresh URL even
+before storage relocation or the rejection transaction is complete.
+
+## Child Presentation Contract
+
+Journal/detail APIs derive one fail-closed child state:
+
+| Child state | Exact meaning |
+|---|---|
+| `clean` | Observation and Photo are both clean and no revocation is active |
+| `pending` | Attached photo is awaiting moderation work |
+| `processing` | Moderation work has been claimed |
+| `pilot_private` | W1 NoOp completed; metadata is visible but photo bytes remain private |
+| `adult_review` | Quarantined and awaiting/under authorized adult review |
+| `failed` | Processing failed or lifecycle states disagree; metadata only |
+
+Unknown combinations choose the most restrictive non-image state. Pending,
+processing, pilot-private, adult-review, and failed records may appear as
+metadata-only cards, but the client must not request their bytes. Rejected or
+deleted records are absent from child list/detail reads.
+
+## Clean Photo Revocation
+
+Closed beta uses a durable, unique-per-photo revocation before a previously
+clean photo is rejected:
+
+1. claim/create the revocation row; new signed-URL requests now fail;
+2. copy the clean source without overwrite into the restricted held/rejected
+   prefix;
+3. verify destination length and SHA-256;
+4. synchronously delete the clean source so an already-issued SAS points to a
+   missing object;
+5. transactionally finalize Photo, Observation, review, and rebuild state; and
+6. mark revocation succeeded.
+
+Recovery treats destination-already-exists and source-already-gone as expected
+idempotent states, verifies bytes again, and resumes safely. If storage succeeds
+but the database transaction fails, privacy remains fail-closed because the
+clean source is absent and URL issuance is blocked. Retry is bounded and a
+terminal failure alerts. Mobile removes an open image on any non-clean status,
+refreshes visible status every 30 seconds and on foreground, and clears the
+signed-URL query. The operational bound is URL expiry/removal within 60 seconds
+and active-screen removal within 30 seconds; pixels already decoded by the OS
+cannot be recalled.
+
+An authorized managing adult corrects a prior approval through
+`POST /v1/review-queue/{review_id}/revoke`. This path accepts only an
+`approved` review whose Photo and Observation are still clean, records the
+revoking adult on the durable revocation, preserves the original approval
+reviewer/time, and finishes the review as `revoked`. The revocation's review
+foreign key is restrictive: review retention or cleanup cannot erase the
+signed-URL deny gate.
 
 ## W1 NoOp Mode
 
@@ -132,9 +185,11 @@ Approve/reject/stale-review resolution uses a row lock or conditional
 
 - **Approve:** copy and verify the canonical photo into `observations/`, record
   `clean` with `moderation_source=adult`, commit, then delete source best effort.
-- **Reject:** mark the photo deleted, tombstone the observation immediately,
-  deny access, and transactionally queue a per-user rebuild. Do not perform
+- **Reject:** run the fail-closed verified revocation above, tombstone the
+  observation, and transactionally queue a per-user rebuild. Do not perform
   piecemeal counter decrements.
+- **Revoke approval:** use the explicit approved-to-revoked correction route;
+  it does not weaken the one-winner `pending` approve/reject race.
 - **Stale:** call the same rejection service; do not implement a second cleanup
   algorithm.
 

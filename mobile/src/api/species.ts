@@ -3,11 +3,11 @@ import { apiRequest } from "@/src/api/client";
 // ---------------------------------------------------------------------------
 // GET /v1/species/{taxon_id}
 //
-// Factual "about this species" sheet served from the backend's cached
-// iNaturalist taxon payload. `summary` is iNat's Wikipedia extract today;
-// a future reviewed kid-blurb overrides it server-side without changing
-// this contract. `facts_available: false` means iNat was unreachable and
-// the species wasn't cached yet -- render nothing, never an error.
+// Factual "about this species" sheet served from the project catalog.
+// `summary` and `wikipedia_url` remain nullable compatibility fields and must
+// stay null until a separately approved reviewed-kid-blurb pipeline exists.
+// The mobile UI deliberately ignores both fields even if an older response
+// sends them. There is no live third-party fallback on this request path.
 // ---------------------------------------------------------------------------
 
 export type SpeciesFacts = {

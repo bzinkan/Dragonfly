@@ -133,6 +133,15 @@ class Observation(TimestampMixin, Base):
         Index("ix_observations_user_created", "user_id", "created_at"),
         Index("ix_observations_group_created", "group_id", "created_at"),
         Index("ix_observations_taxon", "taxon_id"),
+        Index(
+            "ix_observations_user_observed_active",
+            "user_id",
+            text("observed_at DESC"),
+            text("id DESC"),
+            postgresql_where=text(
+                "rejected_at IS NULL AND moderation_status <> 'rejected'"
+            ),
+        ),
         UniqueConstraint("photo_id", name="uq_observations_photo_id"),
         UniqueConstraint("user_id", "submission_key", name="uq_observations_user_submission"),
         CheckConstraint(
@@ -367,6 +376,11 @@ class DexEntry(TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("user_id", "taxon_id", name="uq_dex_entries_user_taxon"),
         Index("ix_dex_entries_group_taxon", "group_id", "taxon_id"),
+        Index("ix_dex_entries_user_first_seen", "user_id", "first_seen_at", "id"),
+        CheckConstraint(
+            "observation_count >= 0",
+            name="ck_dex_entries_observation_count",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(26), primary_key=True)
@@ -376,6 +390,23 @@ class DexEntry(TimestampMixin, Base):
     species_name: Mapped[str | None] = mapped_column(String(200))
     first_observation_id: Mapped[str] = mapped_column(ForeignKey("observations.id"), nullable=False)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    observation_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default="1",
+    )
+    latest_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    representative_observation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("observations.id", ondelete="SET NULL")
+    )
+    representative_photo_id: Mapped[str | None] = mapped_column(
+        ForeignKey("photos.id", ondelete="SET NULL")
+    )
 
 
 class ExpeditionContent(TimestampMixin, Base):
@@ -428,7 +459,7 @@ class ReviewQueueItem(TimestampMixin, Base):
     __tablename__ = "review_queue"
     __table_args__ = (
         CheckConstraint(
-            "status in ('pending', 'approved', 'rejected')",
+            "status in ('pending', 'approved', 'rejected', 'revoked')",
             name="ck_review_queue_status",
         ),
         Index("ix_review_queue_group_status", "group_id", "status"),
@@ -444,6 +475,61 @@ class ReviewQueueItem(TimestampMixin, Base):
     reason: Mapped[str | None] = mapped_column(Text)
     reviewer_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PhotoRevocation(TimestampMixin, Base):
+    """Durable deny-and-relocate state for a rejected photo.
+
+    Presence of a row is itself the fail-closed signed-URL gate.  The state
+    records recovery progress when storage succeeded but the final rejection
+    transaction did not.
+    """
+
+    __tablename__ = "photo_revocations"
+    __table_args__ = (
+        CheckConstraint(
+            "state in ('pending', 'copying', 'succeeded', 'failed')",
+            name="ck_photo_revocations_state",
+        ),
+        CheckConstraint(
+            "attempt_count >= 0",
+            name="ck_photo_revocations_attempt_count",
+        ),
+        CheckConstraint(
+            "claim_review_status in ('pending', 'approved')",
+            name="ck_photo_revocations_claim_review_status",
+        ),
+        Index("ix_photo_revocations_state_attempt", "state", "last_attempt_at"),
+        UniqueConstraint("review_id", name="uq_photo_revocations_review_id"),
+    )
+
+    photo_id: Mapped[str] = mapped_column(
+        ForeignKey("photos.id", ondelete="CASCADE"), primary_key=True
+    )
+    review_id: Mapped[str] = mapped_column(
+        ForeignKey("review_queue.id", ondelete="RESTRICT"), nullable=False
+    )
+    claim_review_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    requesting_actor_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    source: Mapped[str] = mapped_column(String(48), nullable=False)
+    bucket: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_object_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    held_object_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    # Nullable only for a legacy row that must be denied before verified
+    # metadata can be repaired. New canonical photos populate both values.
+    expected_byte_count: Mapped[int | None] = mapped_column(Integer)
+    expected_sha256: Mapped[str | None] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="pending", server_default="pending"
+    )
+    attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class IngestRun(TimestampMixin, Base):

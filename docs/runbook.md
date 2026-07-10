@@ -4,6 +4,11 @@ ADR 0010 makes Azure the active runtime. ADR 0014 removes the old GCP/Firebase
 rollback path. ADR 0015 defines Observation finalization, outbox-only
 moderation, durable rewards, and rebuild recovery.
 
+The release authority for Observation W1 is
+[`observation-w1-promotion.md`](observation-w1-promotion.md). It defines
+**W1-ready**, **W1 fully evidenced**, and **closed-beta promoted** as distinct
+states. A green ordinary development deployment is not a W1 promotion.
+
 ## Environment Boundary
 
 Active dev resources are in the Gordi-backed Azure subscription and isolated
@@ -32,13 +37,18 @@ python scripts/smoke_azure_parent_kid.py
 ```
 
 It records consent, resolves parent signup, creates a group/kid, exchanges the
-kid handoff, calls `/v1/me`, and verifies starter Expedition visibility.
+kid handoff, calls `/v1/me`, verifies starter Expedition visibility, and passes
+the throwaway kid session in memory to the Observation W1 canary. The optional
+`HINTERLAND_SMOKE_EVIDENCE_PATH` receives sanitized request IDs and pass facts.
+Do not store a long-lived kid smoke token.
 
 ## Migrations-First Deployment
 
-Use `.github/workflows/deploy-azure-api-dev.yml`. Required secrets are
-`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, and optional
-test-only smoke tokens.
+Use `.github/workflows/deploy-azure-api-dev.yml` for ordinary development
+deployments. It preserves migration-first immutable-image behavior but is not a
+promotion gate. W1 promotion uses the manually dispatched, protected
+`.github/workflows/observation-w1-promotion.yml`; its authenticated tests and
+alert verification are mandatory and never green-skip missing credentials.
 
 The required order is:
 
@@ -47,27 +57,25 @@ The required order is:
    system topic sourced by the photo storage account;
 2. build from the repository root and resolve one immutable
    `repository@sha256:...` digest;
-3. run the read-only Observation duplicate/counter/location preflight;
-4. update/start the migration job with that digest and wait for
+3. pin only the read-only preflight and migration jobs to that digest;
+4. run the Observation duplicate/counter/location preflight, then start the
+   migration job and wait for
    `alembic upgrade head` to succeed;
-5. ingest the checked-in taxonomy catalog and sync Expedition content from the
-   migration digest;
-6. run `hinterland-state-rebuild` before any outbox relay when recovery is
-   required;
-7. run an initial `hinterland-state-rebuild` pass before recreating dispatcher
-   replay; dispatcher replay also excludes users with queued/running rebuilds;
-8. pin every consumer and scheduled job to the same digest;
-9. update the API only after migration success;
-10. run derived-state rebuild again after cutover when the deployment report
-    requires it; and
-11. run public, authenticated, Observation, privacy, and worker canaries.
+5. pin every consumer and scheduled job to the same digest;
+6. ingest the checked-in taxonomy catalog and sync Expedition content;
+7. run a bounded `hinterland-state-rebuild` before exposing the new API;
+   dispatcher replay also excludes users with queued/running rebuilds;
+8. update the API only after migration and required rebuild success; and
+9. run public, authenticated, Observation, privacy, and worker canaries.
 
 The root build context is mandatory because the image is also the Expedition
 content version. `job start --image` is not a substitute for `job update`: a
 start-time override can replace template environment/command configuration.
 
-The Azure deployment workflow provisions and pins the W1 jobs to the same
-image digest as the API. Do not run a separate bootstrap script.
+The W1 promotion workflow requires and pins the current W1 job inventory to the
+same digest as the API. It does not restore retired platform scripts, legacy
+environment aliases, or the retired legacy-reconcile job. The optional
+photo-revocation replay job belongs to closed-beta provisioning.
 
 Submission-key columns remain nullable only for the migration-first window.
 The API always writes them and recovery jobs register only verified canonical
@@ -96,12 +104,12 @@ disposable PostgreSQL 16 container.
 Effective configuration must remain:
 
 ```text
-MODERATION_PROVIDER=noop
-INAT_CV_ENABLED=false
-INAT_CV_DISCLOSURE_APPROVED=false
-INAT_CV_BENCHMARK_APPROVED=false
-INAT_SUBMIT_ENABLED=false
-OBSERVATION_IDEMPOTENCY_REQUIRED=true
+HINTERLAND_MODERATION_PROVIDER=noop
+HINTERLAND_INAT_CV_ENABLED=false
+HINTERLAND_INAT_CV_DISCLOSURE_APPROVED=false
+HINTERLAND_INAT_CV_BENCHMARK_APPROVED=false
+HINTERLAND_INAT_SUBMIT_ENABLED=false
+HINTERLAND_OBSERVATION_IDEMPOTENCY_REQUIRED=true
 ```
 
 Set the active `HINTERLAND_` settings. The revision requires explicit CV gates,
@@ -132,9 +140,9 @@ python scripts/smoke_observation_w1.py
 ```
 
 The canary verifies BlockBlob upload headers, verified finalization, identical
-presign/create replay, persisted reward equality, exactly one list entry,
-NoOp-to-`pilot_private`, and signed-photo denial. A changed request under the
-same idempotency key must return 409.
+presign/create replay, persisted reward equality, exactly one observed-order
+Journal entry, child DTO minimization, NoOp-to-`pilot_private`, and signed-photo
+denial. A changed request under the same idempotency key must return 409.
 
 The exact Play Internal AAB must additionally pass airplane-mode capture, kill
 after PUT, relaunch/reconnect, lost-create-response, account switch, catalog vs
@@ -165,6 +173,8 @@ Scheduled W1 jobs include:
 - `hinterland-obs-retention`
 - `hinterland-obs-health`
 - `hinterland-sweep-stale-reviews`
+- `hinterland-rarity-refresh`
+- `hinterland-expedition-funnel` (manual evidence job)
 
 W1 runs NoOp; pilot-private bytes receive no URL and purge after seven days.
 Before closed beta, staging must prove strict four-category Content Safety
@@ -228,14 +238,22 @@ npm test -- --runInBand
 APP_ENV=play-internal npm run config:play-internal
 ```
 
-Verify `app.thehinterlandguide`, display name `Hinterland Internal`, update channel
-`play-internal`, fine location blocked, coarse foreground only, and current
-Hinterland API URL. Then run the physical-device pilot script.
+Verify `app.thehinterlandguide`, display name **The Hinterland Guide Internal**,
+update channel `play-internal`, fine location blocked, coarse foreground only,
+and the current Hinterland API URL. Then install the exact AAB through Play
+Internal and run the physical-device pilot script.
+
+The rebranded package is a deliberate fresh sandbox. Before an older install is
+retired, inventory its owner-scoped SQLite queue and reconcile each item to a
+canonical server Observation or explicitly discard it with the adult. Keep the
+old install until that is complete. Record `zero old installs` when applicable;
+do not treat silence as evidence. See
+[`observation-w1-promotion.md`](observation-w1-promotion.md#fresh-package-cutover).
 
 ## Alerts And Closed-Beta Gate
 
-Apply `infra-azure/phase-9-observation-monitoring.sh` and synthetically verify
-receivers for:
+Apply and verify `infra-azure/observation-w1-monitoring.sh`, then send its safe
+action-group test and confirm receipt. It covers:
 
 - moderation/pending-photo age and moderation DLQ;
 - rebuild backlog, five-attempt failure, and duration;
@@ -243,6 +261,10 @@ receivers for:
 - idempotency conflicts and state mismatches;
 - retention backlog; and
 - Observation job failures.
+
+The protected promotion workflow publishes only sanitized operational
+evidence. Action-group API acceptance is recorded automatically; an adult must
+separately record that the notification arrived.
 
 Closed beta requires one digest everywhere, outbox-only producer, real Content
 Safety safe/flagged/unavailable/malformed probes, review/rebuild canary, and 24

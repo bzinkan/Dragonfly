@@ -121,7 +121,7 @@ def test_facts_403_when_no_postgres_user(
     assert response.status_code == 403
 
 
-def test_facts_cache_hit_returns_stripped_summary(
+def test_facts_cache_hit_suppresses_unreviewed_upstream_prose(
     monkeypatch: pytest.MonkeyPatch,
     species_client: TestClient,
     fake_session: AsyncMock,
@@ -140,11 +140,8 @@ def test_facts_cache_hit_returns_stripped_summary(
     assert body["scientific_name"] == "Cardinalis cardinalis"
     assert body["rank"] == "species"
     assert body["iconic_taxon"] == "Aves"
-    # HTML tags stripped, entities unescaped.
-    assert body["summary"] == (
-        "The northern cardinal is a songbird & year-round resident of eastern North America."
-    )
-    assert body["wikipedia_url"] == "https://en.wikipedia.org/wiki/Northern_cardinal"
+    assert body["summary"] is None
+    assert body["wikipedia_url"] is None
     assert body["observations_worldwide"] == 2412345
     assert body["conservation_status"] == "least concern"
 
@@ -197,8 +194,8 @@ def test_facts_from_payload_full() -> None:
     facts = facts_from_payload(_TAXON_ID, _FULL_PAYLOAD)
     assert facts.taxon_id == _TAXON_ID
     assert facts.common_name == "Northern Cardinal"
-    assert facts.summary is not None and "<i>" not in facts.summary
-    assert facts.summary is not None and "&" in facts.summary  # unescaped, not &amp;
+    assert facts.summary is None
+    assert facts.wikipedia_url is None
     assert facts.observations_worldwide == 2412345
     assert facts.conservation_status == "least concern"
     assert facts.facts_available is True
@@ -233,37 +230,16 @@ def test_facts_422_on_out_of_range_taxon_id(
     assert response.status_code == 422
 
 
-def test_facts_from_payload_never_synthesizes_markup() -> None:
-    """Escaped markup must not survive the strip: a single
-    strip-then-unescape pass would turn &lt;script&gt; into literal tags."""
+def test_facts_from_payload_never_exposes_upstream_prose_or_links() -> None:
     facts = facts_from_payload(
         _TAXON_ID,
-        {"wikipedia_summary": "&lt;script&gt;alert(1)&lt;/script&gt;Cardinals sing."},
+        {
+            "wikipedia_summary": "&lt;script&gt;alert(1)&lt;/script&gt;Cardinals sing.",
+            "wikipedia_url": "https://en.wikipedia.org/wiki/Northern_cardinal",
+        },
     )
-    assert facts.summary is not None
-    assert "<" not in facts.summary
-    assert ">" not in facts.summary
-    assert facts.summary == "alert(1)Cardinals sing."
-
-    # Double-escaped input needs a second round; still no markup out.
-    facts = facts_from_payload(
-        _TAXON_ID,
-        {"wikipedia_summary": "&amp;lt;b&amp;gt;bold claim&amp;lt;/b&amp;gt;"},
-    )
-    assert facts.summary is not None
-    assert "<" not in facts.summary
-
-
-def test_facts_from_payload_wikipedia_url_allowlist() -> None:
-    def url_for(url: str) -> str | None:
-        return facts_from_payload(_TAXON_ID, {"wikipedia_url": url}).wikipedia_url
-
-    assert url_for("https://en.wikipedia.org/wiki/Northern_cardinal") is not None
-    assert url_for("https://wikipedia.org/wiki/Bird") is not None
-    assert url_for("http://en.wikipedia.org/wiki/Bird") is None  # not https
-    assert url_for("https://evil.example.com/wiki/Bird") is None
-    assert url_for("https://notwikipedia.org/wiki/Bird") is None
-    assert url_for("javascript:alert(1)") is None
+    assert facts.summary is None
+    assert facts.wikipedia_url is None
 
 
 def test_facts_from_payload_rejects_malformed_fields() -> None:

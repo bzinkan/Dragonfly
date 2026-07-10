@@ -1,57 +1,100 @@
 import FontAwesome from "@expo/vector-icons/FontAwesome";
+import { FlashList } from "@shopify/flash-list";
 import { router, type Href } from "expo-router";
-import { useCallback, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AccessibilityInfo,
   ActivityIndicator,
-  FlatList,
+  AppState,
   Image,
   Pressable,
   RefreshControl,
   StyleSheet,
+  useWindowDimensions,
 } from "react-native";
 
 import DesktopContainer from "@/components/DesktopContainer";
 import { Text, View } from "@/components/Themed";
-import { ApiError } from "@/src/api/client";
 import type { DexListItem } from "@/src/api/dex";
 import type { ObservationListItem } from "@/src/api/observations";
 import { queryClient } from "@/src/api/queryClient";
 import { useAuthSession } from "@/src/auth/session";
+import { clearBearerToken } from "@/src/auth/token";
+import { childSafeError } from "@/src/observation/childSafeErrors";
 import {
+  childPhotoPresentation,
   DEFAULT_JOURNAL_MODE,
   findCountLabel,
-  isAwaitingModeration,
   isUrlUsable,
+  journalColumnCount,
   journalCaption,
-  photoDisplayMode,
+  queueStatusMessage,
+  representativePhotoId,
   speciesDisplayName,
   speciesSubtitle,
+  waitingQueueItems,
   type JournalMode,
+  visibleJournalItems,
 } from "@/src/observation/journalLogic";
+import type { QueuedObservation } from "@/src/observation/queueTypes";
 import { useMyDex } from "@/src/observation/useMyDex";
 import { useMyObservations } from "@/src/observation/useMyObservations";
+import { useObservationQueue } from "@/src/observation/useObservationQueue";
 import { usePhotoUrl } from "@/src/observation/usePhotoUrl";
 
 export default function FieldJournalScreen() {
   const session = useAuthSession();
+  const { width, fontScale } = useWindowDimensions();
+  const columnCount = journalColumnCount(width, fontScale);
   const ownerUserId =
     session.status === "authenticated" ? session.user.id : null;
   const [mode, setMode] = useState<JournalMode>(DEFAULT_JOURNAL_MODE);
   const observations = useMyObservations();
   const dex = useMyDex();
+  const {
+    items: queueRows,
+    loading: queueLoading,
+    reload: reloadQueue,
+  } = useObservationQueue(ownerUserId);
 
-  const photoItems = observations.data?.pages.flatMap((p) => p.items) ?? [];
+  const photoItems = visibleJournalItems(
+    observations.data?.pages.flatMap((p) => p.items) ?? [],
+  );
   const speciesItems = dex.data?.pages.flatMap((p) => p.items) ?? [];
+  const queuedItems = useMemo(
+    () => waitingQueueItems(queueRows, photoItems),
+    [photoItems, queueRows],
+  );
 
   const onRefresh = useCallback(() => {
     if (!ownerUserId) return;
     void observations.refetch();
     void dex.refetch();
+    void reloadQueue();
     void queryClient.refetchQueries({
       queryKey: ["photo-url", ownerUserId],
       type: "active",
     });
-  }, [dex, observations, ownerUserId]);
+  }, [dex, observations, ownerUserId, reloadQueue]);
+
+  useEffect(() => {
+    if (!ownerUserId) return;
+    const timer = setInterval(onRefresh, 30_000);
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") onRefresh();
+    });
+    return () => {
+      clearInterval(timer);
+      subscription.remove();
+    };
+  }, [onRefresh, ownerUserId]);
+
+  const changeMode = useCallback((nextMode: JournalMode) => {
+    setMode(nextMode);
+    AccessibilityInfo.announceForAccessibility(
+      `${nextMode === "photos" ? "Photos" : "Species"} selected`,
+    );
+  }, []);
 
   if (session.status === "initializing") {
     return (
@@ -81,21 +124,33 @@ export default function FieldJournalScreen() {
   const header = (
     <JournalHeader
       mode={mode}
-      onModeChange={setMode}
+      onModeChange={changeMode}
       photoCount={formatLoadedCount(photoItems.length, observations.hasNextPage)}
       speciesCount={formatLoadedCount(speciesItems.length, dex.hasNextPage)}
+      queuedItems={mode === "photos" ? queuedItems : []}
+      queueLoading={mode === "photos" && queueLoading}
+      singleColumn={columnCount === 1}
     />
+  );
+
+  const renderSpecies = useCallback(
+    ({ item }: { item: DexListItem }) => <SpeciesCard item={item} />,
+    [],
+  );
+  const renderObservation = useCallback(
+    ({ item }: { item: ObservationListItem }) => <JournalCard item={item} />,
+    [],
   );
 
   if (mode === "species") {
     return (
       <DesktopContainer>
-        <FlatList
+        <FlashList
+          key={`species-${columnCount}`}
           testID="field-journal-screen"
           data={speciesItems}
           keyExtractor={(item) => item.id}
-          numColumns={2}
-          columnWrapperStyle={styles.gridRow}
+          numColumns={columnCount}
           contentContainerStyle={styles.list}
           refreshControl={
             <RefreshControl
@@ -113,7 +168,7 @@ export default function FieldJournalScreen() {
               onRetry={onRefresh}
             />
           }
-          renderItem={({ item }) => <SpeciesCard item={item} />}
+          renderItem={renderSpecies}
           ListFooterComponent={
             dex.hasNextPage ? (
               <LoadMoreButton
@@ -129,12 +184,12 @@ export default function FieldJournalScreen() {
 
   return (
     <DesktopContainer>
-      <FlatList
+      <FlashList
+        key={`photos-${columnCount}`}
         testID="field-journal-screen"
         data={photoItems}
         keyExtractor={(item) => item.id}
-        numColumns={2}
-        columnWrapperStyle={styles.gridRow}
+        numColumns={columnCount}
         contentContainerStyle={styles.list}
         refreshControl={
           <RefreshControl
@@ -152,7 +207,7 @@ export default function FieldJournalScreen() {
             onRetry={onRefresh}
           />
         }
-        renderItem={({ item }) => <JournalCard item={item} />}
+        renderItem={renderObservation}
         ListFooterComponent={
           observations.hasNextPage ? (
             <LoadMoreButton
@@ -171,15 +226,21 @@ function JournalHeader({
   onModeChange,
   photoCount,
   speciesCount,
+  queuedItems,
+  queueLoading,
+  singleColumn,
 }: {
   mode: JournalMode;
   onModeChange: (mode: JournalMode) => void;
   photoCount: string;
   speciesCount: string;
+  queuedItems: QueuedObservation[];
+  queueLoading: boolean;
+  singleColumn: boolean;
 }) {
   return (
     <View style={styles.header}>
-      <Text style={styles.title}>Field Journal</Text>
+      <Text accessibilityRole="header" style={styles.title}>Field Journal</Text>
       <View style={styles.statsRow}>
         <Stat label="Photos" value={photoCount} />
         <Stat label="Species" value={speciesCount} />
@@ -196,6 +257,79 @@ function JournalHeader({
           onPress={() => onModeChange("species")}
         />
       </View>
+      {queueLoading || queuedItems.length > 0 ? (
+        <WaitingToSyncSection
+          loading={queueLoading}
+          items={queuedItems}
+          singleColumn={singleColumn}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+function WaitingToSyncSection({
+  loading,
+  items,
+  singleColumn,
+}: {
+  loading: boolean;
+  items: QueuedObservation[];
+  singleColumn: boolean;
+}) {
+  return (
+    <View style={styles.queueSection} testID="waiting-to-sync-section">
+      <Text accessibilityRole="header" style={styles.queueHeading}>
+        Waiting to sync
+      </Text>
+      {loading && items.length === 0 ? <ActivityIndicator /> : null}
+      <View style={styles.queueGrid}>
+        {items.map((item) => (
+          <QueuedJournalCard
+            key={item.submissionKey}
+            item={item}
+            singleColumn={singleColumn}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function QueuedJournalCard({
+  item,
+  singleColumn,
+}: {
+  item: QueuedObservation;
+  singleColumn: boolean;
+}) {
+  const caption = journalCaption(item.identification.speciesName);
+  const status = queueStatusMessage(item);
+  return (
+    <View
+      accessible
+      accessibilityRole="summary"
+      accessibilityLabel={`${caption}. ${status}`}
+      style={[
+        styles.card,
+        styles.queueCard,
+        singleColumn && styles.queueCardWide,
+      ]}
+    >
+      <View style={styles.thumbPlaceholder}>
+        <FontAwesome name="cloud-upload" size={24} color="#fff" />
+        <Text style={styles.placeholderText}>{status}</Text>
+      </View>
+      <Text style={styles.cardTitle}>{caption}</Text>
+      <Text style={styles.cardMeta}>
+        {formatDate(new Date(item.observedAt))}
+        {item.placeName ? ` - ${item.placeName}` : ""}
+      </Text>
+      {item.lastRequestId ? (
+        <Text style={styles.supportCode}>
+          Adult support code: {item.lastRequestId}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -220,7 +354,9 @@ function SegmentButton({
 }) {
   return (
     <Pressable
-      accessibilityRole="button"
+      accessibilityRole="tab"
+      accessibilityLabel={`${label} Field Journal tab`}
+      accessibilityHint={`Shows saved ${label.toLowerCase()}`}
       accessibilityState={{ selected: active }}
       style={[styles.segmentButton, active && styles.segmentButtonActive]}
       onPress={onPress}
@@ -252,23 +388,39 @@ function JournalBodyState({
   }
 
   if (error) {
-    const isUnauthed = error instanceof ApiError && error.status === 401;
-    if (isUnauthed) {
-      return (
-        <View style={styles.center}>
-          <Text style={styles.heading}>{emptyTitle}</Text>
-          <Text style={styles.body}>{emptyBody}</Text>
-        </View>
-      );
-    }
+    const safe = childSafeError(error);
 
     return (
       <View style={styles.center}>
         <Text style={styles.heading}>Couldn't open your Field Journal</Text>
-        <Text style={styles.body}>{error.message}</Text>
-        <Pressable style={[styles.button, styles.buttonGhost]} onPress={onRetry}>
-          <Text style={styles.buttonText}>Retry</Text>
-        </Pressable>
+        <Text style={styles.body}>{safe.message}</Text>
+        {safe.supportCode ? (
+          <Text style={styles.supportCode}>
+            Adult support code: {safe.supportCode}
+          </Text>
+        ) : null}
+        {safe.requiresAdultHandoff ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Ask an adult to sign in again"
+            accessibilityHint="Clears the expired session and opens kid handoff"
+            style={[styles.button, styles.buttonGhost]}
+            onPress={() => {
+              void clearBearerToken().finally(() => router.replace("/kid-handoff"));
+            }}
+          >
+            <Text style={styles.buttonText}>Ask an adult</Text>
+          </Pressable>
+        ) : (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Retry Field Journal"
+            style={[styles.button, styles.buttonGhost]}
+            onPress={onRetry}
+          >
+            <Text style={styles.buttonText}>Retry</Text>
+          </Pressable>
+        )}
       </View>
     );
   }
@@ -281,71 +433,93 @@ function JournalBodyState({
   );
 }
 
-function JournalCard({ item }: { item: ObservationListItem }) {
-  const status = item.moderation_status || item.photo_status;
-  const mode = photoDisplayMode(status);
-  const ts = new Date(item.observed_at ?? item.created_at);
+const JournalCard = memo(function JournalCard({ item }: { item: ObservationListItem }) {
+  const ownerUserId = useAuthSession((state) =>
+    state.status === "authenticated" ? state.user.id : null,
+  );
+  const presentation = childPhotoPresentation(item.child_presentation_status);
+  const ts = new Date(item.observed_at);
+  const caption = journalCaption(item.species_name);
+
+  useEffect(() => {
+    if (presentation.mode === "image") return;
+    queryClient.removeQueries({
+      queryKey: ["photo-url", ownerUserId ?? "anonymous", item.photo_id],
+      exact: true,
+    });
+  }, [item.photo_id, ownerUserId, presentation.mode]);
 
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${caption}. ${formatDate(ts)}${item.place_name ? `. ${item.place_name}` : ""}${presentation.message ? `. ${presentation.message}` : ""}`}
+      accessibilityHint="Opens this Field Journal entry"
       style={styles.card}
       onPress={() => router.push(observationHref(item.id))}
     >
-      {mode === "image" ? (
-        <JournalThumb
-          photoId={item.photo_id}
-          checking={isAwaitingModeration(status)}
-        />
+      {presentation.mode === "image" ? (
+        <JournalThumb photoId={item.photo_id} description={`Photo of ${caption}`} />
       ) : (
-        <UnavailableThumb mode={mode} />
+        <UnavailableThumb status={presentation.status} message={presentation.message} />
       )}
-      <Text style={styles.cardTitle} numberOfLines={1}>
-        {journalCaption(item.species_name)}
-      </Text>
-      <Text style={styles.cardMeta} numberOfLines={1}>
+      <Text style={styles.cardTitle}>{caption}</Text>
+      <Text style={styles.cardMeta}>
         {formatDate(ts)}
         {item.place_name ? ` - ${item.place_name}` : ""}
       </Text>
     </Pressable>
   );
-}
+});
 
-function SpeciesCard({ item }: { item: DexListItem }) {
-  const mode = photoDisplayMode(item.first_photo_status);
+const SpeciesCard = memo(function SpeciesCard({ item }: { item: DexListItem }) {
+  const ownerUserId = useAuthSession((state) =>
+    state.status === "authenticated" ? state.user.id : null,
+  );
+  const photoId = representativePhotoId(item);
+  const previousPhotoId = useRef(photoId);
   const firstSeen = new Date(item.first_seen_at);
+  const name = speciesDisplayName(item);
+
+  useEffect(() => {
+    const previous = previousPhotoId.current;
+    previousPhotoId.current = photoId;
+    if (!previous || previous === photoId) return;
+    queryClient.removeQueries({
+      queryKey: ["photo-url", ownerUserId ?? "anonymous", previous],
+      exact: true,
+    });
+  }, [ownerUserId, photoId]);
 
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${name}. ${findCountLabel(item.observation_count)}. First seen ${formatDate(firstSeen)}`}
+      accessibilityHint="Opens the first accepted Field Journal entry for this species"
       style={styles.card}
       onPress={() => router.push(observationHref(item.first_observation_id))}
     >
-      {mode === "image" ? (
-        <JournalThumb
-          photoId={item.first_photo_id}
-          checking={isAwaitingModeration(item.first_photo_status)}
-        />
+      {photoId ? (
+        <JournalThumb photoId={photoId} description={`Representative photo of ${name}`} />
       ) : (
-        <UnavailableThumb mode={mode} />
+        <UnavailableThumb status="failed" message="No approved photo is available yet." />
       )}
-      <Text style={styles.cardTitle} numberOfLines={1}>
-        {speciesDisplayName(item)}
-      </Text>
-      <Text style={styles.cardMeta} numberOfLines={1}>
+      <Text style={styles.cardTitle}>{name}</Text>
+      <Text style={styles.cardMeta}>
         {speciesSubtitle(item)}
       </Text>
-      <Text style={styles.cardMeta} numberOfLines={1}>
+      <Text style={styles.cardMeta}>
         {findCountLabel(item.observation_count)} - first seen {formatDate(firstSeen)}
       </Text>
     </Pressable>
   );
-}
+});
 
 function JournalThumb({
   photoId,
-  checking,
+  description,
 }: {
   photoId: string;
-  checking: boolean;
+  description: string;
 }) {
   const ownerUserId = useAuthSession((state) =>
     state.status === "authenticated" ? state.user.id : null,
@@ -357,8 +531,12 @@ function JournalThumb({
   if (urlQuery.isError || loadFailed) {
     return (
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Retry ${description}`}
+        accessibilityHint="Requests a new private photo link"
         style={styles.thumbPlaceholder}
-        onPress={() => {
+        onPress={(event) => {
+          event.stopPropagation();
           setLoadFailed(false);
           setLoadRetried(false);
           void urlQuery.refetch();
@@ -381,6 +559,8 @@ function JournalThumb({
   return (
     <View style={styles.thumbWrap}>
       <Image
+        accessible
+        accessibilityLabel={description}
         source={{ uri: urlQuery.data.url }}
         style={styles.thumb}
         resizeMode="cover"
@@ -395,25 +575,31 @@ function JournalThumb({
           }
         }}
       />
-      {checking && (
-        <View style={styles.checkingBadge}>
-          <Text style={styles.checkingBadgeText}>checking...</Text>
-        </View>
-      )}
     </View>
   );
 }
 
-function UnavailableThumb({ mode }: { mode: "reviewing" | "removed" }) {
+function UnavailableThumb({
+  status,
+  message,
+}: {
+  status: string;
+  message: string | null;
+}) {
   return (
-    <View style={styles.thumbPlaceholder}>
+    <View
+      accessible
+      accessibilityRole="text"
+      accessibilityLabel={message ?? "Photo unavailable"}
+      style={styles.thumbPlaceholder}
+    >
       <FontAwesome
-        name={mode === "reviewing" ? "search" : "ban"}
+        name={status === "adult_review" ? "search" : "lock"}
         size={24}
         color="#fff"
       />
       <Text style={styles.placeholderText}>
-        {mode === "reviewing" ? "An adult is checking this photo" : "Photo removed"}
+        {message ?? "Photo unavailable"}
       </Text>
     </View>
   );
@@ -428,6 +614,9 @@ function LoadMoreButton({
 }) {
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={loading ? "Loading more entries" : "Load more entries"}
+      accessibilityState={{ disabled: loading, busy: loading }}
       style={[styles.button, styles.buttonGhost, styles.loadMore]}
       disabled={loading}
       onPress={onPress}
@@ -498,7 +687,7 @@ const styles = StyleSheet.create({
   },
   segmentButton: {
     flex: 1,
-    minHeight: 36,
+    minHeight: 44,
     borderRadius: 6,
     alignItems: "center",
     justifyContent: "center",
@@ -538,8 +727,28 @@ const styles = StyleSheet.create({
   },
   card: {
     flex: 1,
-    maxWidth: "50%",
+    maxWidth: "100%",
+    minWidth: 0,
     marginBottom: 16,
+  },
+  queueSection: {
+    marginTop: 18,
+    gap: 10,
+  },
+  queueHeading: {
+    fontSize: 18,
+    fontWeight: "700",
+  },
+  queueGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+  },
+  queueCard: {
+    flexBasis: "46%",
+  },
+  queueCardWide: {
+    flexBasis: "100%",
   },
   thumbWrap: {
     position: "relative",
@@ -565,19 +774,6 @@ const styles = StyleSheet.create({
     opacity: 0.72,
     textAlign: "center",
   },
-  checkingBadge: {
-    position: "absolute",
-    top: 6,
-    right: 6,
-    backgroundColor: "rgba(0,0,0,0.65)",
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  checkingBadgeText: {
-    fontSize: 10,
-    color: "#fff",
-  },
   cardTitle: {
     fontSize: 14,
     fontWeight: "600",
@@ -589,6 +785,8 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   button: {
+    minHeight: 44,
+    minWidth: 44,
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 6,
@@ -608,5 +806,11 @@ const styles = StyleSheet.create({
   loadMore: {
     marginTop: 4,
     marginHorizontal: 16,
+  },
+  supportCode: {
+    fontSize: 11,
+    opacity: 0.62,
+    marginTop: 8,
+    marginBottom: 8,
   },
 });

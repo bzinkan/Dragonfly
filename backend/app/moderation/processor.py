@@ -40,6 +40,7 @@ from ulid import ULID
 from app.core.config import Settings
 from app.core.storage import SignedUrlGenerator
 from app.db import models
+from app.dispatcher.handlers.dex import promote_clean_representative
 from app.inat.enqueue import enqueue_inat_submit
 from app.moderation.provider import Moderator
 from app.observation.photo_finalize import PhotoValidationError, validate_canonical_jpeg
@@ -318,6 +319,11 @@ async def process_pending_photo(
             observation.moderation_labels = dict(result.labels)
             observation.moderation_source = "azure"
             observation.moderation_policy_version = "azure-content-safety-2023-10-01"
+            await promote_clean_representative(
+                session,
+                observation=observation,
+                photo=photo,
+            )
             # Outbox row guarantees at-least-once iNat submit even if the
             # Service Bus send below fails. Replay job picks up rows that
             # stay in `pending` past the 5-min grace window.

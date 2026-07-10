@@ -1,6 +1,7 @@
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
+  AppState,
   ActivityIndicator,
   Image,
   Pressable,
@@ -10,7 +11,6 @@ import {
 } from "react-native";
 
 import { Text, View } from "@/components/Themed";
-import { ApiError } from "@/src/api/client";
 import {
   type CvSuggestion,
   type IdentificationUpdate,
@@ -27,17 +27,22 @@ import {
   ImperativeRequestSupersededError,
 } from "@/src/auth/requestBoundary";
 import {
+  childPhotoPresentation,
+  childRecordIsVisible,
   journalCaption,
-  isAwaitingModeration,
   isUrlUsable,
-  photoDisplayMode,
 } from "@/src/observation/journalLogic";
+import {
+  childSafeError,
+  isEntryUnavailableError,
+} from "@/src/observation/childSafeErrors";
 import {
   conservationLabel,
   factsAreEmpty,
   worldwideLine,
 } from "@/src/observation/speciesFactsLogic";
 import { useObservationDetail } from "@/src/observation/useObservationDetail";
+import { useObservationCapabilities } from "@/src/observation/useObservationCapabilities";
 import { usePhotoUrl } from "@/src/observation/usePhotoUrl";
 import { useSpeciesFacts } from "@/src/observation/useSpeciesFacts";
 import { mergeTaxonResults, searchCoreTaxa } from "@/src/observation/coreTaxa";
@@ -90,7 +95,21 @@ export default function ObservationDetailScreen() {
       ? findCachedObservation(observationId, ownerUserId)
       : null;
   const detailQuery = useObservationDetail(observationId);
-  const item = detailQuery.data ?? cachedItem;
+  const refetchDetail = detailQuery.refetch;
+  const detailUnavailable = isEntryUnavailableError(detailQuery.error);
+  // Rejection can complete between refreshes, jumping straight from a clean
+  // response to 404. TanStack retains the previous success data on a refetch
+  // error, so explicitly discard it and unmount the decoded image.
+  const cachedOrServerItem = detailQuery.data ?? cachedItem;
+  const responseItem = detailUnavailable ? null : cachedOrServerItem;
+  const item =
+    responseItem && childRecordIsVisible(String(responseItem.child_presentation_status))
+      ? responseItem
+      : null;
+  const capabilities = useObservationCapabilities();
+  const presentation = childPhotoPresentation(
+    responseItem?.child_presentation_status ?? "failed",
+  );
 
   // Set when the kid identifies a Mystery find right here. The cached
   // list item is a non-reactive snapshot, so this local override makes
@@ -104,6 +123,33 @@ export default function ObservationDetailScreen() {
   activeIdentificationScope.current = { ownerUserId, observationId };
 
   useEffect(() => setIdentified(null), [observationId, ownerUserId]);
+
+  useEffect(() => {
+    if (!ownerUserId || !observationId) return;
+    const refresh = () => {
+      void refetchDetail();
+      void queryClient.refetchQueries({
+        queryKey: ["observations", ownerUserId],
+        type: "active",
+      });
+    };
+    const timer = setInterval(refresh, 30_000);
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") refresh();
+    });
+    return () => {
+      clearInterval(timer);
+      subscription.remove();
+    };
+  }, [observationId, ownerUserId, refetchDetail]);
+
+  useEffect(() => {
+    if (!cachedOrServerItem || (presentation.mode === "image" && !detailUnavailable)) return;
+    queryClient.removeQueries({
+      queryKey: ["photo-url", ownerUserId ?? "anonymous", cachedOrServerItem.photo_id],
+      exact: true,
+    });
+  }, [cachedOrServerItem, detailUnavailable, ownerUserId, presentation.mode]);
 
   if (session.status !== "authenticated") {
     return (
@@ -128,6 +174,9 @@ export default function ObservationDetailScreen() {
 
   if (!item) {
     const isLoading = observationId !== null && detailQuery.isPending;
+    const safeError = detailQuery.isError
+      ? childSafeError(detailQuery.error)
+      : null;
     return (
       <View style={styles.center}>
         <Stack.Screen options={{ title: "Observation" }} />
@@ -136,12 +185,19 @@ export default function ObservationDetailScreen() {
         ) : (
           <>
             <Text style={styles.body}>
-              {detailQuery.isError
-                ? detailErrorMessage(detailQuery.error)
+              {safeError
+                ? safeError.message
                 : "Couldn't find that entry. Open it from your Field Journal."}
             </Text>
-            {detailQuery.isError ? (
+            {safeError?.supportCode ? (
+              <Text style={styles.supportCode}>
+                Adult support code: {safeError.supportCode}
+              </Text>
+            ) : null}
+            {safeError ? (
               <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Retry Field Journal entry"
                 style={[styles.button, styles.buttonGhost]}
                 onPress={() => void detailQuery.refetch()}
               >
@@ -161,12 +217,8 @@ export default function ObservationDetailScreen() {
     );
   }
 
-  const moderationStatus = item.moderation_status;
-  const mode = photoDisplayMode(moderationStatus);
   const itemId = item.id;
-  const ts = new Date(
-    item.observed_at ?? ("created_at" in item ? item.created_at : Date.now()),
-  );
+  const ts = new Date(item.observed_at ?? Date.now());
   const effectiveTaxonId = identified ? identified.taxonId : item.taxon_id;
   const effectiveSpecies = identified
     ? (identified.speciesName ?? item.species_name)
@@ -210,21 +262,20 @@ export default function ObservationDetailScreen() {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Stack.Screen options={{ title: journalCaption(effectiveSpecies) }} />
 
-      {mode === "image" ? (
+      {presentation.mode === "image" ? (
         <DetailPhoto
           photoId={item.photo_id}
-          checking={isAwaitingModeration(moderationStatus)}
+          description={`Photo of ${journalCaption(effectiveSpecies)}`}
         />
       ) : (
-        <View style={styles.photoPlaceholder}>
-          <Text style={styles.placeholderGlyph}>
-            {mode === "reviewing" ? "🔍" : "🚫"}
-          </Text>
-          <Text style={styles.placeholderText}>
-            {mode === "reviewing"
-              ? "An adult is checking this photo. It'll be back if everything looks good."
-              : "This photo was removed after review."}
-          </Text>
+        <View
+          accessible
+          accessibilityRole="text"
+          accessibilityLabel={presentation.message ?? "Photo unavailable"}
+          style={styles.photoPlaceholder}
+        >
+          <Text style={styles.placeholderGlyph}>🔒</Text>
+          <Text style={styles.placeholderText}>{presentation.message}</Text>
         </View>
       )}
 
@@ -232,7 +283,7 @@ export default function ObservationDetailScreen() {
 
       {effectiveTaxonId !== null ? <SpeciesFactsCard taxonId={effectiveTaxonId} /> : null}
 
-      {mode === "image" && detailQuery.data ? (
+      {detailQuery.data ? (
         <IdentifySection
           key={identificationScopeKey(session.user.id, item.id)}
           ownerUserId={session.user.id}
@@ -240,6 +291,9 @@ export default function ObservationDetailScreen() {
           expectedRevision={detailQuery.data.identification_revision}
           currentTaxonId={effectiveTaxonId}
           currentSpeciesName={effectiveSpecies}
+          photoHelperEnabled={
+            capabilities.photoHelperEnabled && presentation.mode === "image"
+          }
           onIdentified={handleIdentified}
         />
       ) : null}
@@ -271,10 +325,10 @@ export default function ObservationDetailScreen() {
 
 function DetailPhoto({
   photoId,
-  checking,
+  description,
 }: {
   photoId: string;
-  checking: boolean;
+  description: string;
 }) {
   const ownerUserId = useAuthSession((state) =>
     state.status === "authenticated" ? state.user.id : null,
@@ -288,6 +342,9 @@ function DetailPhoto({
   if (urlQuery.isError || loadFailed) {
     return (
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Retry ${description}`}
+        accessibilityHint="Requests a new private photo link"
         style={styles.photoPlaceholder}
         onPress={() => {
           setLoadFailed(false);
@@ -303,9 +360,8 @@ function DetailPhoto({
     );
   }
 
-  // Pending, or a cache hit whose SAS already expired (this screen often
-  // opens off a Field Journal tab that sat past the 5-min TTL) -- wait for the
-  // background re-mint instead of handing <Image> a 403.
+  // Pending, or a cache hit inside the server's 60-second revocation bound --
+  // wait for the background re-mint instead of handing <Image> an expiring SAS.
   if (urlQuery.isPending || !isUrlUsable(urlQuery.data.expires_at)) {
     return (
       <View style={styles.photoPlaceholder}>
@@ -315,35 +371,30 @@ function DetailPhoto({
   }
 
   return (
-    <View>
-      <Image
-        source={{ uri: urlQuery.data.url }}
-        style={styles.photo}
-        resizeMode="cover"
-        onError={() => {
-          if (!loadRetried) {
-            setLoadRetried(true);
-            void queryClient.invalidateQueries({
-              queryKey: ["photo-url", ownerUserId ?? "anonymous", photoId],
-            });
-          } else {
-            setLoadFailed(true);
-          }
-        }}
-      />
-      {checking && (
-        <Text style={styles.checkingNote}>
-          Still being checked -- only you can see it for now.
-        </Text>
-      )}
-    </View>
+    <Image
+      accessible
+      accessibilityLabel={description}
+      source={{ uri: urlQuery.data.url }}
+      style={styles.photo}
+      resizeMode="contain"
+      onError={() => {
+        if (!loadRetried) {
+          setLoadRetried(true);
+          void queryClient.invalidateQueries({
+            queryKey: ["photo-url", ownerUserId ?? "anonymous", photoId],
+          });
+        } else {
+          setLoadFailed(true);
+        }
+      }}
+    />
   );
 }
 
 /**
- * "About this species" -- factual sheet from the backend's cached iNat
- * taxon payload (Wikipedia summary, worldwide sightings, conservation
- * status). Renders nothing on error / degradation / empty facts: the
+ * "About this species" -- structured catalog facts only. Raw cached upstream
+ * prose is intentionally ignored even if an older server accidentally sends
+ * it. Renders nothing on error / degradation / empty facts: the
  * card is a bonus, never a failure state.
  */
 function SpeciesFactsCard({ taxonId }: { taxonId: number }) {
@@ -376,18 +427,10 @@ function SpeciesFactsCard({ taxonId }: { taxonId: number }) {
           {facts.data.rank ? ` · ${facts.data.rank}` : ""}
         </Text>
       ) : null}
-      {facts.data.summary ? (
-        <Text style={styles.factsSummary}>{facts.data.summary}</Text>
-      ) : null}
       {worldwide ? <Text style={styles.factRow}>🌍 {worldwide}</Text> : null}
       {conservation ? (
         <Text style={styles.factRow}>
           💚 Conservation status: {conservation}
-        </Text>
-      ) : null}
-      {facts.data.summary ? (
-        <Text style={styles.factsAttribution}>
-          Facts from Wikipedia via iNaturalist
         </Text>
       ) : null}
     </View>
@@ -400,6 +443,7 @@ function IdentifySection({
   expectedRevision,
   currentTaxonId,
   currentSpeciesName,
+  photoHelperEnabled,
   onIdentified,
 }: {
   ownerUserId: string;
@@ -407,6 +451,7 @@ function IdentifySection({
   expectedRevision: number;
   currentTaxonId: number | null;
   currentSpeciesName: string | null;
+  photoHelperEnabled: boolean;
   onIdentified: (observation: Observation) => void;
 }) {
   const [catalogQuery, setCatalogQuery] = useState("");
@@ -417,6 +462,7 @@ function IdentifySection({
   const [busy, setBusy] = useState<"photo" | "save" | null>(null);
   const [searching, setSearching] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [supportCode, setSupportCode] = useState<string | null>(null);
   const [scopeBoundary] = useState(() => new ScopedRequestBoundary());
   const scopeKey = identificationScopeKey(ownerUserId, observationId);
 
@@ -432,6 +478,7 @@ function IdentifySection({
     setBusy(reset.busy);
     setSearching(reset.searching);
     setMessage(reset.message);
+    setSupportCode(null);
   }, [scopeKey]);
 
   useEffect(
@@ -467,7 +514,7 @@ function IdentifySection({
         })
         .catch(() => {
           if (!controller.signal.aborted) {
-            setMessage("Catalog search is unavailable. Try again later or use a note.");
+            setMessage("Catalog search is unavailable. Try again later or enter an identification.");
           }
         })
         .finally(() => {
@@ -483,6 +530,7 @@ function IdentifySection({
   async function askPhotoHelper() {
     setBusy("photo");
     setMessage(null);
+    setSupportCode(null);
     try {
       const ident = await scopeBoundary.run((signal) =>
         identifyObservation(observationId, signal),
@@ -490,7 +538,7 @@ function IdentifySection({
       setSuggestions(ident.suggestions);
       setMessage(
         ident.cv_unavailable
-          ? "The photo helper is unavailable. Catalog, note, and Unknown still work."
+          ? "The photo helper is unavailable. Catalog, manual identification, and Unknown still work."
           : ident.suggestions.length === 0
             ? "The photo helper was not sure. Unknown is always okay."
             : "Pick a photo-helper idea only if it looks right.",
@@ -500,7 +548,9 @@ function IdentifySection({
         err instanceof ImperativeRequestSupersededError ||
         err instanceof ScopedRequestSupersededError
       ) return;
-      setMessage(identifyErrorMessage(err));
+      const safe = childSafeError(err);
+      setMessage(safe.message);
+      setSupportCode(safe.supportCode);
     } finally {
       setBusy(null);
     }
@@ -509,6 +559,7 @@ function IdentifySection({
   async function save(payload: Omit<IdentificationUpdate, "expected_revision">) {
     setBusy("save");
     setMessage(null);
+    setSupportCode(null);
     try {
       const response = await scopeBoundary.run((signal) =>
         updateObservationIdentification(
@@ -528,7 +579,9 @@ function IdentifySection({
         err instanceof ImperativeRequestSupersededError ||
         err instanceof ScopedRequestSupersededError
       ) return;
-      setMessage(identifyErrorMessage(err));
+      const safe = childSafeError(err);
+      setMessage(safe.message);
+      setSupportCode(safe.supportCode);
     } finally {
       setBusy(null);
     }
@@ -542,6 +595,8 @@ function IdentifySection({
       </Text>
 
       <TextInput
+        accessibilityLabel="Search the organism catalog"
+        accessibilityHint="Type at least two letters to find a catalog identification"
         style={styles.input}
         value={catalogQuery}
         onChangeText={setCatalogQuery}
@@ -551,6 +606,10 @@ function IdentifySection({
       {searching ? <ActivityIndicator /> : null}
       {catalogResults.map((taxon) => (
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Use ${taxonDisplayName(taxon)} as the identification`}
+          accessibilityHint="Updates this entry and recalculates progress"
+          accessibilityState={{ disabled: busy != null }}
           key={taxon.taxon_id}
           style={styles.suggestion}
           disabled={busy != null}
@@ -563,15 +622,24 @@ function IdentifySection({
         </Pressable>
       ))}
 
-      <Pressable
-        style={[styles.button, styles.buttonGhost, styles.identifyAction]}
-        disabled={busy != null}
-        onPress={() => void askPhotoHelper()}
-      >
-        <Text style={styles.buttonText}>Ask the photo helper</Text>
-      </Pressable>
-      {suggestions.map((suggestion) => (
+      {photoHelperEnabled ? (
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Ask the photo helper"
+          accessibilityHint="Gets optional suggestions from the approved photo helper"
+          accessibilityState={{ disabled: busy != null, busy: busy === "photo" }}
+          style={[styles.button, styles.buttonGhost, styles.identifyAction]}
+          disabled={busy != null}
+          onPress={() => void askPhotoHelper()}
+        >
+          <Text style={styles.buttonText}>Ask the photo helper</Text>
+        </Pressable>
+      ) : null}
+      {photoHelperEnabled ? suggestions.map((suggestion) => (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Use ${suggestionDisplayName(suggestion) ?? `Taxon ${suggestion.taxon_id}`} from the photo helper`}
+          accessibilityState={{ disabled: busy != null }}
           key={`cv-${suggestion.taxon_id}`}
           style={styles.suggestion}
           disabled={busy != null}
@@ -584,27 +652,40 @@ function IdentifySection({
           </Text>
           <Text style={styles.suggestionMeta}>{Math.round(suggestion.score)}%</Text>
         </Pressable>
-      ))}
+      )) : null}
 
       <TextInput
+        accessibilityLabel="Manual identification correction"
+        accessibilityHint="Enter only an organism identification, not a general journal note"
         style={styles.input}
         value={manualSpecies}
         onChangeText={setManualSpecies}
-        placeholder="Or write a short identification note"
+        placeholder="Or enter a short identification"
         placeholderTextColor="#999"
         maxLength={200}
       />
       <View style={styles.identificationActions}>
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Use manual identification"
+          accessibilityHint="Updates this entry with the organism identification you entered"
+          accessibilityState={{
+            disabled: busy != null || manualSpecies.trim().length === 0,
+            busy: busy === "save",
+          }}
           style={[styles.button, styles.buttonGhost, styles.identificationButton]}
           disabled={busy != null || manualSpecies.trim().length === 0}
           onPress={() =>
             void save({ source: "manual_text", manual_text: manualSpecies.trim() })
           }
         >
-          <Text style={styles.buttonText}>Use note</Text>
+          <Text style={styles.buttonText}>Use identification</Text>
         </Pressable>
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Mark identification Unknown"
+          accessibilityHint="Keeps the observation without adding a Dex species"
+          accessibilityState={{ disabled: busy != null, busy: busy === "save" }}
           style={[styles.button, styles.buttonGhost, styles.identificationButton]}
           disabled={busy != null}
           onPress={() => void save({ source: "unknown" })}
@@ -614,27 +695,15 @@ function IdentifySection({
       </View>
       {busy === "photo" || busy === "save" ? <ActivityIndicator /> : null}
       {message ? <Text style={styles.identifyHelp}>{message}</Text> : null}
+      {supportCode ? (
+        <Text style={styles.supportCode}>Adult support code: {supportCode}</Text>
+      ) : null}
     </View>
   );
 }
 
 function taxonDisplayName(taxon: TaxonCatalogItem): string {
   return taxon.common_name ?? taxon.scientific_name ?? `Taxon ${taxon.taxon_id}`;
-}
-
-function identifyErrorMessage(err: unknown): string {
-  if (err instanceof ApiError) return `${err.status}: ${err.message}`;
-  if (err instanceof Error) return err.message;
-  return String(err);
-}
-
-function detailErrorMessage(err: unknown): string {
-  if (err instanceof ApiError && err.status === 404) {
-    return "Couldn't find that entry. Open it from your Field Journal.";
-  }
-  if (err instanceof ApiError) return `${err.status}: ${err.message}`;
-  if (err instanceof Error) return err.message;
-  return String(err);
 }
 
 const styles = StyleSheet.create({
@@ -680,11 +749,6 @@ const styles = StyleSheet.create({
     opacity: 0.7,
     textAlign: "center",
   },
-  checkingNote: {
-    fontSize: 12,
-    opacity: 0.6,
-    marginTop: 6,
-  },
   species: {
     fontSize: 20,
     fontWeight: "600",
@@ -701,6 +765,8 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   button: {
+    minHeight: 44,
+    minWidth: 44,
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 6,
@@ -763,18 +829,8 @@ const styles = StyleSheet.create({
     opacity: 0.7,
     marginTop: 4,
   },
-  factsSummary: {
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 10,
-  },
   factRow: {
     fontSize: 14,
-    marginTop: 10,
-  },
-  factsAttribution: {
-    fontSize: 11,
-    opacity: 0.5,
     marginTop: 10,
   },
   identifyHelp: {
@@ -808,6 +864,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   suggestion: {
+    minHeight: 44,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
@@ -831,7 +888,7 @@ const styles = StyleSheet.create({
   },
   input: {
     width: "100%",
-    height: 40,
+    minHeight: 44,
     borderColor: "#888",
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 6,
@@ -839,5 +896,10 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 14,
     color: "#fff",
+  },
+  supportCode: {
+    fontSize: 11,
+    opacity: 0.62,
+    marginTop: 8,
   },
 });
