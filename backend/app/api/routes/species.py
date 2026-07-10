@@ -25,6 +25,7 @@ from app.db.session import DbSessionDep
 
 router = APIRouter(prefix="/v1/species", tags=["species"])
 
+
 class SpeciesFactsResponse(BaseModel):
     taxon_id: int
     common_name: str | None

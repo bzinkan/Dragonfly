@@ -141,9 +141,7 @@ async def revoke_approved_review_item(
         .execution_options(populate_existing=True)
     )
     statement = (
-        statement.with_for_update(skip_locked=True)
-        if nonblocking
-        else statement.with_for_update()
+        statement.with_for_update(skip_locked=True) if nonblocking else statement.with_for_update()
     )
     locked_review = (await session.execute(statement)).scalar_one_or_none()
     if locked_review is None:
@@ -154,9 +152,7 @@ async def revoke_approved_review_item(
     now = datetime.now(UTC)
     photo = (
         await session.execute(
-            select(models.Photo)
-            .where(models.Photo.id == locked_review.photo_id)
-            .with_for_update()
+            select(models.Photo).where(models.Photo.id == locked_review.photo_id).with_for_update()
         )
     ).scalar_one_or_none()
     if photo is None or photo.status != "clean" or photo.attachment_status != "attached":

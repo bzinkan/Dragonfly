@@ -34,25 +34,21 @@ async def replay(
 ) -> tuple[int, int]:
     """Return ``(succeeded, still_pending_or_failed)`` for one bounded pass."""
     rows = (
-        (
-            await session.execute(
-                select(models.PhotoRevocation, models.ReviewQueueItem)
-                .join(
-                    models.ReviewQueueItem,
-                    models.ReviewQueueItem.id == models.PhotoRevocation.review_id,
-                )
-                .where(
-                    models.PhotoRevocation.state != "succeeded",
-                    models.PhotoRevocation.attempt_count < MAX_REVOCATION_ATTEMPTS,
-                    models.ReviewQueueItem.status
-                    == models.PhotoRevocation.claim_review_status,
-                )
-                .order_by(models.PhotoRevocation.last_attempt_at, models.PhotoRevocation.photo_id)
-                .limit(limit)
+        await session.execute(
+            select(models.PhotoRevocation, models.ReviewQueueItem)
+            .join(
+                models.ReviewQueueItem,
+                models.ReviewQueueItem.id == models.PhotoRevocation.review_id,
             )
+            .where(
+                models.PhotoRevocation.state != "succeeded",
+                models.PhotoRevocation.attempt_count < MAX_REVOCATION_ATTEMPTS,
+                models.ReviewQueueItem.status == models.PhotoRevocation.claim_review_status,
+            )
+            .order_by(models.PhotoRevocation.last_attempt_at, models.PhotoRevocation.photo_id)
+            .limit(limit)
         )
-        .all()
-    )
+    ).all()
     succeeded = 0
     pending = 0
     for revocation, review in rows:

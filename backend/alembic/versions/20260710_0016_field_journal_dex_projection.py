@@ -230,9 +230,7 @@ def upgrade() -> None:
         "ix_observations_user_observed_active",
         "observations",
         ["user_id", sa.text("observed_at DESC"), sa.text("id DESC")],
-        postgresql_where=sa.text(
-            "rejected_at IS NULL AND moderation_status <> 'rejected'"
-        ),
+        postgresql_where=sa.text("rejected_at IS NULL AND moderation_status <> 'rejected'"),
     )
 
 

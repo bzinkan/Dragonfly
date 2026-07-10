@@ -138,9 +138,7 @@ class Observation(TimestampMixin, Base):
             "user_id",
             text("observed_at DESC"),
             text("id DESC"),
-            postgresql_where=text(
-                "rejected_at IS NULL AND moderation_status <> 'rejected'"
-            ),
+            postgresql_where=text("rejected_at IS NULL AND moderation_status <> 'rejected'"),
         ),
         UniqueConstraint("photo_id", name="uq_observations_photo_id"),
         UniqueConstraint("user_id", "submission_key", name="uq_observations_user_submission"),

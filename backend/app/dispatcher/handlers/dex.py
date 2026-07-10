@@ -192,9 +192,7 @@ async def promote_clean_representative(
     observed_at = observation.observed_at or observation.created_at
     current_representative_seen = (
         select(models.Observation.observed_at)
-        .where(
-            models.Observation.id == models.DexEntry.representative_observation_id
-        )
+        .where(models.Observation.id == models.DexEntry.representative_observation_id)
         .scalar_subquery()
     )
     await session.execute(

@@ -102,8 +102,7 @@ async def list_my_dex(
         .outerjoin(
             representative_observation,
             and_(
-                representative_observation.id
-                == models.DexEntry.representative_observation_id,
+                representative_observation.id == models.DexEntry.representative_observation_id,
                 representative_observation.rejected_at.is_(None),
                 representative_observation.moderation_status == "clean",
             ),

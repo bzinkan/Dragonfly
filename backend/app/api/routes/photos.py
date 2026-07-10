@@ -328,16 +328,8 @@ async def photo_get_url(
         observation_group_id=observation_group_id,
     )
     allowed = photo.attachment_status == "attached" and (
-        (
-            photo.status == "clean"
-            and moderation_status == "clean"
-            and (is_owner or adult_manager)
-        )
-        or (
-            photo.status == "quarantine"
-            and moderation_status == "quarantine"
-            and adult_manager
-        )
+        (photo.status == "clean" and moderation_status == "clean" and (is_owner or adult_manager))
+        or (photo.status == "quarantine" and moderation_status == "quarantine" and adult_manager)
     )
     if not allowed:
         # All lifecycle and authorization denials look absent to prevent ID

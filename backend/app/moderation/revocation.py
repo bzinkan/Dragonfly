@@ -94,9 +94,7 @@ async def _claim_revocation(
         review_statement = review_statement.with_for_update()
     locked_review = (await session.execute(review_statement)).scalar_one_or_none()
     if locked_review is None or locked_review.status != claim_review_status:
-        raise ReviewResolutionConflict(
-            f"Review item is no longer {claim_review_status}"
-        )
+        raise ReviewResolutionConflict(f"Review item is no longer {claim_review_status}")
 
     photo = (
         await session.execute(
@@ -107,9 +105,7 @@ async def _claim_revocation(
         raise ReviewResolutionConflict("Review photo no longer exists")
     if claim_review_status == "approved":
         if photo.status != "clean" or photo.attachment_status != "attached":
-            raise ReviewResolutionConflict(
-                "Approved review no longer has an attached clean photo"
-            )
+            raise ReviewResolutionConflict("Approved review no longer has an attached clean photo")
         if locked_review.observation_id is not None:
             clean_observation = (
                 await session.execute(
@@ -123,9 +119,7 @@ async def _claim_revocation(
                 or clean_observation.moderation_status != "clean"
                 or clean_observation.rejected_at is not None
             ):
-                raise ReviewResolutionConflict(
-                    "Approved review no longer has a clean observation"
-                )
+                raise ReviewResolutionConflict("Approved review no longer has a clean observation")
 
     held_object_name = f"rejected/held/{photo.id}.jpg"
     revocation = (

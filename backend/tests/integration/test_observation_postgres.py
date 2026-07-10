@@ -1774,9 +1774,7 @@ async def test_approved_clean_photo_can_be_revoked_and_deny_gate_outlives_review
         rows = await _seed_quarantine_review(session)
         review = await session.get(models.ReviewQueueItem, rows.review_id)
         photo = await session.get(models.Photo, rows.observation.photo_id)
-        observation = await session.get(
-            models.Observation, rows.observation.observation_id
-        )
+        observation = await session.get(models.Observation, rows.observation.observation_id)
         assert review is not None
         assert photo is not None
         assert observation is not None
@@ -1811,12 +1809,8 @@ async def test_approved_clean_photo_can_be_revoked_and_deny_gate_outlives_review
     async with pg_harness.sessions() as session:
         review = await session.get(models.ReviewQueueItem, rows.review_id)
         photo = await session.get(models.Photo, rows.observation.photo_id)
-        observation = await session.get(
-            models.Observation, rows.observation.observation_id
-        )
-        revocation = await session.get(
-            models.PhotoRevocation, rows.observation.photo_id
-        )
+        observation = await session.get(models.Observation, rows.observation.observation_id)
+        revocation = await session.get(models.PhotoRevocation, rows.observation.photo_id)
         assert review is not None and review.status == "revoked"
         assert review.reviewer_user_id == rows.observation.identity.parent_id
         assert review.resolved_at == approved_at
@@ -1828,19 +1822,13 @@ async def test_approved_clean_photo_can_be_revoked_and_deny_gate_outlives_review
         assert revocation is not None
         assert revocation.state == "succeeded"
         assert revocation.claim_review_status == "approved"
-        assert (
-            revocation.requesting_actor_user_id
-            == rows.observation.identity.parent_id
-        )
+        assert revocation.requesting_actor_user_id == rows.observation.identity.parent_id
 
         await session.delete(review)
         with pytest.raises(IntegrityError):
             await session.commit()
         await session.rollback()
-        assert (
-            await session.get(models.PhotoRevocation, rows.observation.photo_id)
-            is not None
-        )
+        assert await session.get(models.PhotoRevocation, rows.observation.photo_id) is not None
 
 
 async def test_rejection_recovers_after_db_failure_once_clean_source_is_gone(
