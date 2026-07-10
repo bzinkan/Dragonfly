@@ -275,10 +275,22 @@ for system_topic in "${storage_topics[@]}"; do
       --system-topic-name "$system_topic" --resource-group "$RG" \
       --subscription "$SUBSCRIPTION" --name "$event_subscription" --yes --output none
   done
-  remaining="$(az eventgrid system-topic event-subscription list \
+  # Azure may automatically delete an event-subscription-created system topic
+  # as soon as its final subscription is removed. Treat that specific
+  # disappearance as successful containment; any list failure while the topic
+  # still exists remains fatal.
+  if ! remaining="$(az eventgrid system-topic event-subscription list \
     --system-topic-name "$system_topic" --resource-group "$RG" \
     --subscription "$SUBSCRIPTION" \
-    --query "length([?(destination.resourceId && contains(destination.resourceId, '/queues/${MODERATION_QUEUE}')) || (filter.subjectBeginsWith && contains(filter.subjectBeginsWith, '/containers/${PHOTOS_CONTAINER}/blobs/pending/'))])" -o tsv)"
+    --query "length([?(destination.resourceId && contains(destination.resourceId, '/queues/${MODERATION_QUEUE}')) || (filter.subjectBeginsWith && contains(filter.subjectBeginsWith, '/containers/${PHOTOS_CONTAINER}/blobs/pending/'))])" -o tsv 2>/dev/null)"; then
+    if ! az eventgrid system-topic show --name "$system_topic" \
+      --resource-group "$RG" --subscription "$SUBSCRIPTION" \
+      --output none >/dev/null 2>&1; then
+      continue
+    fi
+    echo "FATAL: could not verify direct moderation producer removal on $system_topic" >&2
+    exit 1
+  fi
   [[ "$remaining" == "0" ]] || { echo "FATAL: direct moderation producer remains on $system_topic" >&2; exit 1; }
 done
 

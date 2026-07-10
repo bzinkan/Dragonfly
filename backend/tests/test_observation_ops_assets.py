@@ -73,6 +73,11 @@ def test_hinterland_phase9_is_digest_pinned_and_egress_default_deny() -> None:
     assert "az eventgrid system-topic list" in script
     assert "STORAGE_ACCOUNT_ID" in script
     assert "${topic_source,,}" in script
+    assert 'if ! remaining="$(az eventgrid system-topic event-subscription list' in script
+    assert "could not verify direct moderation producer removal" in script
+    assert script.index(
+        'if ! remaining="$(az eventgrid system-topic event-subscription list'
+    ) < script.index("could not verify direct moderation producer removal")
     assert "EVENT_GRID_TOPIC" not in script
     assert "inat-submit-worker" in script and "job delete" in script
     assert "remaining_inat_jobs" in script
