@@ -89,6 +89,9 @@ def test_hinterland_phase9_is_digest_pinned_and_egress_default_deny() -> None:
     assert "triggerType: Manual" in script
     assert "manualTriggerConfig:" in script
     assert script.index("triggerType: Manual") < script.index("manualTriggerConfig:")
+    assert '"$raw_days" =~ ^1([.]0+)?$' in script
+    assert '"$held_days" =~ ^90([.]0+)?$' in script
+    assert '"$pilot_days" =~ ^7([.]0+)?$' in script
     assert script.index('wait_for_job "${PREFIX}-legacy-reconcile"') < script.index(
         'ensure_job "${PREFIX}-mod-outbox-relay"'
     )
