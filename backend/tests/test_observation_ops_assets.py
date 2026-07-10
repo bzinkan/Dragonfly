@@ -86,6 +86,9 @@ def test_hinterland_phase9_is_digest_pinned_and_egress_default_deny() -> None:
     assert "Azure Service Bus Data Owner" in script
     assert "wait_for_role_absent" in script
     assert "for attempt in $(seq 1 12)" in script
+    assert "triggerType: Manual" in script
+    assert "manualTriggerConfig:" in script
+    assert script.index("triggerType: Manual") < script.index("manualTriggerConfig:")
     assert script.index('wait_for_job "${PREFIX}-legacy-reconcile"') < script.index(
         'ensure_job "${PREFIX}-mod-outbox-relay"'
     )

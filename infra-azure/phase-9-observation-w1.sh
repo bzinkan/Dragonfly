@@ -371,7 +371,12 @@ properties:
   environmentId: $(yaml_quote "$CAE_ID")
   configuration:
 $(if [[ "$schedule" == "manual" ]]; then
-    printf '%s\n' '    triggerType: Manual'
+    cat <<TRIGGER
+    triggerType: Manual
+    manualTriggerConfig:
+      parallelism: 1
+      replicaCompletionCount: 1
+TRIGGER
   else
     cat <<TRIGGER
     triggerType: Schedule
