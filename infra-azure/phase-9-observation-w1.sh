@@ -326,10 +326,12 @@ if az storage account management-policy show --account-name "$SA_NAME" --resourc
     pilot_prefix="$(az storage account management-policy show --account-name "$SA_NAME" \
       --resource-group "$RG" --subscription "$SUBSCRIPTION" \
       --query "policy.rules[?name=='observation-pilot-private-7d'].definition.filters.prefixMatch | [0] | join(',', @)" -o tsv)"
-    if [[ "$raw_days" == "1" && "$raw_prefix" == "photos/pending/uploads/" \
-      && "$held_days" == "90" \
+    # Azure serializes lifecycle durations as JSON numbers and currently emits
+    # them as decimal TSV values (for example, 1.0) after a round trip.
+    if [[ "$raw_days" =~ ^1([.]0+)?$ && "$raw_prefix" == "photos/pending/uploads/" \
+      && "$held_days" =~ ^90([.]0+)?$ \
       && "$held_prefixes" == "photos/quarantine/,photos/rejected/" \
-      && "$pilot_days" == "7" && "$pilot_prefix" == "photos/pilot-private/" ]]; then
+      && "$pilot_days" =~ ^7([.]0+)?$ && "$pilot_prefix" == "photos/pilot-private/" ]]; then
       APPLY_LIFECYCLE=0
     fi
   fi
