@@ -32,7 +32,10 @@ Store only the promotion-specific values as environment secrets:
 - `HINTERLAND_SMOKE_ENTRA_BEARER`, a current token for the isolated test parent;
 - `HINTERLAND_ALERT_EMAIL`, a monitored operational address.
 
-The workflow rejects a missing or nearly expired parent token. It creates a
+The parent token must be a v2 access token for the `user.access` scope. Its
+`aud` claim is the API client ID
+`7dd9da3c-b7d6-45d4-955b-d7561c43f209`, not the scope URI. The workflow rejects
+a missing, wrong-tenant, wrong-audience, wrong-scope, or nearly expired token. It creates a
 throwaway kid through the real consent/group/handoff path and passes that kid's
 session to the Observation canary in memory. Do not create a persistent kid
 bearer secret.

@@ -61,6 +61,8 @@ curl -sS https://api.thehinterlandguide.app/.well-known/hinterland-kid-jwks.json
 # Expect: {"keys":[{"kty":"RSA","kid":"k1-2026-06",...}]}
 
 # Azure parent/kid + Observation smoke. The throwaway kid token stays in memory.
+# Request api://hinterland-api/user.access; its v2 token aud is the API client
+# ID 7dd9da3c-b7d6-45d4-955b-d7561c43f209, not the scope URI.
 HINTERLAND_API_BASE_URL=https://api.thehinterlandguide.app \
 HINTERLAND_SMOKE_ENTRA_BEARER="<access-token>" \
   python scripts/smoke_azure_parent_kid.py

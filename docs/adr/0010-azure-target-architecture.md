@@ -194,7 +194,9 @@ The FastAPI auth dependency dispatches on the `iss` claim:
 
 - **Entra path (adults — parents and teachers).** Verify against the CIAM tenant's discovery document:
   - issuer: `https://login.microsoftonline.com/18dbd7fa-c411-49bc-82fc-9ccaa26e3404/v2.0`
-  - audience: `api://hinterland-api` (the API app's identifier URI; access tokens are v2 because `requestedAccessTokenVersion=2`)
+  - requested scope: `api://hinterland-api/user.access`
+  - audience: `7dd9da3c-b7d6-45d4-955b-d7561c43f209` (the API application's client ID; Entra v2 access tokens always use this GUID in `aud`)
+  - authorized client: `60504e4c-6b5f-4031-a80a-3e4bdfae29b2` (`hinterland-client`); require delegated `scp=user.access` so app-only or unscoped tokens fail closed
   - signature: RS256 against Entra's JWKS at `https://login.microsoftonline.com/18dbd7fa-c411-49bc-82fc-9ccaa26e3404/discovery/v2.0/keys`
 - **Hinterland path (kids).** Verify against the backend's own JWKS:
   - issuer: `https://api.thehinterlandguide.app`

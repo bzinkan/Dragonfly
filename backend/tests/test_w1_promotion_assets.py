@@ -41,6 +41,13 @@ def test_w1_promotion_order_and_containment_are_explicit() -> None:
     assert "HINTERLAND_INAT_CV_DISCLOSURE_APPROVED=false" in workflow
     assert "HINTERLAND_INAT_CV_BENCHMARK_APPROVED=false" in workflow
     assert "HINTERLAND_INAT_SUBMIT_ENABLED=false" in workflow
+    assert "ENTRA_API_AUDIENCE: 7dd9da3c-b7d6-45d4-955b-d7561c43f209" in workflow
+    assert "ENTRA_CLIENT_APP_ID: 60504e4c-6b5f-4031-a80a-3e4bdfae29b2" in workflow
+    assert 'claims.get("aud") != os.environ["ENTRA_API_AUDIENCE"]' in workflow
+    assert 'claims.get("azp") != os.environ["ENTRA_CLIENT_APP_ID"]' in workflow
+    assert 'claims.get("ver") != "2.0"' in workflow
+    assert '"user.access" not in scopes.split()' in workflow
+    assert workflow.count('HINTERLAND_ENTRA_API_AUDIENCE="${ENTRA_API_AUDIENCE}"') >= 7
     assert "HINTERLAND_OBSERVATION_IDEMPOTENCY_REQUIRED=true" in workflow
     assert "Microsoft.Storage.BlobCreated" in workflow
     assert "--query '[].[name,resourceGroup]'" in workflow

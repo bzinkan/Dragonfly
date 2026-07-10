@@ -12,6 +12,7 @@ env:
   AZURE_ACR_NAME: hinterlandacrdev
   AZURE_CONTAINER_APP: hinterland-api
   IMAGE_REPOSITORY: hinterland-api
+  ENTRA_API_AUDIENCE: 7dd9da3c-b7d6-45d4-955b-d7561c43f209
   HINTERLAND_KID_JWKS_PATH: /.well-known/hinterland-kid-jwks.json
 
 jobs:
@@ -76,6 +77,7 @@ jobs:
                 select(.name != "HINTERLAND_APP_VERSION") |
                 select(.name != "HINTERLAND_DEV_AUTH_ENABLED") |
                 select(.name != "HINTERLAND_DEV_AUTH_TOKEN") |
+                select(.name != "HINTERLAND_ENTRA_API_AUDIENCE") |
                 select(.secretRef | not) |
                 select(.value != null) |
                 "\(.name)=\(.value)"
@@ -89,7 +91,10 @@ jobs:
             az containerapp job update \
               --name "${job}" \
               --resource-group "${AZURE_RESOURCE_GROUP}" \
-              --set-env-vars "${shared_env[@]}" HINTERLAND_DATABASE_PASSWORD=secretref:pg-password \
+              --set-env-vars \
+                "${shared_env[@]}" \
+                HINTERLAND_ENTRA_API_AUDIENCE="${ENTRA_API_AUDIENCE}" \
+                HINTERLAND_DATABASE_PASSWORD=secretref:pg-password \
               --output none
           done
 
@@ -166,6 +171,7 @@ jobs:
                 select(.name != "HINTERLAND_APP_VERSION") |
                 select(.name != "HINTERLAND_DEV_AUTH_ENABLED") |
                 select(.name != "HINTERLAND_DEV_AUTH_TOKEN") |
+                select(.name != "HINTERLAND_ENTRA_API_AUDIENCE") |
                 select(.secretRef | not) |
                 select(.value != null) |
                 "\(.name)=\(.value)"
@@ -179,7 +185,10 @@ jobs:
             az containerapp job update \
               --name "${job}" \
               --resource-group "${AZURE_RESOURCE_GROUP}" \
-              --set-env-vars "${shared_env[@]}" HINTERLAND_DATABASE_PASSWORD=secretref:pg-password \
+              --set-env-vars \
+                "${shared_env[@]}" \
+                HINTERLAND_ENTRA_API_AUDIENCE="${ENTRA_API_AUDIENCE}" \
+                HINTERLAND_DATABASE_PASSWORD=secretref:pg-password \
               --output none
           done
 
@@ -231,6 +240,7 @@ jobs:
             --name "${AZURE_CONTAINER_APP}" \
             --resource-group "${AZURE_RESOURCE_GROUP}" \
             --image "${IMAGE}" \
+            --set-env-vars HINTERLAND_ENTRA_API_AUDIENCE="${ENTRA_API_AUDIENCE}" \
             --output none
 
       - name: Smoke public API surfaces
@@ -276,10 +286,14 @@ jobs:
           test "${api_image}" = "${IMAGE}"
           api_env_names="$(az containerapp show --name "${AZURE_CONTAINER_APP}" --resource-group "${AZURE_RESOURCE_GROUP}" --query 'properties.template.containers[0].env[].name' --output tsv)"
           ! grep -qi "${retired_name}" <<< "${api_env_names}"
+          api_audience="$(az containerapp show --name "${AZURE_CONTAINER_APP}" --resource-group "${AZURE_RESOURCE_GROUP}" --query "properties.template.containers[0].env[?name=='HINTERLAND_ENTRA_API_AUDIENCE'].value | [0]" --output tsv)"
+          test "${api_audience}" = "${ENTRA_API_AUDIENCE}"
           mapfile -t jobs < <(az containerapp job list --resource-group "${AZURE_RESOURCE_GROUP}" --query "[?starts_with(name, 'hinterland-')].name" --output tsv)
           for job in "${jobs[@]}"; do
             image="$(az containerapp job show --name "${job}" --resource-group "${AZURE_RESOURCE_GROUP}" --query 'properties.template.containers[0].image' --output tsv)"
             test "${image}" = "${IMAGE}"
             env_names="$(az containerapp job show --name "${job}" --resource-group "${AZURE_RESOURCE_GROUP}" --query 'properties.template.containers[0].env[].name' --output tsv)"
             ! grep -qi "${retired_name}" <<< "${env_names}"
+            job_audience="$(az containerapp job show --name "${job}" --resource-group "${AZURE_RESOURCE_GROUP}" --query "properties.template.containers[0].env[?name=='HINTERLAND_ENTRA_API_AUDIENCE'].value | [0]" --output tsv)"
+            test "${job_audience}" = "${ENTRA_API_AUDIENCE}"
           done

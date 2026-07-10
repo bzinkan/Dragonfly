@@ -28,7 +28,9 @@ curl -fsS https://api.thehinterlandguide.app/.well-known/hinterland-kid-jwks.jso
 ```
 
 The authenticated parent/kid smoke requires an operator-provided test-parent
-Entra token:
+Entra v2 access token for `api://hinterland-api/user.access`. The requested
+scope uses that URI, while the token's `aud` claim must be the API client ID
+`7dd9da3c-b7d6-45d4-955b-d7561c43f209`:
 
 ```bash
 HINTERLAND_API_BASE_URL=https://api.thehinterlandguide.app \
