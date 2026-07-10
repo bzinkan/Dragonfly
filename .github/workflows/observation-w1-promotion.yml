@@ -21,6 +21,8 @@ env:
   AZURE_STORAGE_ACCOUNT: hinterlandphotosdev
   AZURE_UAMI_NAME: hinterland-api-mi
   IMAGE_REPOSITORY: hinterland-api
+  ENTRA_API_AUDIENCE: 7dd9da3c-b7d6-45d4-955b-d7561c43f209
+  ENTRA_CLIENT_APP_ID: 60504e4c-6b5f-4031-a80a-3e4bdfae29b2
   SERVICE_BUS_NAMESPACE: hinterland-sb-dev
   MODERATION_QUEUE: moderation-pending
   INAT_QUEUE: inat-submit
@@ -82,6 +84,23 @@ jobs:
               expires_at = int(claims["exp"])
           except Exception as exc:
               raise SystemExit("test-parent credential is not a JWT with an exp claim") from exc
+          expected_issuer = (
+              "https://login.microsoftonline.com/"
+              f"{os.environ['AZURE_TENANT_ID_EXPECTED']}/v2.0"
+          )
+          if claims.get("ver") != "2.0":
+              raise SystemExit("test-parent credential is not an Entra v2 access token")
+          if claims.get("iss") != expected_issuer or claims.get("tid") != os.environ["AZURE_TENANT_ID_EXPECTED"]:
+              raise SystemExit("test-parent credential has the wrong tenant or issuer")
+          if claims.get("aud") != os.environ["ENTRA_API_AUDIENCE"]:
+              raise SystemExit("test-parent credential has the wrong API audience")
+          if claims.get("azp") != os.environ["ENTRA_CLIENT_APP_ID"]:
+              raise SystemExit("test-parent credential was not minted for the approved client")
+          if not isinstance(claims.get("oid"), str) or not claims["oid"]:
+              raise SystemExit("test-parent credential has no adult object identity")
+          scopes = claims.get("scp", "")
+          if not isinstance(scopes, str) or "user.access" not in scopes.split():
+              raise SystemExit("test-parent credential is missing user.access")
           remaining = expires_at - int(time.time())
           if remaining < 1800:
               raise SystemExit(
@@ -177,6 +196,7 @@ jobs:
               HINTERLAND_INAT_CV_DISCLOSURE_APPROVED=false \
               HINTERLAND_INAT_CV_BENCHMARK_APPROVED=false \
               HINTERLAND_INAT_SUBMIT_ENABLED=false \
+              HINTERLAND_ENTRA_API_AUDIENCE="${ENTRA_API_AUDIENCE}" \
               HINTERLAND_OBSERVATION_IDEMPOTENCY_REQUIRED=true \
             --output none
 
@@ -202,6 +222,7 @@ jobs:
                 HINTERLAND_INAT_CV_DISCLOSURE_APPROVED=false \
                 HINTERLAND_INAT_CV_BENCHMARK_APPROVED=false \
                 HINTERLAND_INAT_SUBMIT_ENABLED=false \
+                HINTERLAND_ENTRA_API_AUDIENCE="${ENTRA_API_AUDIENCE}" \
                 HINTERLAND_OBSERVATION_IDEMPOTENCY_REQUIRED=true \
               --output none
           done
@@ -435,6 +456,7 @@ jobs:
               | select(.name != "HINTERLAND_APP_VERSION")
               | select(.name != "HINTERLAND_DEV_AUTH_ENABLED")
               | select(.name != "HINTERLAND_DEV_AUTH_TOKEN")
+              | select(.name != "HINTERLAND_ENTRA_API_AUDIENCE")
               | select(.name != "HINTERLAND_DATABASE_PASSWORD")
               | select(.secretRef | not)
               | select(.value != null)
@@ -458,6 +480,7 @@ jobs:
                 HINTERLAND_INAT_CV_DISCLOSURE_APPROVED=false \
                 HINTERLAND_INAT_CV_BENCHMARK_APPROVED=false \
                 HINTERLAND_INAT_SUBMIT_ENABLED=false \
+                HINTERLAND_ENTRA_API_AUDIENCE="${ENTRA_API_AUDIENCE}" \
                 HINTERLAND_OBSERVATION_IDEMPOTENCY_REQUIRED=true \
                 HINTERLAND_DATABASE_PASSWORD=secretref:pg-password \
               --output none
@@ -513,6 +536,7 @@ jobs:
               | select(.name != "HINTERLAND_APP_VERSION")
               | select(.name != "HINTERLAND_DEV_AUTH_ENABLED")
               | select(.name != "HINTERLAND_DEV_AUTH_TOKEN")
+              | select(.name != "HINTERLAND_ENTRA_API_AUDIENCE")
               | select(.name != "HINTERLAND_DATABASE_PASSWORD")
               | select(.secretRef | not)
               | select(.value != null)
@@ -534,6 +558,7 @@ jobs:
                 HINTERLAND_INAT_CV_DISCLOSURE_APPROVED=false \
                 HINTERLAND_INAT_CV_BENCHMARK_APPROVED=false \
                 HINTERLAND_INAT_SUBMIT_ENABLED=false \
+                HINTERLAND_ENTRA_API_AUDIENCE="${ENTRA_API_AUDIENCE}" \
                 HINTERLAND_OBSERVATION_IDEMPOTENCY_REQUIRED=true \
                 HINTERLAND_DATABASE_PASSWORD=secretref:pg-password \
               --output none
@@ -598,6 +623,7 @@ jobs:
               HINTERLAND_INAT_CV_DISCLOSURE_APPROVED=false \
               HINTERLAND_INAT_CV_BENCHMARK_APPROVED=false \
               HINTERLAND_INAT_SUBMIT_ENABLED=false \
+              HINTERLAND_ENTRA_API_AUDIENCE="${ENTRA_API_AUDIENCE}" \
               HINTERLAND_OBSERVATION_IDEMPOTENCY_REQUIRED=true \
             --output none
 
@@ -746,6 +772,7 @@ jobs:
             HINTERLAND_INAT_CV_DISCLOSURE_APPROVED=false \
             HINTERLAND_INAT_CV_BENCHMARK_APPROVED=false \
             HINTERLAND_INAT_SUBMIT_ENABLED=false \
+            HINTERLAND_ENTRA_API_AUDIENCE="${ENTRA_API_AUDIENCE}" \
             HINTERLAND_OBSERVATION_IDEMPOTENCY_REQUIRED=true; do
             assert_env app "${AZURE_CONTAINER_APP}" "${pair%%=*}" "${pair#*=}"
           done
@@ -781,6 +808,7 @@ jobs:
               HINTERLAND_INAT_CV_DISCLOSURE_APPROVED=false \
               HINTERLAND_INAT_CV_BENCHMARK_APPROVED=false \
               HINTERLAND_INAT_SUBMIT_ENABLED=false \
+              HINTERLAND_ENTRA_API_AUDIENCE="${ENTRA_API_AUDIENCE}" \
               HINTERLAND_OBSERVATION_IDEMPOTENCY_REQUIRED=true; do
               assert_env job "$job" "${pair%%=*}" "${pair#*=}"
             done

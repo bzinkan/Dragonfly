@@ -40,6 +40,7 @@ def test_active_azure_environment_is_hinterland_only() -> None:
     assert 'PROJECT_SLUG="hinterland"' in environment
     assert 'HINTERLAND_RESOURCE_GROUP="hinterland-dev-rg"' in environment
     assert 'HINTERLAND_CONTAINER_APP_NAME="hinterland-api"' in environment
+    assert 'HINTERLAND_ENTRA_API_AUDIENCE="7dd9da3c-b7d6-45d4-955b-d7561c43f209"' in environment
     assert 'HINTERLAND_KID_JWKS_PATH="/.well-known/hinterland-kid-jwks.json"' in environment
     assert not (_ROOT / "infra-azure/phase-9-observation-w1.sh").exists()
     assert not (_ROOT / "infra-gcp").exists()
@@ -79,6 +80,8 @@ def test_active_workflow_migrates_before_api_and_removes_retired_aliases() -> No
     assert "HINTERLAND_KID_JWKS_PATH" in workflow
     assert "HINTERLAND_SMOKE_ENTRA_BEARER" in workflow
     assert "HINTERLAND_DATABASE_PASSWORD=secretref:pg-password" in workflow
+    assert "ENTRA_API_AUDIENCE: 7dd9da3c-b7d6-45d4-955b-d7561c43f209" in workflow
+    assert workflow.count('HINTERLAND_ENTRA_API_AUDIENCE="${ENTRA_API_AUDIENCE}"') >= 3
     assert "--remove-env-vars" in workflow
     assert "hinterland-obs-preflight" in workflow
     assert "hinterland-migrate" in workflow

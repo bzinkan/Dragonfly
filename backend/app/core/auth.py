@@ -183,7 +183,18 @@ def _verify_entra_inline(token: str, settings: Settings) -> dict[str, object]:
                 # ``oid`` is required: the local users lookup keys on it,
                 # and the stub-claims detection treats its absence as a
                 # non-production token shape.
-                "require": ["exp", "iat", "iss", "aud", "sub", "oid"],
+                "require": [
+                    "exp",
+                    "iat",
+                    "iss",
+                    "aud",
+                    "sub",
+                    "oid",
+                    "tid",
+                    "ver",
+                    "azp",
+                    "scp",
+                ],
                 "verify_signature": True,
                 "verify_exp": True,
                 "verify_aud": True,
@@ -192,6 +203,15 @@ def _verify_entra_inline(token: str, settings: Settings) -> dict[str, object]:
         )
     except (InvalidTokenError, PyJWKClientError) as exc:
         raise InvalidAuthToken(f"Invalid Entra token: {exc}") from exc
+    scopes = decoded.get("scp")
+    if (
+        decoded.get("ver") != "2.0"
+        or decoded.get("tid") != settings.entra_tenant_id
+        or decoded.get("azp") != settings.entra_client_app_id
+        or not isinstance(scopes, str)
+        or settings.entra_required_scope not in scopes.split()
+    ):
+        raise InvalidAuthToken("Invalid Entra token claims")
     return cast(dict[str, object], decoded)
 
 

@@ -36,6 +36,15 @@ def test_inat_photo_egress_defaults_disabled() -> None:
     assert settings.observation_idempotency_required is False
 
 
+def test_entra_v2_audience_is_the_api_client_id() -> None:
+    settings = Settings()
+
+    assert settings.entra_api_audience == "7dd9da3c-b7d6-45d4-955b-d7561c43f209"
+    assert settings.entra_api_audience != "api://hinterland-api"
+    assert settings.entra_client_app_id == "60504e4c-6b5f-4031-a80a-3e4bdfae29b2"
+    assert settings.entra_required_scope == "user.access"
+
+
 def test_cv_requires_enable_disclosure_and_benchmark_gates() -> None:
     settings = Settings(
         inat_cv_enabled=True,
