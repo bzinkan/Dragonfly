@@ -118,17 +118,31 @@ def test_static_web_deployments_are_bound_to_current_resources() -> None:
     parents = (_ROOT / ".github/workflows/deploy-parents-swa.yml").read_text(encoding="utf-8")
     landing = (_ROOT / ".github/workflows/deploy-landing-swa.yml").read_text(encoding="utf-8")
 
+    parent_lines = set(parents.splitlines())
+    landing_lines = set(landing.splitlines())
+
     assert "HINTERLAND_PARENTS_SWA_TOKEN" in parents
     assert "AZURE_PARENTS_SWA_TOKEN" not in parents
-    assert "purple-coast-088e6b30f.7.azurestaticapps.net" in parents
-    assert "https://parents.thehinterlandguide.app" in parents
+    assert (
+        '              "current Azure resource": '
+        '"https://purple-coast-088e6b30f.7.azurestaticapps.net",' in parent_lines
+    )
+    assert (
+        '              "public parent domain": '
+        '"https://parents.thehinterlandguide.app",' in parent_lines
+    )
     assert '"surface": "parents"' in parents
 
     assert "HINTERLAND_LANDING_SWA_TOKEN" in landing
     assert "AZURE_LANDING_SWA_TOKEN" not in landing
-    assert "polite-grass-042f5da0f.7.azurestaticapps.net" in landing
-    assert "https://thehinterlandguide.app" in landing
-    assert "https://www.thehinterlandguide.app" in landing
+    assert (
+        '              "current Azure resource": '
+        '"https://polite-grass-042f5da0f.7.azurestaticapps.net",' in landing_lines
+    )
+    assert '              "public apex domain": "https://thehinterlandguide.app",' in landing_lines
+    assert (
+        '              "public www domain": "https://www.thehinterlandguide.app",' in landing_lines
+    )
     assert '"surface": "landing"' in landing
 
 
