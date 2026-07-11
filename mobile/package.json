@@ -9,6 +9,7 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "test": "jest",
+    "config:parent-web": "node ./scripts/verify-parent-web-contract.mjs",
     "config:play-internal": "node ./scripts/verify-play-internal-config.mjs",
     "config:identities": "node ./scripts/verify-mobile-identities.mjs"
   },

@@ -25,6 +25,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Require main for live parent deployment
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF}" = "refs/heads/main"
+          test "${GITHUB_SHA}" = "$(git rev-parse HEAD)"
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -36,6 +42,9 @@ jobs:
 
       - name: Export web bundle
         run: npx expo export --platform web
+
+      - name: Verify exported parent web contract
+        run: npm run config:parent-web -- --dist
 
       - name: Stamp exact parent build identity
         run: |
@@ -68,34 +77,29 @@ jobs:
           output_location: ""
           skip_app_build: true
 
-      - name: Verify current parent resource and public domain
+      - name: Verify exact parent callback route on both origins
         run: |
-          python - <<'PY'
-          import json
-          import os
-          import time
-          from urllib.request import urlopen
+          set -euo pipefail
+          for attempt in $(seq 1 18); do
+            if python "${GITHUB_WORKSPACE}/scripts/verify_parent_callback.py" \
+              --expected-sha "${GITHUB_SHA}" \
+              --origin "azure_swa=https://purple-coast-088e6b30f.7.azurestaticapps.net" \
+              --origin "public_parent=https://parents.thehinterlandguide.app" \
+              --expected-html "${GITHUB_WORKSPACE}/mobile/dist/auth/callback.html" \
+              --evidence-path "${GITHUB_WORKSPACE}/parent-callback-deploy-evidence.json"; then
+              break
+            fi
+            if [[ "$attempt" = 18 ]]; then
+              echo "Parent callback route did not converge to the deployed build" >&2
+              exit 1
+            fi
+            sleep 5
+          done
 
-          expected = os.environ["GITHUB_SHA"]
-          targets = {
-              "current Azure resource": "https://purple-coast-088e6b30f.7.azurestaticapps.net",
-              "public parent domain": "https://parents.thehinterlandguide.app",
-          }
-          for label, base_url in targets.items():
-              last_error = "no response"
-              for _ in range(18):
-                  try:
-                      with urlopen(
-                          f"{base_url}/.well-known/hinterland-build.json?sha={expected}",
-                          timeout=15,
-                      ) as response:
-                          payload = json.load(response)
-                      if payload == {"surface": "parents", "commit_sha": expected}:
-                          break
-                      last_error = f"unexpected marker: {payload!r}"
-                  except Exception as exc:  # noqa: BLE001 - bounded deployment probe
-                      last_error = str(exc)
-                  time.sleep(5)
-              else:
-                  raise SystemExit(f"{label} did not serve the exact parent build: {last_error}")
-          PY
+      - name: Publish sanitized parent callback deployment evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: parent-callback-deploy-${{ github.run_id }}
+          path: parent-callback-deploy-evidence.json
+          if-no-files-found: error
+          retention-days: 30

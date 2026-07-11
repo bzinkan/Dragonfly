@@ -42,6 +42,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Require main for protected W1 promotion
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF}" = "refs/heads/main"
+          test "${GITHUB_SHA}" = "$(git rev-parse HEAD)"
+
       - name: Initialize sanitized promotion evidence
         env:
           PROMOTION_CONFIRMATION: ${{ inputs.confirmation }}
@@ -656,6 +662,15 @@ jobs:
                   )
           PY
 
+      - name: Verify parent callback route before API rollout
+        run: |
+          set -euo pipefail
+          python scripts/verify_parent_callback.py \
+            --expected-sha "${GITHUB_SHA}" \
+            --origin "azure_swa=https://purple-coast-088e6b30f.7.azurestaticapps.net" \
+            --origin "public_parent=https://parents.thehinterlandguide.app" \
+            --evidence-path promotion-artifact/parent-callback-initial.json
+
       - name: Deploy the API only after migrations and rebuild
         run: |
           set -euo pipefail
@@ -1098,6 +1113,15 @@ jobs:
                   )
           PY
 
+      - name: Recheck parent callback route before final evidence
+        run: |
+          set -euo pipefail
+          python scripts/verify_parent_callback.py \
+            --expected-sha "${GITHUB_SHA}" \
+            --origin "azure_swa=https://purple-coast-088e6b30f.7.azurestaticapps.net" \
+            --origin "public_parent=https://parents.thehinterlandguide.app" \
+            --evidence-path promotion-artifact/parent-callback-final.json
+
       - name: Finalize sanitized evidence
         if: always()
         env:
@@ -1129,6 +1153,18 @@ jobs:
           if [[ -f promotion-artifact/monitoring.json ]]; then
             jq --slurpfile monitoring promotion-artifact/monitoring.json \
               '.monitoring=$monitoring[0]' \
+              promotion-artifact/promotion.json > promotion-artifact/promotion.tmp
+            mv promotion-artifact/promotion.tmp promotion-artifact/promotion.json
+          fi
+          if [[ -f promotion-artifact/parent-callback-initial.json ]]; then
+            jq --slurpfile callback promotion-artifact/parent-callback-initial.json \
+              '.parent_callback_initial=$callback[0]' \
+              promotion-artifact/promotion.json > promotion-artifact/promotion.tmp
+            mv promotion-artifact/promotion.tmp promotion-artifact/promotion.json
+          fi
+          if [[ -f promotion-artifact/parent-callback-final.json ]]; then
+            jq --slurpfile callback promotion-artifact/parent-callback-final.json \
+              '.parent_callback_final=$callback[0]' \
               promotion-artifact/promotion.json > promotion-artifact/promotion.tmp
             mv promotion-artifact/promotion.tmp promotion-artifact/promotion.json
           fi

@@ -71,25 +71,52 @@ The promotion job performs this order:
 7. applies and verifies the 24-hour upload, seven-day pilot-private, and 90-day
    held/rejected lifecycle rules;
 8. requires the parent, landing apex, and landing `www` build markers to match
-   the promotion SHA before API rollout, then runs public
-   health/readiness/JWKS probes; before any authenticated canary, both the
-   revision URL and public API domain must accept an exact-origin parent
-   consent CORS preflight from the custom parent domain and its backing Static
-   Web Apps domain, while an unrelated origin must be denied (wildcards and
-   landing-site origins do not qualify); it then runs the non-skipped parent,
-   kid, Expedition, idempotent Observation, Field Journal, `pilot_private`,
-   DTO, and signed-photo-denial canaries;
+   the promotion SHA before API rollout. It then makes a direct, unauthenticated
+   `GET /auth/callback?route_probe=...` against both the custom parent domain
+   and its backing Static Web Apps origin. Both responses must be a non-
+   redirected `200 text/html`, carry the callback security headers, contain the
+   route sentinel, and have identical bodies. This callback check is a hard
+   promotion stop: a skipped check, a 404, a redirect, a stale build marker, or
+   differing response bytes fails the run before API rollout. The probe never
+   sends an OAuth authorization code, state, token, cookie, email, or consent
+   proof. The workflow then runs public health/readiness/JWKS probes; before any
+   authenticated canary, both the revision URL and public API domain must
+   accept an exact-origin parent consent CORS preflight from the custom parent
+   domain and its backing Static Web Apps domain, while an unrelated origin
+   must be denied (wildcards and landing-site origins do not qualify); it then
+   runs the non-skipped parent, kid, Expedition, idempotent Observation, Field
+   Journal, `pilot_private`, DTO, and signed-photo-denial canaries;
 9. runs the database health job in strict mode, requires empty moderation
    active/DLQ counts, provisions/verifies alerts, and sends an action-group test;
-10. verifies every API/job setting and immutable image again.
+10. verifies every API/job setting and immutable image again, rechecks the web
+    build markers, and repeats the same non-skippable callback probe before
+    finalizing evidence.
+
+The parent bundle must export a real `/auth/callback.html`, and the Static Web
+Apps configuration may rewrite only `GET /auth/callback` to that file. Do not
+add a broad `navigationFallback`: unknown parent paths must continue to return
+404 so a missing release route cannot masquerade as a healthy app shell. CI
+checks the source contract, and the parent deployment checks the exported
+contract before upload and the two live origins after upload. Both the live
+parent deployment and protected promotion hard-reject non-`main` refs.
 
 The workflow artifact is intentionally sanitized. It contains the commit,
 image digest, API revision, Alembic head, job execution IDs/statuses, bounded
-request IDs, parent-browser CORS probe counts, alert-test acceptance, and
-pass/fail facts. It must never contain
-tokens, SAS URLs, emails, join codes, child/user text, coordinates, or images.
+request IDs, parent-browser CORS probe counts, callback pass/hash facts,
+alert-test acceptance, and pass/fail facts. It must never contain tokens, OAuth
+authorization codes or state, callback query strings, SAS URLs, emails, join
+codes, child/user text, coordinates, or images.
 Receiving the action-group test is still a human evidence item; API acceptance
 alone does not prove that an operator saw it.
+
+Before the adult dry run is accepted, use a fresh browser context and complete
+the real sequence exactly once: open `/consent`, record consent, continue to
+Entra, return through `/auth/callback`, confirm the app obtains the canonical
+`/v1/me`, and land in `/classroom`. A 404 or redirect away from the callback,
+an unhandled login result, a failed `/v1/me`, or failure to reach the classroom
+is a hard stop. Do not save a HAR, full callback URL, browser-history export, or
+screenshot containing the callback query; retain only sanitized pass/fail
+facts and bounded request IDs.
 
 ## Monitoring contract
 
@@ -124,6 +151,12 @@ Also perform airplane capture, kill after PUT/lost-create-response, picker
 recovery, account switch, location denial/imported-photo, catalog/manual/Unknown,
 and private-photo non-rendering tests. Record device/Android details and request
 IDs, but no child photo, text, or coordinates.
+
+Any code, configuration, or content change after the promoted commit or AAB is
+built invalidates that AAB's W1 evidence. Land the repair through a reviewed PR,
+rerun the protected server promotion, build and publish a new versioned AAB,
+and repeat the required physical-device runs. Never reuse an older AAB merely
+because its package name or server API is unchanged.
 
 ## Fresh-package cutover
 
