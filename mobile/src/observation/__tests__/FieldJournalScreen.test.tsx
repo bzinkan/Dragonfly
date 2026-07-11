@@ -8,6 +8,26 @@ import type { QueuedObservation } from "@/src/observation/queueTypes";
 const mockObservations: ObservationListItem[] = [];
 const mockDex: DexListItem[] = [];
 const mockQueue: QueuedObservation[] = [];
+let mockAuthSession:
+  | { status: "initializing" }
+  | { status: "anonymous" }
+  | {
+      status: "authenticated";
+      user: {
+        id: string;
+        role: "kid";
+        display_name: string;
+        entra_oid: null;
+      };
+    } = {
+  status: "authenticated",
+  user: {
+    id: "kid-1",
+    role: "kid",
+    display_name: "Explorer",
+    entra_oid: null,
+  },
+};
 const mockPhotoUrlState = {
   isPending: false,
   isError: false,
@@ -46,11 +66,7 @@ jest.mock("expo-router", () => ({
 
 jest.mock("@/src/auth/session", () => ({
   useAuthSession: (selector?: (state: any) => unknown) => {
-    const state = {
-      status: "authenticated",
-      user: { id: "kid-1", role: "kid", display_name: "Explorer", entra_oid: null },
-    };
-    return selector ? selector(state) : state;
+    return selector ? selector(mockAuthSession) : mockAuthSession;
   },
 }));
 
@@ -134,9 +150,67 @@ describe("Field Journal screen", () => {
     mockObservations.splice(0);
     mockDex.splice(0);
     mockQueue.splice(0);
+    mockAuthSession = {
+      status: "authenticated",
+      user: {
+        id: "kid-1",
+        role: "kid",
+        display_name: "Explorer",
+        entra_oid: null,
+      },
+    };
   });
 
   afterEach(() => jest.useRealTimers());
+
+  it("keeps hook order stable across sign-in and sign-out transitions", () => {
+    mockAuthSession = { status: "initializing" };
+    let tree!: renderer.ReactTestRenderer;
+    act(() => {
+      tree = renderer.create(<FieldJournalScreen />);
+    });
+
+    mockAuthSession = {
+      status: "authenticated",
+      user: {
+        id: "kid-1",
+        role: "kid",
+        display_name: "Explorer",
+        entra_oid: null,
+      },
+    };
+    expect(() => {
+      act(() => tree.update(<FieldJournalScreen />));
+    }).not.toThrow();
+    expect(
+      tree.root.findAllByProps({ testID: "field-journal-screen" }).length,
+    ).toBeGreaterThan(0);
+
+    mockAuthSession = { status: "anonymous" };
+    expect(() => {
+      act(() => tree.update(<FieldJournalScreen />));
+    }).not.toThrow();
+    expect(JSON.stringify(tree.toJSON())).toContain(
+      "Sign in to open your Field Journal",
+    );
+
+    mockAuthSession = {
+      status: "authenticated",
+      user: {
+        id: "kid-1",
+        role: "kid",
+        display_name: "Explorer",
+        entra_oid: null,
+      },
+    };
+    expect(() => {
+      act(() => tree.update(<FieldJournalScreen />));
+    }).not.toThrow();
+    expect(
+      tree.root.findAllByProps({ testID: "field-journal-screen" }).length,
+    ).toBeGreaterThan(0);
+    act(() => tree.unmount());
+  });
 
   it("renders private entries and queued work as metadata-only truthful cards", () => {
     mockObservations.push(

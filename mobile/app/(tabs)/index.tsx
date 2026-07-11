@@ -42,6 +42,14 @@ import { useMyObservations } from "@/src/observation/useMyObservations";
 import { useObservationQueue } from "@/src/observation/useObservationQueue";
 import { usePhotoUrl } from "@/src/observation/usePhotoUrl";
 
+function renderSpeciesItem({ item }: { item: DexListItem }) {
+  return <SpeciesCard item={item} />;
+}
+
+function renderObservationItem({ item }: { item: ObservationListItem }) {
+  return <JournalCard item={item} />;
+}
+
 export default function FieldJournalScreen() {
   const session = useAuthSession();
   const { width, fontScale } = useWindowDimensions();
@@ -133,15 +141,6 @@ export default function FieldJournalScreen() {
     />
   );
 
-  const renderSpecies = useCallback(
-    ({ item }: { item: DexListItem }) => <SpeciesCard item={item} />,
-    [],
-  );
-  const renderObservation = useCallback(
-    ({ item }: { item: ObservationListItem }) => <JournalCard item={item} />,
-    [],
-  );
-
   if (mode === "species") {
     return (
       <DesktopContainer>
@@ -168,7 +167,7 @@ export default function FieldJournalScreen() {
               onRetry={onRefresh}
             />
           }
-          renderItem={renderSpecies}
+          renderItem={renderSpeciesItem}
           ListFooterComponent={
             dex.hasNextPage ? (
               <LoadMoreButton
@@ -207,7 +206,7 @@ export default function FieldJournalScreen() {
             onRetry={onRefresh}
           />
         }
-        renderItem={renderObservation}
+        renderItem={renderObservationItem}
         ListFooterComponent={
           observations.hasNextPage ? (
             <LoadMoreButton
