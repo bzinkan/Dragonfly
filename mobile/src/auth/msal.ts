@@ -16,6 +16,7 @@
  * On iOS / Android, `Platform.OS === "web"` is false and these helpers
  * are no-ops so the bundle still imports cleanly.
  */
+import type { Configuration } from "@azure/msal-browser";
 import { Platform } from "react-native";
 
 import {
@@ -39,9 +40,169 @@ let sessionController: MsalSessionController | null = null;
 
 const ENTRA_SCOPES = ["api://hinterland-api/user.access"];
 
+type ParentEntraConfiguration = {
+  clientId: string;
+  authority: string;
+  redirectUri: string;
+};
+
 export type SignedInAdultProfile = {
   suggestedDisplayName: string;
 };
+
+type ParentRedirectClient = Pick<
+  PublicClientApplicationType,
+  "clearCache" | "handleRedirectPromise"
+>;
+
+type ParentRedirectSession = Pick<
+  MsalSessionController,
+  "activateAccount" | "beginLogout" | "syncCachedAccount"
+>;
+
+export type ParentRedirectOutcome =
+  | "none"
+  | "handled"
+  | "callback_pending"
+  | "failed";
+
+type RedirectFailureNavigation = () => void;
+type ParentCallbackRouteCheck = () => boolean;
+
+function isParentCallbackRoute(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    window.location.pathname === "/auth/callback"
+  );
+}
+
+function scrubFailedParentCallback(): void {
+  if (typeof window === "undefined") return;
+  if (window.location.pathname !== "/auth/callback") return;
+  // handleRedirectPromise already rejected, so retaining the provider response
+  // no longer helps recovery. Remove it without leaving the loading-only route.
+  window.history.replaceState(null, document.title, "/auth/callback");
+}
+
+function replaceFailedParentCallback(): void {
+  if (typeof window === "undefined") return;
+  if (window.location.pathname !== "/auth/callback") return;
+  // Remove the provider response from browser history only after both local
+  // identity stores are cleared. The sign-in screen exposes no provider error
+  // detail and requires an explicit new account choice.
+  window.location.replace("/sign-in");
+}
+
+async function failParentRedirect(
+  ms: ParentRedirectClient,
+  session: ParentRedirectSession,
+  navigateAfterFailure: RedirectFailureNavigation,
+  scrubAfterFailure: RedirectFailureNavigation,
+): Promise<"failed"> {
+  try {
+    scrubAfterFailure();
+  } catch {
+    // URL cleanup must never prevent identity cleanup.
+  }
+  let identityCleared = true;
+  try {
+    await session.beginLogout();
+  } catch {
+    identityCleared = false;
+  }
+  try {
+    await ms.clearCache();
+  } catch {
+    identityCleared = false;
+  }
+  if (identityCleared) {
+    try {
+      navigateAfterFailure();
+    } catch {
+      // Identity is already cleared; staying on the callback is fail closed.
+    }
+  }
+  return "failed";
+}
+
+export function createParentMsalConfiguration(
+  entra: ParentEntraConfiguration = env.entra,
+): Configuration {
+  return {
+    auth: {
+      clientId: entra.clientId,
+      authority: entra.authority,
+      knownAuthorities: [new URL(entra.authority).host],
+      redirectUri: entra.redirectUri,
+    },
+    cache: {
+      cacheLocation: "localStorage",
+    },
+  };
+}
+
+export async function consumeParentRedirect(
+  ms: ParentRedirectClient,
+  session: ParentRedirectSession,
+  navigateAfterFailure: RedirectFailureNavigation = replaceFailedParentCallback,
+  scrubAfterFailure: RedirectFailureNavigation = scrubFailedParentCallback,
+  callbackRouteCheck: ParentCallbackRouteCheck = isParentCallbackRoute,
+): Promise<ParentRedirectOutcome> {
+  // The dedicated callback route is loading-only. Consume the response before
+  // consulting the broader account cache, then return to the exact parent
+  // setup page that initiated login so its tab-scoped consent proof survives.
+  try {
+    const redirectResult = await ms.handleRedirectPromise({
+      navigateToLoginRequestUrl: true,
+    });
+    if (redirectResult?.account) {
+      session.activateAccount(redirectResult.account);
+      return "handled";
+    }
+    // On the real callback, MSAL normally caches the response, starts a
+    // no-history navigation back to the initiating page, and resolves null as
+    // the old page unloads. A direct/reloaded empty callback must also remain
+    // inert. In both cases, do not clear MSAL's pending response and do not
+    // select a stale cached adult on this page.
+    if (callbackRouteCheck()) {
+      return "callback_pending";
+    }
+    return "none";
+  } catch {
+    // A failed callback in a shared browser must never fall through to a
+    // previous adult's sole cached account. Scrub the OAuth response, clear
+    // both the app bearer and complete MSAL cache, and skip cached-account sync
+    // for this boot. If either clear fails, remain on the loading-only callback
+    // route rather than navigating unsafely.
+    return await failParentRedirect(
+      ms,
+      session,
+      navigateAfterFailure,
+      scrubAfterFailure,
+    );
+  }
+}
+
+export async function bootstrapParentSession(
+  ms: ParentRedirectClient,
+  session: ParentRedirectSession,
+  beforeCachedAccountSync: () => void | Promise<void>,
+  navigateAfterFailure?: RedirectFailureNavigation,
+  scrubAfterFailure?: RedirectFailureNavigation,
+  callbackRouteCheck?: ParentCallbackRouteCheck,
+): Promise<ParentRedirectOutcome> {
+  const outcome = await consumeParentRedirect(
+    ms,
+    session,
+    navigateAfterFailure,
+    scrubAfterFailure,
+    callbackRouteCheck,
+  );
+  if (outcome === "failed" || outcome === "callback_pending") return outcome;
+  await beforeCachedAccountSync();
+  await session.syncCachedAccount();
+  return outcome;
+}
 
 function isWeb(): boolean {
   return Platform.OS === "web";
@@ -54,17 +215,7 @@ export async function getMsal(): Promise<PublicClientApplicationType | null> {
 
   initPromise = (async () => {
     const { PublicClientApplication } = await import("@azure/msal-browser");
-    const ms = new PublicClientApplication({
-      auth: {
-        clientId: env.entra.clientId,
-        authority: env.entra.authority,
-        knownAuthorities: [new URL(env.entra.authority).host],
-        redirectUri: env.entra.redirectUri,
-      },
-      cache: {
-        cacheLocation: "localStorage",
-      },
-    });
+    const ms = new PublicClientApplication(createParentMsalConfiguration());
     await ms.initialize();
     msalApp = ms;
     return ms;
@@ -105,33 +256,21 @@ export function ensureTokenSync(): void {
 
     // Replay any pending redirect from a sign-in round-trip first and make its
     // exact account authoritative before looking at the broader MSAL cache.
-    try {
-      const redirectResult = await ms.handleRedirectPromise();
-      if (redirectResult?.account) {
-        session.activateAccount(redirectResult.account);
-      }
-    } catch {
-      // Ignore -- the next acquireTokenSilent attempt will surface real issues.
-    }
-
-    const { EventType } = await import("@azure/msal-browser");
-    ms.addEventCallback((evt) => {
-      // Token-acquisition events are deliberately ignored: reacting to an
-      // ACQUIRE_TOKEN_SUCCESS by acquiring again creates a feedback loop.
-      if (
-        evt.eventType !== EventType.LOGIN_SUCCESS &&
-        evt.eventType !== EventType.ACTIVE_ACCOUNT_CHANGED &&
-        evt.eventType !== EventType.LOGOUT_SUCCESS
-      ) {
-        return;
-      }
-      void session.handleEvent(evt.eventType, evt.payload, EventType);
+    await bootstrapParentSession(ms, session, async () => {
+      const { EventType } = await import("@azure/msal-browser");
+      ms.addEventCallback((evt) => {
+        // Token-acquisition events are deliberately ignored: reacting to an
+        // ACQUIRE_TOKEN_SUCCESS by acquiring again creates a feedback loop.
+        if (
+          evt.eventType !== EventType.LOGIN_SUCCESS &&
+          evt.eventType !== EventType.ACTIVE_ACCOUNT_CHANGED &&
+          evt.eventType !== EventType.LOGOUT_SUCCESS
+        ) {
+          return;
+        }
+        void session.handleEvent(evt.eventType, evt.payload, EventType);
+      });
     });
-
-    // Attach the listener before acquisition so an account switch during a
-    // slow silent token request cannot be missed. syncCachedAccount() starts
-    // from MSAL's explicit active account, including the redirect selection.
-    await session.syncCachedAccount();
   })();
 }
 

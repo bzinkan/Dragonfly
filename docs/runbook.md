@@ -51,6 +51,45 @@ origin negative control must return 400 without
 `Access-Control-Allow-Origin`. `http://localhost:19006` is local-development
 compatibility and never counts as deployed W1 browser evidence.
 
+### Parent authentication callback gate
+
+The parent web export must contain a real `auth/callback.html`. Azure Static
+Web Apps is configured with one exact rule: `GET /auth/callback` rewrites to
+that file. There is deliberately no broad `navigationFallback`; an unknown
+parent path must remain a 404. This turns a missing callback route into a visible
+release failure instead of serving a generic shell that cannot finish MSAL.
+
+CI runs the source contract, and the parent deployment runs the exported
+contract before upload. The live parent deployment and protected promotion
+both hard-reject any ref other than `refs/heads/main`; a manually dispatched
+feature branch must never replace the OAuth/consent surface. After deployment,
+the reusable callback verifier sends
+an unauthenticated safe probe to both of these origins:
+
+- `https://parents.thehinterlandguide.app`
+- `https://purple-coast-088e6b30f.7.azurestaticapps.net`
+
+Each origin must serve the current commit marker and return a direct `200` with
+a `text/html` content type for `/auth/callback?route_probe=...`, with no
+redirect, the expected route sentinel, `Cache-Control: no-store`,
+`Referrer-Policy: no-referrer`, and
+`X-Content-Type-Options: nosniff`. Both callback bodies must hash identically.
+The protected promotion runs this gate before API rollout and repeats it after
+the final web-marker recheck. Neither gate may skip or continue on error.
+
+The route probe contains only the synthetic `route_probe` value. Never place a
+real OAuth authorization code, state, token, cookie, email, consent proof, full
+callback URL, or response body in a command line, log, screenshot, HAR, or
+promotion artifact. Sanitized evidence may contain only the commit, origin
+labels, statuses, header pass facts, and callback artifact hash.
+
+After the automated gates pass, complete the browser smoke in a fresh browser
+context: `/consent` -> record consent -> Entra sign-in -> `/auth/callback` ->
+authenticated `/v1/me` -> `/classroom`. Do not reuse an authorization code from
+a failed or earlier attempt. A callback 404/redirect, an unhandled login result,
+a failed canonical `/v1/me`, or failure to reach the classroom is a hard W1
+promotion stop.
+
 The authenticated parent/kid smoke requires an operator-provided test-parent
 Entra v2 access token for `api://hinterland-api/user.access`. The requested
 scope uses that URI, while the token's `aud` claim must be the API client ID
@@ -178,6 +217,11 @@ denial. A changed request under the same idempotency key must return 409.
 The exact Play Internal AAB must additionally pass airplane-mode capture, kill
 after PUT, relaunch/reconnect, lost-create-response, account switch, catalog vs
 manual/Unknown, no-location, and no-raw-coordinate inspection.
+
+If any code, configuration, or content changes after the promoted commit or
+exact AAB is built, that AAB and its device evidence are invalid. Merge the fix,
+rerun the protected server promotion, build/publish a new versioned AAB, and
+repeat the required physical-device runs.
 
 ## Photo Access Probe
 

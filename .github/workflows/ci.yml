@@ -140,3 +140,6 @@ jobs:
         run: |
           APP_ENV=play-internal npm run config:play-internal
           npm run config:identities
+
+      - name: Verify parent web source contract
+        run: npm run config:parent-web
