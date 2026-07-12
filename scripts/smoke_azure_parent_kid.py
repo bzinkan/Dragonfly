@@ -30,7 +30,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from smoke_observation_w1 import ObservationCanaryEvidence, run_canary
+from smoke_observation_w1 import (
+    DispatcherBenchmarkSeed,
+    ObservationCanaryEvidence,
+    run_canary,
+    run_dispatcher_benchmark,
+)
 
 API_BASE = os.environ.get("HINTERLAND_API_BASE_URL", "https://api.thehinterlandguide.app").rstrip(
     "/"
@@ -38,6 +43,7 @@ API_BASE = os.environ.get("HINTERLAND_API_BASE_URL", "https://api.thehinterlandg
 PARENT_BEARER = os.environ.get("HINTERLAND_SMOKE_ENTRA_BEARER", "").strip()
 PARENT_NAME = os.environ.get("HINTERLAND_SMOKE_PARENT_NAME", "Smoke Test Parent")
 KID_NAME = os.environ.get("HINTERLAND_SMOKE_KID_NAME", "Sparrow")
+DISPATCHER_BENCHMARK_SAMPLES = int(os.environ.get("HINTERLAND_DISPATCHER_BENCHMARK_SAMPLES", "0"))
 _REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 
@@ -136,6 +142,7 @@ def _write_evidence(
     *,
     request_ids: list[str],
     observation: ObservationCanaryEvidence,
+    dispatcher_benchmark: DispatcherBenchmarkSeed | None,
 ) -> None:
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -149,6 +156,11 @@ def _write_evidence(
                 "starter_expedition_visible": True,
                 "request_ids": request_ids,
                 "observation_canary": observation.to_public_dict(),
+                "dispatcher_benchmark": (
+                    dispatcher_benchmark.to_public_dict()
+                    if dispatcher_benchmark is not None
+                    else None
+                ),
             },
             indent=2,
             sort_keys=True,
@@ -165,6 +177,7 @@ def run_parent_kid_smoke(
     parent_name: str = PARENT_NAME,
     kid_name: str = KID_NAME,
     evidence_path: str | os.PathLike[str] | None = None,
+    dispatcher_benchmark_samples: int = DISPATCHER_BENCHMARK_SAMPLES,
 ) -> ObservationCanaryEvidence:
     """Create a throwaway kid and pass its session directly to the W1 canary."""
 
@@ -321,11 +334,23 @@ def run_parent_kid_smoke(
 
     print("[10/10] Observation W1 canary with in-memory kid session...")
     observation = run_canary(base_url=base_url, bearer=kid_session_token)
+    dispatcher_benchmark: DispatcherBenchmarkSeed | None = None
+    if dispatcher_benchmark_samples:
+        print(
+            "[benchmark] Seeding exact-revision dispatcher workload "
+            f"({dispatcher_benchmark_samples} observations)..."
+        )
+        dispatcher_benchmark = run_dispatcher_benchmark(
+            base_url=base_url,
+            bearer=kid_session_token,
+            sample_count=dispatcher_benchmark_samples,
+        )
     if evidence_path:
         _write_evidence(
             evidence_path,
             request_ids=request_ids,
             observation=observation,
+            dispatcher_benchmark=dispatcher_benchmark,
         )
 
     print(
@@ -341,6 +366,7 @@ def main() -> int:
             base_url=API_BASE,
             parent_bearer=PARENT_BEARER,
             evidence_path=os.environ.get("HINTERLAND_SMOKE_EVIDENCE_PATH") or None,
+            dispatcher_benchmark_samples=DISPATCHER_BENCHMARK_SAMPLES,
         )
     except Exception as exc:
         print(f"Authenticated smoke failed: {exc}", file=sys.stderr)

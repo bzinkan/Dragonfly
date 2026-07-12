@@ -72,6 +72,9 @@ def test_w1_promotion_order_and_containment_are_explicit() -> None:
     browser_cors = workflow.index("Verify trusted parent browser CORS preflight")
     web_readiness = workflow.index("Verify exact W1 web deployments")
     authenticated = workflow.index("Non-skipped authenticated handoff and Observation canary")
+    dispatcher_benchmark = workflow.index(
+        "Require exact-revision deployed dispatcher p95 below 300 ms"
+    )
     final_runtime = workflow.index("Assert final W1 runtime, queue, and digest state")
     restore_strict_modes = workflow.index("Restore temporary strict job modes")
     final_web_recheck = workflow.index("Recheck exact W1 web deployments before final evidence")
@@ -91,6 +94,7 @@ def test_w1_promotion_order_and_containment_are_explicit() -> None:
         < public_readiness
         < browser_cors
         < authenticated
+        < dispatcher_benchmark
         < final_runtime
         < restore_strict_modes
         < final_web_recheck
@@ -110,6 +114,18 @@ def test_w1_promotion_order_and_containment_are_explicit() -> None:
     assert '"user.access" not in scopes.split()' in workflow
     assert workflow.count('HINTERLAND_ENTRA_API_AUDIENCE="${ENTRA_API_AUDIENCE}"') >= 7
     assert "HINTERLAND_OBSERVATION_IDEMPOTENCY_REQUIRED=true" in workflow
+    benchmark_step, _ = _step_containing(
+        workflow, "Require exact-revision deployed dispatcher p95 below 300 ms"
+    )
+    _assert_non_skippable_gate(benchmark_step)
+    assert "verify_deployed_dispatcher_benchmark.py" in benchmark_step
+    assert '--expected-revision "$W1_API_READY_REVISION"' in benchmark_step
+    assert '--expected-image "$IMAGE"' in benchmark_step
+    assert "--threshold-ms 300" in benchmark_step
+    assert "--timeout-seconds 900" in benchmark_step
+    assert "del(.observation_ids)" in workflow
+    assert workflow.count("--slurpfile benchmark") >= 2
+    assert 'HINTERLAND_DISPATCHER_BENCHMARK_SAMPLES: "50"' in workflow
     for explicit_setting in (
         "HINTERLAND_MODERATION_PROVIDER",
         "HINTERLAND_INAT_CV_ENABLED",
@@ -306,6 +322,8 @@ def test_parent_smoke_passes_throwaway_kid_session_in_memory() -> None:
     observation_smoke = (_ROOT / "scripts/smoke_observation_w1.py").read_text(encoding="utf-8")
 
     assert "run_canary(base_url=base_url, bearer=kid_session_token)" in parent_smoke
+    assert "run_dispatcher_benchmark(" in parent_smoke
+    assert "bearer=kid_session_token" in parent_smoke
     assert 'payload.get("id") != parent_user_id' in parent_smoke
     assert 'payload.get("display_name") != parent_name' in parent_smoke
     assert 'payload.get("id") != kid_user_id' in parent_smoke

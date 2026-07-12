@@ -34,8 +34,8 @@ class MatcherInputs:
     taxon: TaxonInfo | None
     """None when the observation has no taxon -- e.g. manual species_name only."""
 
-    user_dex_taxon_ids: frozenset[int]
-    """Taxa the user already has in their Dex. Used by not_in_dex."""
+    current_taxon_is_first_find: bool
+    """DexHandler's atomic decision for this observation's current taxon."""
 
     user_prior_observations: tuple[PriorObservation, ...]
     """All of the user's prior observations (for not_within_radius)."""

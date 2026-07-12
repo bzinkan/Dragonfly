@@ -61,8 +61,9 @@ The promotion job performs this order:
    subscriptions sourced by photo storage;
 4. if a direct BlobCreated moderation subscription is found, deletes it for
    containment and fails the run so an adult must investigate before rerun;
-5. runs the full disposable-PostgreSQL Observation suite with 50 dispatcher
-   samples, builds one `repository@sha256:...` image, requires the W1 job
+5. runs the full disposable-PostgreSQL Observation suite with 50 mixed
+   Unknown/catalog samples through the real handler registry, builds one
+   `repository@sha256:...` image, requires the W1 job
    inventory/identity/database-secret contract, and pins only the manual
    preflight/migration jobs;
 6. runs read-only preflight and additive migrations, then—and only then—pins
@@ -85,7 +86,12 @@ The promotion job performs this order:
    domain and its backing Static Web Apps domain, while an unrelated origin
    must be denied (wildcards and landing-site origins do not qualify); it then
    runs the non-skipped parent, kid, Expedition, idempotent Observation, Field
-   Journal, `pilot_private`, DTO, and signed-photo-denial canaries;
+   Journal, `pilot_private`, DTO, and signed-photo-denial canaries. The same
+   throwaway kid then seeds 50 mixed Unknown/catalog/coarse-location
+   observations. Promotion polls Log Analytics for every exact observation on
+   the exact revision and immutable image, and fails on missing/duplicate/
+   partial events or nearest-rank dispatcher p95 greater than or equal to
+   300 ms;
 9. runs the database health job in strict mode, requires empty moderation
    active/DLQ counts, provisions/verifies alerts, and sends an action-group test;
 10. verifies every API/job setting and immutable image again, rechecks the web
@@ -102,7 +108,8 @@ parent deployment and protected promotion hard-reject non-`main` refs.
 
 The workflow artifact is intentionally sanitized. It contains the commit,
 image digest, API revision, Alembic head, job execution IDs/statuses, bounded
-request IDs, parent-browser CORS probe counts, callback pass/hash facts,
+request IDs, aggregate dispatcher sample/p50/p95/max and per-handler timing,
+parent-browser CORS probe counts, callback pass/hash facts,
 alert-test acceptance, and pass/fail facts. It must never contain tokens, OAuth
 authorization codes or state, callback query strings, SAS URLs, emails, join
 codes, child/user text, coordinates, or images.

@@ -1,8 +1,8 @@
 """Unit tests for the full ExpeditionHandler.
 
 Stubs the SQLAlchemy session for the query sequence the handler issues
-(progress join + species cache + dex, plus the prior-obs scan ONLY when
-some active step uses the radius matcher) plus the final commit. Uses
+(progress join + species cache, plus the prior-obs scan ONLY when the
+currently eligible step uses the radius matcher) plus the final commit. Uses
 real expedition JSON dicts so we exercise the Pydantic round-trip +
 matcher integration too.
 
@@ -23,7 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import models
 from app.dispatcher.handlers.expedition import ExpeditionHandler
-from app.dispatcher.types import Context
+from app.dispatcher.types import Context, HandlerResult
+from app.models.expedition import MatchAllOf, MatchAnyOrganism, MatchNotInCurrentExpedition
 
 _USER_ID = "01J0KIDID0000000000000ULID"
 _GROUP_ID = "01J0GROUPID00000000000ULID"
@@ -65,14 +66,24 @@ def _photo() -> models.Photo:
     )
 
 
-def _ctx(fake_session: AsyncMock, *, taxon_id: int | None = 12345) -> Context:
-    return Context(
+def _ctx(
+    fake_session: AsyncMock,
+    *,
+    taxon_id: int | None = 12345,
+    is_first_find: bool = True,
+) -> Context:
+    ctx = Context(
         db=fake_session,
         user=_user(),
         group=_group(),
         observation=_obs(taxon_id=taxon_id),
         photo=_photo(),
     )
+    ctx.results["dex"] = HandlerResult(
+        rewards=[],
+        state={"is_first_find": is_first_find},
+    )
+    return ctx
 
 
 def _expedition_body(*, exp_id: str, steps: list[dict[str, Any]]) -> dict[str, Any]:
@@ -123,7 +134,6 @@ def _wire_session(
     *,
     progress_pairs: list[tuple[models.ExpeditionProgress, models.ExpeditionContent]],
     species: models.SpeciesCache | None = None,
-    dex_taxa: list[int] | None = None,
     prior_obs: list[tuple[float, float]] | None = None,
 ) -> None:
     """Wire the query sequence the handler uses."""
@@ -133,20 +143,16 @@ def _wire_session(
     species_result = MagicMock()
     species_result.scalar_one_or_none = MagicMock(return_value=species)
 
-    dex_result = MagicMock()
-    dex_result.all = MagicMock(return_value=[(t,) for t in (dex_taxa or [])])
-
     prior_result = MagicMock()
     prior_result.all = MagicMock(return_value=prior_obs or [])
 
     side_effects: list[Any] = [progress_result]
     if progress_pairs:
-        # _build_inputs queries species (only if taxon present) + dex,
-        # then priors ONLY when some active step uses the radius
-        # matcher. The prior result is queued last either way; tests
-        # without a radius step simply never consume it (asserted
-        # explicitly via execute.await_count in the radius tests below).
-        side_effects.extend([species_result, dex_result, prior_result])
+        # _build_inputs queries species (only if taxon present), then priors
+        # ONLY when the current active step uses the radius matcher. The prior
+        # result is queued last either way; tests without a radius step simply
+        # never consume it (asserted via execute.await_count below).
+        side_effects.extend([species_result, prior_result])
 
     fake_session.execute = AsyncMock(side_effect=side_effects)
     fake_session.commit = AsyncMock()
@@ -222,12 +228,10 @@ async def test_not_in_current_expedition_blocks_repeat_species(
             source_payload={},
         )
     )
-    dex_result = MagicMock()
-    dex_result.all = MagicMock(return_value=[])
     completed_taxa_result = MagicMock()
-    completed_taxa_result.all = MagicMock(return_value=[(47157,)])
+    completed_taxa_result.all = MagicMock(return_value=[("01J0PREVIOUSOBS000000ULID", 47157)])
     fake_session.execute = AsyncMock(
-        side_effect=[progress_result, species_result, dex_result, completed_taxa_result]
+        side_effect=[progress_result, species_result, completed_taxa_result]
     )
     fake_session.commit = AsyncMock()
 
@@ -458,8 +462,7 @@ async def test_legacy_string_rows_still_advance(fake_session: AsyncMock) -> None
 
 async def test_no_radius_step_skips_prior_observation_query(fake_session: AsyncMock) -> None:
     """No active step uses not_within_radius_of_existing, so the handler
-    must not scan the user's full (lat, lng) history: only the progress
-    join + species cache + dex queries run."""
+    must not scan the user's full (lat, lng) history."""
     body = _expedition_body(
         exp_id="x",
         steps=[_step("first", "any_organism"), _step("newfind", "not_in_dex")],
@@ -475,8 +478,8 @@ async def test_no_radius_step_skips_prior_observation_query(fake_session: AsyncM
     result = await handler.handle(_ctx(fake_session))
 
     assert [r.type for r in result.rewards] == ["expedition_step"]
-    # progress join + species cache + dex -- and NOT the prior-obs scan.
-    assert fake_session.execute.await_count == 3
+    # Progress join + species cache -- no Dex or prior-observation scan.
+    assert fake_session.execute.await_count == 2
 
 
 async def test_radius_step_triggers_prior_observation_query(fake_session: AsyncMock) -> None:
@@ -498,20 +501,72 @@ async def test_radius_step_triggers_prior_observation_query(fake_session: AsyncM
     result = await handler.handle(_ctx(fake_session))
 
     assert result.rewards == []
-    # progress join + species cache + dex + the prior-obs scan.
-    assert fake_session.execute.await_count == 4
-    prior_stmt = str(fake_session.execute.await_args_list[3].args[0]).lower()
+    # Progress join + species cache + the prior-observation scan.
+    assert fake_session.execute.await_count == 3
+    prior_stmt = str(fake_session.execute.await_args_list[2].args[0]).lower()
     assert "observations.user_id" in prior_stmt
     assert "observations.group_id" not in prior_stmt
+    assert "observations.latitude is not null" in prior_stmt
+    assert "observations.longitude is not null" in prior_stmt
     fake_session.commit.assert_not_called()
 
 
-async def test_radius_step_later_in_sequence_still_loads_priors(
+async def test_completed_taxa_batch_keeps_two_expeditions_isolated(
     fake_session: AsyncMock,
 ) -> None:
-    """The walk covers ALL steps of every active expedition, not just
-    each next incomplete one -- a radius leaf later in the sequence and
-    nested inside a combinator still triggers the prior-obs load."""
+    result = MagicMock()
+    result.all = MagicMock(
+        return_value=[
+            ("01J0PREVIOUSOBS00000000001", 9083),
+            ("01J0PREVIOUSOBS00000000002", 12727),
+        ]
+    )
+    fake_session.execute = AsyncMock(return_value=result)
+    nested_spec = MatchAllOf(
+        kind="all_of",
+        matches=[
+            MatchAnyOrganism(kind="any_organism"),
+            MatchNotInCurrentExpedition(kind="not_in_current_expedition"),
+        ],
+    )
+
+    taxa = await ExpeditionHandler._load_completed_taxa(
+        _ctx(fake_session),
+        [
+            (
+                "progress-a",
+                {
+                    "one": {
+                        "completed_at": "2026-05-10T11:00:00+00:00",
+                        "observation_id": "01J0PREVIOUSOBS00000000001",
+                    }
+                },
+                nested_spec,
+            ),
+            (
+                "progress-b",
+                {
+                    "one": {
+                        "completed_at": "2026-05-10T11:00:00+00:00",
+                        "observation_id": "01J0PREVIOUSOBS00000000002",
+                    }
+                },
+                nested_spec,
+            ),
+        ],
+    )
+
+    assert taxa == {
+        "progress-a": frozenset({9083}),
+        "progress-b": frozenset({12727}),
+    }
+    fake_session.execute.assert_awaited_once()
+
+
+async def test_radius_step_later_in_sequence_does_not_load_priors_early(
+    fake_session: AsyncMock,
+) -> None:
+    """A later radius step is irrelevant until it becomes the next step."""
     body = _expedition_body(
         exp_id="x",
         steps=[
@@ -542,8 +597,56 @@ async def test_radius_step_later_in_sequence_still_loads_priors(
     # The next step ("first") matches and advances as usual...
     assert [r.type for r in result.rewards] == ["expedition_step"]
     assert result.rewards[0].payload["step_id"] == "first"
-    # ...and the prior-obs query ran because of the nested radius leaf.
-    assert fake_session.execute.await_count == 4
+    # The later step is not evaluated, so no prior-observation scan runs.
+    assert fake_session.execute.await_count == 2
+
+
+async def test_radius_step_without_precise_point_skips_history_and_declines(
+    fake_session: AsyncMock,
+) -> None:
+    body = _expedition_body(
+        exp_id="x",
+        steps=[_step("move_away", "not_within_radius_of_existing", radius_meters=25)],
+    )
+    progress = _progress("x")
+    _wire_session(
+        fake_session,
+        progress_pairs=[(progress, _content("x", body))],
+        prior_obs=[(39.1, -84.5)],
+    )
+    ctx = _ctx(fake_session)
+    ctx.observation.latitude = None
+    ctx.observation.longitude = None
+
+    result = await ExpeditionHandler().handle(ctx)
+
+    assert result.rewards == []
+    assert fake_session.execute.await_count == 2
+
+
+@pytest.mark.parametrize(
+    ("is_first_find", "expected_types"),
+    [
+        (True, ["expedition_step", "expedition_complete"]),
+        (False, []),
+    ],
+)
+async def test_not_in_dex_reuses_atomic_dex_predecessor_state(
+    fake_session: AsyncMock,
+    is_first_find: bool,
+    expected_types: list[str],
+) -> None:
+    body = _expedition_body(
+        exp_id="x",
+        steps=[_step("newfind", "not_in_dex")],
+    )
+    progress = _progress("x")
+    _wire_session(fake_session, progress_pairs=[(progress, _content("x", body))])
+
+    result = await ExpeditionHandler().handle(_ctx(fake_session, is_first_find=is_first_find))
+
+    assert [reward.type for reward in result.rewards] == expected_types
+    assert fake_session.execute.await_count == 2
 
 
 async def test_ancestor_ids_flow_into_descendant_taxon_match(

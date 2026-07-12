@@ -19,8 +19,18 @@ handler-version mismatch, review races, dispatcher/rebuild serialization, and
 replacement first-find rebuilds.
 
 The 2026-07-09 development probe ran 50 durable dispatches at 61.41 ms p95
-(16.04 ms minimum, 135.81 ms maximum), below the 300 ms code-level budget. This
-does not replace evidence from the exact Azure/release-AAB environment.
+(16.04 ms minimum, 135.81 ms maximum), but used no-op handlers against local
+PostgreSQL and therefore did not represent the deployed registry.
+
+The exact version-10 W1 device run on 2026-07-12 exposed the real blocker:
+the two exact-revision dispatches were 715.81 ms and 664.72 ms. The API is in
+East US while the sponsored PostgreSQL server is in Central US, so the durable
+ledger's per-handler flushes multiplied cross-region round-trip time. The code
+repair now buffers final ledger outcomes until one outer flush and removes
+Expedition's redundant full-Dex scan. Disposable PostgreSQL verifies a mixed
+Unknown/catalog/active-Expedition registry probe plus a bounded SQL statement
+budget for the exact Unknown/no-location device path; exact Azure evidence is
+still required before this risk can close.
 
 ## Remaining Closure Checklist
 
@@ -29,7 +39,9 @@ does not replace evidence from the exact Azure/release-AAB environment.
 - [x] Prove SQL savepoint rollback, blocked dependencies, persisted restore,
       Expedition replay gates, dispatcher/rebuild serialization, and
       replacement first-find rebuilds.
-- [x] Run a 50-dispatch disposable PostgreSQL probe below 300 ms p95.
+- [x] Run a disposable PostgreSQL probe with mixed Unknown/catalog observations,
+      real handlers, and an active Expedition below 300 ms p95; enforce the
+      exact Unknown/no-location SQL query budget separately.
 - [ ] Run pilot traffic until at least 50 deployed observations exist.
 - [ ] Confirm deployed Log Analytics p95 below 300 ms.
 - [x] Add Azure Monitor configuration for sustained p95 above 300 ms.

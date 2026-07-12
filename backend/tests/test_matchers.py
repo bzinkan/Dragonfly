@@ -21,7 +21,7 @@ from app.models.expedition import (
 def _inputs(
     *,
     taxon: TaxonInfo | None = None,
-    dex: frozenset[int] = frozenset(),
+    is_first_find: bool = False,
     priors: tuple[PriorObservation, ...] = (),
     taxon_sets: dict[str, frozenset[int]] | None = None,
     current_expedition_taxa: frozenset[int] = frozenset(),
@@ -31,7 +31,7 @@ def _inputs(
 ) -> MatcherInputs:
     return MatcherInputs(
         taxon=taxon,
-        user_dex_taxon_ids=dex,
+        current_taxon_is_first_find=is_first_find,
         user_prior_observations=priors,
         obs_latitude=lat,
         obs_longitude=lng,
@@ -118,13 +118,13 @@ def test_any_organism_no_match_when_no_taxon() -> None:
 
 def test_not_in_dex_matches_for_unseen_species() -> None:
     spec = MatchNotInDex(kind="not_in_dex")
-    inputs = _inputs(taxon=_bird_taxon(12345), dex=frozenset({1, 2, 3}))
+    inputs = _inputs(taxon=_bird_taxon(12345), is_first_find=True)
     assert matches(spec, inputs) is True
 
 
 def test_not_in_dex_no_match_when_species_already_in_dex() -> None:
     spec = MatchNotInDex(kind="not_in_dex")
-    inputs = _inputs(taxon=_bird_taxon(12345), dex=frozenset({12345, 999}))
+    inputs = _inputs(taxon=_bird_taxon(12345), is_first_find=False)
     assert matches(spec, inputs) is False
 
 
@@ -143,7 +143,7 @@ def test_not_within_radius_declines_without_precise_location() -> None:
     inputs = _inputs(priors=())
     inputs = MatcherInputs(
         taxon=inputs.taxon,
-        user_dex_taxon_ids=inputs.user_dex_taxon_ids,
+        current_taxon_is_first_find=inputs.current_taxon_is_first_find,
         user_prior_observations=inputs.user_prior_observations,
         obs_latitude=None,
         obs_longitude=None,
@@ -240,9 +240,9 @@ def test_all_of_requires_every_subspec_to_match() -> None:
         ],
     )
     # Bird, not in Dex -> match
-    assert matches(spec, _inputs(taxon=_bird_taxon(), dex=frozenset())) is True
+    assert matches(spec, _inputs(taxon=_bird_taxon(), is_first_find=True)) is True
     # Bird, IN Dex -> no match
-    assert matches(spec, _inputs(taxon=_bird_taxon(12345), dex=frozenset({12345}))) is False
+    assert matches(spec, _inputs(taxon=_bird_taxon(12345), is_first_find=False)) is False
 
 
 def test_any_of_short_circuits_on_first_match() -> None:
@@ -284,7 +284,7 @@ def test_combinators_can_nest_two_levels() -> None:
         ],
     )
     plant = TaxonInfo(taxon_id=99, iconic_taxon="Plantae", ancestor_ids=())
-    assert matches(spec, _inputs(taxon=plant, dex=frozenset())) is True
+    assert matches(spec, _inputs(taxon=plant, is_first_find=True)) is True
     assert (
-        matches(spec, _inputs(taxon=_bird_taxon(), dex=frozenset())) is False
+        matches(spec, _inputs(taxon=_bird_taxon(), is_first_find=True)) is False
     )  # not in plant/fungi
