@@ -15,6 +15,7 @@ from typing import Any, cast
 import structlog
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.db import models
 from app.dispatcher.types import Context, Handler, HandlerResult, Reward, RewardType
@@ -91,33 +92,56 @@ async def _dispatch_durable(
                 state=dict(run.state),
             )
 
+    # ``begin_nested()`` flushes every pending ORM mutation before it opens a
+    # savepoint. Do not dirty ledger rows while handlers are still running:
+    # those uncommitted ``running`` states are not externally observable, and
+    # flushing them once per handler turns cross-region database latency into
+    # the dominant submission cost. Buffer final ledger mutations in memory,
+    # while retaining the savepoint + inner flush around every handler's own
+    # writes, and apply the ledger outcomes together before the outer commit.
+    pending_updates: dict[str, dict[str, Any]] = {}
+
+    missing_runs: list[models.ObservationHandlerRun] = []
+    for handler in handlers:
+        if handler.name in runs:
+            continue
+        version = str(getattr(handler, "version", _DEFAULT_HANDLER_VERSION))
+        run = models.ObservationHandlerRun(
+            observation_id=ctx.observation.id,
+            handler_name=handler.name,
+            handler_version=version,
+            status="pending",
+            state={},
+            rewards=[],
+            attempt_count=0,
+        )
+        ctx.db.add(run)
+        runs[handler.name] = run
+        missing_runs.append(run)
+
+    # Missing rows occur during deterministic rebuilds and compatibility
+    # recovery. Insert them in one flush so the first handler savepoint does
+    # not implicitly flush a growing collection of ledger rows.
+    if missing_runs:
+        await ctx.db.flush()
+
     timings: dict[str, float] = {}
     for handler in handlers:
         version = str(getattr(handler, "version", _DEFAULT_HANDLER_VERSION))
-        run = runs.get(handler.name)
-        if run is None:
-            run = models.ObservationHandlerRun(
-                observation_id=ctx.observation.id,
-                handler_name=handler.name,
-                handler_version=version,
-                status="pending",
-                state={},
-                rewards=[],
-                attempt_count=0,
-            )
-            ctx.db.add(run)
-            runs[handler.name] = run
+        run = runs[handler.name]
 
         if run.status == "succeeded" and run.handler_version == version:
             continue
         if run.status == "succeeded" and run.handler_version != version:
             # Handler upgrades require an explicit backfill/rebuild. Automatic
             # rerun could apply a second version's side effects over the first.
-            run.status = "blocked"
-            run.last_error = (
-                f"handler version changed {run.handler_version!r} -> {version!r}; "
-                "explicit rebuild required"
-            )
+            pending_updates[handler.name] = {
+                "status": "blocked",
+                "last_error": (
+                    f"handler version changed {run.handler_version!r} -> {version!r}; "
+                    "explicit rebuild required"
+                ),
+            }
             continue
 
         missing_dependency = next(
@@ -129,18 +153,15 @@ async def _dispatch_durable(
             None,
         )
         if missing_dependency is not None:
-            run.status = "blocked"
-            run.last_error = f"dependency {missing_dependency!r} has not succeeded"
-            run.finished_at = now
+            pending_updates[handler.name] = {
+                "status": "blocked",
+                "last_error": f"dependency {missing_dependency!r} has not succeeded",
+                "finished_at": now,
+            }
             continue
 
         handler_started = perf_counter()
-        run.status = "running"
-        run.handler_version = version
-        run.attempt_count += 1
-        run.started_at = now
-        run.finished_at = None
-        run.last_error = None
+        handler_started_at = datetime.now(UTC)
 
         try:
             async with ctx.db.begin_nested():
@@ -148,11 +169,16 @@ async def _dispatch_durable(
                 await ctx.db.flush()
         except Exception as exc:  # isolation is the contract
             timings[handler.name] = round((perf_counter() - handler_started) * 1000, 2)
-            run.status = "failed"
-            run.state = {}
-            run.rewards = []
-            run.last_error = f"{type(exc).__name__}: {exc}"[:4000]
-            run.finished_at = datetime.now(UTC)
+            pending_updates[handler.name] = {
+                "status": "failed",
+                "handler_version": version,
+                "attempt_count": run.attempt_count + 1,
+                "started_at": handler_started_at,
+                "finished_at": datetime.now(UTC),
+                "last_error": f"{type(exc).__name__}: {exc}"[:4000],
+                "state": {},
+                "rewards": [],
+            }
             ctx.results.pop(handler.name, None)
             log.exception(
                 "dispatcher.handler_failed",
@@ -163,11 +189,30 @@ async def _dispatch_durable(
             continue
 
         timings[handler.name] = round((perf_counter() - handler_started) * 1000, 2)
-        run.status = "succeeded"
-        run.state = dict(result.state)
-        run.rewards = [_reward_to_json(reward) for reward in result.rewards]
-        run.finished_at = datetime.now(UTC)
+        pending_updates[handler.name] = {
+            "status": "succeeded",
+            "handler_version": version,
+            "attempt_count": run.attempt_count + 1,
+            "started_at": handler_started_at,
+            "finished_at": datetime.now(UTC),
+            "last_error": None,
+            "state": dict(result.state),
+            "rewards": [_reward_to_json(reward) for reward in result.rewards],
+        }
         ctx.results[handler.name] = result
+
+    for handler_name, updates in pending_updates.items():
+        run = runs[handler_name]
+        for attribute, value in updates.items():
+            setattr(run, attribute, value)
+        # JSON values that remain ``{}``/``[]`` are otherwise omitted from an
+        # ORM UPDATE while handlers with non-empty results use a different SQL
+        # shape. Mark both columns consistently so successful ledger rows can
+        # use one executemany round trip.
+        if "state" in updates:
+            flag_modified(run, "state")
+        if "rewards" in updates:
+            flag_modified(run, "rewards")
 
     rewards: list[Reward] = []
     all_succeeded = True

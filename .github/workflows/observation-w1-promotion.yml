@@ -130,7 +130,8 @@ jobs:
           source backend/.venv/bin/activate
           pwsh -NoProfile -File scripts/verify_observation_postgres.ps1 \
             -DispatcherSamples 50
-          jq '.postgres_verification={result:"passed", dispatcher_samples:50}' \
+          jq '.postgres_verification={result:"passed", dispatcher_samples:50,
+                dispatcher_scenario:"real_handlers_mixed_unknown_catalog_active_expedition"}' \
             promotion-artifact/promotion.json > promotion-artifact/promotion.tmp
           mv promotion-artifact/promotion.tmp promotion-artifact/promotion.json
 
@@ -871,6 +872,7 @@ jobs:
         env:
           HINTERLAND_SMOKE_ENTRA_BEARER: ${{ secrets.HINTERLAND_SMOKE_ENTRA_BEARER }}
           HINTERLAND_SMOKE_EVIDENCE_PATH: promotion-artifact/authenticated-smoke.json
+          HINTERLAND_DISPATCHER_BENCHMARK_SAMPLES: "50"
         run: |
           set -euo pipefail
           test -n "${HINTERLAND_SMOKE_ENTRA_BEARER}"
@@ -884,10 +886,33 @@ jobs:
           payload = token.split(".", 2)[1]
           payload += "=" * (-len(payload) % 4)
           expires_at = int(json.loads(base64.urlsafe_b64decode(payload))["exp"])
-          if expires_at - int(time.time()) < 300:
-              raise SystemExit("test-parent credential is too close to expiry for authenticated canaries")
+          if expires_at - int(time.time()) < 900:
+              raise SystemExit(
+                  "test-parent credential needs at least 900s for authenticated canaries"
+              )
           PY
           python scripts/smoke_azure_parent_kid.py
+
+      - name: Require exact-revision deployed dispatcher p95 below 300 ms
+        run: |
+          set -euo pipefail
+          workspace_id="$(az monitor log-analytics workspace show \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --workspace-name hinterland-law-dev \
+            --query customerId --output tsv)"
+          test -n "$workspace_id"
+          python scripts/verify_deployed_dispatcher_benchmark.py \
+            --seed-evidence promotion-artifact/authenticated-smoke.json \
+            --workspace-id "$workspace_id" \
+            --expected-revision "$W1_API_READY_REVISION" \
+            --expected-image "$IMAGE" \
+            --threshold-ms 300 \
+            --timeout-seconds 900 \
+            --output promotion-artifact/dispatcher-benchmark.json
+          jq --slurpfile benchmark promotion-artifact/dispatcher-benchmark.json \
+            '.dispatcher_benchmark=$benchmark[0]' \
+            promotion-artifact/promotion.json > promotion-artifact/promotion.tmp
+          mv promotion-artifact/promotion.tmp promotion-artifact/promotion.json
 
       - name: Strict post-canary database health
         run: |
@@ -1146,7 +1171,19 @@ jobs:
           fi
           if [[ -f promotion-artifact/authenticated-smoke.json ]]; then
             jq --slurpfile smoke promotion-artifact/authenticated-smoke.json \
-              '.authenticated_smoke=$smoke[0]' \
+              '.authenticated_smoke=($smoke[0] |
+                if .dispatcher_benchmark then
+                  .dispatcher_benchmark |= del(.observation_ids)
+                else . end)' \
+              promotion-artifact/promotion.json > promotion-artifact/promotion.tmp
+            mv promotion-artifact/promotion.tmp promotion-artifact/promotion.json
+          fi
+          # The verifier writes aggregate evidence before returning its
+          # fail-closed exit code. Preserve those timings/reasons even when the
+          # benchmark step failed and its inline merge never ran.
+          if [[ -f promotion-artifact/dispatcher-benchmark.json ]]; then
+            jq --slurpfile benchmark promotion-artifact/dispatcher-benchmark.json \
+              '.dispatcher_benchmark=$benchmark[0]' \
               promotion-artifact/promotion.json > promotion-artifact/promotion.tmp
             mv promotion-artifact/promotion.tmp promotion-artifact/promotion.json
           fi

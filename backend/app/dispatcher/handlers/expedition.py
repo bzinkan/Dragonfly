@@ -45,8 +45,10 @@ from app.matchers.registry import matches
 from app.matchers.taxon_sets import load_taxon_set_index
 from app.models.expedition import (
     Expedition,
+    MatchNotInCurrentExpedition,
     MatchNotWithinRadius,
     MatchSpec,
+    Step,
 )
 from app.services.expedition_progress import parse_step_completion
 from app.services.species_cache import ancestor_ids_from_payload
@@ -70,6 +72,16 @@ def _uses_radius(spec: MatchSpec) -> bool:
     nested = getattr(spec, "matches", None)
     if nested is not None:
         return any(_uses_radius(sub) for sub in nested)
+    return False
+
+
+def _uses_current_expedition_taxa(spec: MatchSpec) -> bool:
+    """True when a spec tree compares against earlier credited taxa."""
+    if isinstance(spec, MatchNotInCurrentExpedition):
+        return True
+    nested = getattr(spec, "matches", None)
+    if nested is not None:
+        return any(_uses_current_expedition_taxa(sub) for sub in nested)
     return False
 
 
@@ -120,17 +132,16 @@ class ExpeditionHandler:
                 continue
             parsed.append((progress, content, exp))
 
-        # Only pay the prior-observation history scan when some active
-        # step can actually use it. Deliberately walks ALL steps of ALL
-        # active expeditions (not just each next incomplete step) --
-        # simple and safe over minimal.
-        needs_priors = any(_uses_radius(step.match) for _, _, exp in parsed for step in exp.steps)
-
-        base_inputs = await self._build_inputs(ctx, include_prior_observations=needs_priors)
-
-        rewards: list[Reward] = []
         observed_at = ctx.observation.observed_at or ctx.observation.created_at
-
+        candidates: list[
+            tuple[
+                models.ExpeditionProgress,
+                models.ExpeditionContent,
+                Expedition,
+                dict[str, object],
+                Step,
+            ]
+        ] = []
         for progress, content, exp in parsed:
             # Rebuilds replay accepted history; observations made before an
             # expedition enrollment never advance it retroactively.
@@ -157,9 +168,44 @@ class ExpeditionHandler:
                 # Race: something else completed all steps. Skip.
                 continue
 
+            candidates.append((progress, content, exp, completed, next_step))
+
+        if not candidates:
+            log.info(
+                "dispatcher.expedition.complete",
+                observation_id=ctx.observation.id,
+                user_id=ctx.user.id,
+                advanced_count=0,
+                completed_count=0,
+            )
+            return HandlerResult(rewards=[])
+
+        # Only the currently eligible step can run in this dispatch. Avoid a
+        # full history scan because a later step might use radius matching;
+        # that later step is not evaluated until a future observation. With no
+        # legacy precise coordinates the matcher must decline, so no prior-row
+        # query is useful.
+        observation_has_point = (
+            ctx.observation.latitude is not None and ctx.observation.longitude is not None
+        )
+        needs_priors = observation_has_point and any(
+            _uses_radius(next_step.match) for _, _, _, _, next_step in candidates
+        )
+        base_inputs = await self._build_inputs(ctx, include_prior_observations=needs_priors)
+        completed_taxa = await self._load_completed_taxa(
+            ctx,
+            [
+                (progress.id, completed, next_step.match)
+                for progress, _, _, completed, next_step in candidates
+            ],
+        )
+
+        rewards: list[Reward] = []
+        for progress, _content, exp, completed, next_step in candidates:
+
             inputs = replace(
                 base_inputs,
-                current_expedition_taxon_ids=await self._completed_taxon_ids(ctx, completed),
+                current_expedition_taxon_ids=completed_taxa.get(progress.id, frozenset()),
             )
             if not matches(next_step.match, inputs):
                 continue
@@ -228,28 +274,51 @@ class ExpeditionHandler:
         return HandlerResult(rewards=rewards)
 
     @staticmethod
-    async def _completed_taxon_ids(
+    async def _load_completed_taxa(
         ctx: Context,
-        completed: dict[str, object],
-    ) -> frozenset[int]:
-        observation_ids = [
-            parsed.observation_id
-            for value in completed.values()
-            for parsed in [parse_step_completion(value)]
-            if parsed.observation_id is not None
-        ]
-        if not observation_ids:
-            return frozenset()
+        candidates: list[tuple[str, dict[str, object], MatchSpec]],
+    ) -> dict[str, frozenset[int]]:
+        """Load completed-step taxa for every relevant expedition at once."""
+        observation_ids_by_progress: dict[str, list[str]] = {}
+        all_observation_ids: set[str] = set()
+        for progress_id, completed, spec in candidates:
+            if not _uses_current_expedition_taxa(spec):
+                continue
+            observation_ids = [
+                parsed.observation_id
+                for value in completed.values()
+                for parsed in [parse_step_completion(value)]
+                if parsed.observation_id is not None
+            ]
+            if not observation_ids:
+                continue
+            observation_ids_by_progress[progress_id] = observation_ids
+            all_observation_ids.update(observation_ids)
+
+        if not all_observation_ids:
+            return {}
 
         rows = (
             await ctx.db.execute(
-                select(models.Observation.taxon_id).where(
-                    models.Observation.id.in_(observation_ids),
+                select(models.Observation.id, models.Observation.taxon_id).where(
+                    models.Observation.id.in_(all_observation_ids),
                     models.Observation.taxon_id.is_not(None),
                 )
             )
         ).all()
-        return frozenset(taxon_id for (taxon_id,) in rows if taxon_id is not None)
+        taxon_by_observation = {
+            observation_id: taxon_id
+            for observation_id, taxon_id in rows
+            if taxon_id is not None
+        }
+        return {
+            progress_id: frozenset(
+                taxon_by_observation[observation_id]
+                for observation_id in observation_ids
+                if observation_id in taxon_by_observation
+            )
+            for progress_id, observation_ids in observation_ids_by_progress.items()
+        }
 
     async def _build_inputs(
         self, ctx: Context, *, include_prior_observations: bool
@@ -275,19 +344,16 @@ class ExpeditionHandler:
                 ),
             )
 
-        # Exclude the dex_entry that DexHandler just inserted for this
-        # observation -- otherwise not_in_dex would always return False
-        # for first finds.
-        dex_rows = (
-            await ctx.db.execute(
-                select(models.DexEntry.taxon_id).where(
-                    models.DexEntry.user_id == ctx.user.id,
-                    models.DexEntry.first_observation_id != obs.id,
-                )
-            )
-        ).all()
-        user_dex = frozenset(r[0] for r in dex_rows)
-
+        # The matcher only asks whether the current observation's taxon was
+        # already in the Dex. DexHandler has already made that exact atomic
+        # decision and persisted it in predecessor state, so do not scan the
+        # user's entire Dex again. Missing predecessor state is treated as
+        # already-seen (fail closed); the durable dispatcher normally blocks
+        # Expedition before this point when Dex did not succeed.
+        dex_result = ctx.results.get("dex")
+        is_first_find = bool(
+            dex_result is not None and dex_result.state.get("is_first_find", False)
+        )
         # The full (lat, lng) history scan only runs when some active
         # step uses not_within_radius_of_existing (the caller walks the
         # spec trees); every other dispatch passes an empty tuple.
@@ -301,6 +367,8 @@ class ExpeditionHandler:
                     ).where(
                         models.Observation.user_id == ctx.user.id,
                         models.Observation.id != obs.id,
+                        models.Observation.latitude.is_not(None),
+                        models.Observation.longitude.is_not(None),
                     )
                 )
             ).all()
@@ -312,7 +380,7 @@ class ExpeditionHandler:
 
         return MatcherInputs(
             taxon=taxon,
-            user_dex_taxon_ids=user_dex,
+            current_taxon_is_first_find=is_first_find,
             user_prior_observations=priors,
             obs_latitude=obs.latitude,
             obs_longitude=obs.longitude,

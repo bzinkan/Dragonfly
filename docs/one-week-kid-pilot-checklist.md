@@ -119,7 +119,9 @@ HINTERLAND_SMOKE_ENTRA_BEARER="<access-token>" \
   409.
 - [ ] Owner/peer/unrelated/adult/reviewer photo-access probes pass.
 - [ ] Pilot-private seven-day and upload-orphan 24-hour cleanup is verified.
-- [ ] Real-PostgreSQL dispatcher failure/replay passes below 300 ms p95.
+- [ ] Real-PostgreSQL dispatcher failure/replay passes, and the protected
+  promotion artifact contains all 50 exact-revision Azure samples with
+  nearest-rank dispatcher p95 below 300 ms.
 - [ ] Location denial saves and PostgreSQL/Log Analytics contain no raw
   coordinates or SAS URLs.
 

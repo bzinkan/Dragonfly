@@ -49,10 +49,11 @@ The durable dispatcher acquires the per-user PostgreSQL advisory lock and:
 1. loads all ledger rows for the observation;
 2. restores state/rewards already succeeded at the same handler version;
 3. checks hard dependencies;
-4. marks an eligible row `running` and increments its attempt count;
+4. buffers the eligible handler's attempt metadata in memory (an uncommitted
+   `running` row cannot be observed outside the transaction);
 5. executes the handler inside `begin_nested()` and flushes its writes;
-6. records `succeeded` plus JSON state/rewards, or records `failed` after the
-   savepoint rolls back;
+6. buffers `succeeded` plus JSON state/rewards, or `failed` after the savepoint
+   rolls back, then writes all final ledger outcomes together before commit;
 7. marks dependent rows `blocked` when a predecessor has not succeeded;
 8. combines only persisted successful rewards and sorts by weight descending
    with stable registry-order tie breaking; and
@@ -136,7 +137,8 @@ Unit and disposable PostgreSQL tests cover:
 - rejection replacing first-find and all derived state.
 
 The W1 release gate repeats failure/replay against real PostgreSQL and requires
-dispatcher p95 below 300 ms.
+the real handler registry below 300 ms p95. A localhost probe made from no-op
+handlers is useful plumbing coverage, but is not release-performance evidence.
 
 ## Adding A Handler
 

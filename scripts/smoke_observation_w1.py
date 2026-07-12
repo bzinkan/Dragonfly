@@ -3,9 +3,10 @@
 
 The parent/kid smoke imports :func:`run_canary` and passes its throwaway kid
 session directly in memory. Operators may still run this file on its own with
-``HINTERLAND_SMOKE_BEARER``. The optional evidence file contains only bounded
-request IDs and pass/fail facts; it never contains the bearer, SAS URL, image,
-child text, or location.
+``HINTERLAND_SMOKE_BEARER``. The optional runner-local evidence contains only
+bounded operational identifiers and pass/fail facts; the promotion artifact
+removes benchmark observation IDs before upload. Neither form contains the
+bearer, SAS URL, image, child text, or location.
 """
 
 from __future__ import annotations
@@ -43,6 +44,22 @@ class ObservationCanaryEvidence:
     child_presentation_status: str
     signed_photo_denied: bool
     child_dto_minimized: bool
+
+    def to_public_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class DispatcherBenchmarkSeed:
+    """Bounded identifiers for exact-revision telemetry correlation."""
+
+    result: str
+    started_at: str
+    finished_at: str
+    sample_count: int
+    observation_ids: list[str]
+    create_request_ids: list[str]
+    scenario_counts: dict[str, int]
 
     def to_public_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -323,6 +340,144 @@ def run_canary(
     if evidence_path:
         _write_evidence(evidence_path, evidence.to_public_dict())
     return evidence
+
+
+def run_dispatcher_benchmark(
+    *,
+    base_url: str,
+    bearer: str,
+    sample_count: int,
+) -> DispatcherBenchmarkSeed:
+    """Create a representative, test-owned dispatcher workload.
+
+    The protected workflow correlates only these observation IDs with the
+    exact deployed revision's ``dispatcher.complete`` events. The workload is
+    intentionally mixed: Unknown/no-location, catalog/no-location, and
+    catalog/coarse-location submissions, with a real active starter Expedition.
+    """
+
+    if sample_count < 20 or sample_count > 100:
+        raise RuntimeError("dispatcher benchmark sample_count must be between 20 and 100")
+    base_url = base_url.strip().rstrip("/")
+    bearer = bearer.strip()
+    if not base_url or not bearer:
+        raise RuntimeError("dispatcher benchmark requires base_url and kid bearer")
+
+    auth = {"Authorization": f"Bearer {bearer}"}
+    image_bytes = _jpeg()
+    observation_ids: list[str] = []
+    create_request_ids: list[str] = []
+    scenario_counts: dict[str, int] = {
+        "unknown_no_location": 0,
+        "catalog_no_location": 0,
+        "catalog_coarse_location": 0,
+    }
+    started_at = datetime.now(UTC)
+
+    with httpx.Client(timeout=30.0, follow_redirects=False) as client:
+        expedition_request_ids: list[str] = []
+        start = _request(
+            client,
+            expedition_request_ids,
+            "POST",
+            f"{base_url}/v1/expeditions/backyard_starter/start",
+            headers=auth,
+        )
+        _expect(start, 201)
+
+        for index in range(sample_count):
+            key = str(ULID())
+            request_ids: list[str] = []
+            presign = _request(
+                client,
+                request_ids,
+                "POST",
+                f"{base_url}/v1/photos/presign",
+                headers={**auth, "Idempotency-Key": key},
+                json={"content_type": "image/jpeg"},
+            )
+            _expect(presign, 201)
+            reservation = presign.json()
+            upload_headers = reservation.get("upload_headers", {})
+            if upload_headers.get("x-ms-blob-type") != "BlockBlob":
+                raise RuntimeError("benchmark presign omitted BlockBlob header")
+            upload_url = reservation.get("upload_url")
+            photo_id = reservation.get("photo_id")
+            if not isinstance(upload_url, str) or not isinstance(photo_id, str):
+                raise RuntimeError("benchmark presign omitted upload resources")
+
+            upload = _request(
+                client,
+                request_ids,
+                "PUT",
+                upload_url,
+                headers=upload_headers,
+                content=image_bytes,
+            )
+            _expect(upload, 200, 201)
+
+            selector = index % 4
+            payload: dict[str, object] = {
+                "photo_id": photo_id,
+                "observed_at": datetime.now(UTC).isoformat(),
+                "location_source": "none",
+            }
+            if selector in (0, 3):
+                scenario = "unknown_no_location"
+                payload["identification_source"] = "unknown"
+            elif selector == 1:
+                scenario = "catalog_no_location"
+                payload.update(
+                    {
+                        "taxon_id": 9083,
+                        "identification_source": "catalog",
+                    }
+                )
+            else:
+                scenario = "catalog_coarse_location"
+                payload.update(
+                    {
+                        "taxon_id": 12727,
+                        "identification_source": "catalog",
+                        "geohash4": "dnp1",
+                        "location_source": "manual_coarse",
+                    }
+                )
+
+            created = _request(
+                client,
+                request_ids,
+                "POST",
+                f"{base_url}/v1/observations",
+                headers={**auth, "Idempotency-Key": key},
+                json=payload,
+            )
+            _expect(created, 201)
+            body = created.json()
+            observation_id = body.get("id")
+            if not isinstance(observation_id, str) or len(observation_id) != 26:
+                raise RuntimeError("benchmark create omitted canonical observation id")
+            if body.get("dispatch_status") != "complete":
+                raise RuntimeError(
+                    f"benchmark dispatch did not complete for scenario {scenario}"
+                )
+            create_id_list: list[str] = []
+            _record_request_id(created, create_id_list)
+            if len(create_id_list) != 1:
+                raise RuntimeError("benchmark create omitted request id")
+            observation_ids.append(observation_id)
+            create_request_ids.append(create_id_list[0])
+            scenario_counts[scenario] += 1
+
+    return DispatcherBenchmarkSeed(
+        result="seeded",
+        started_at=started_at.isoformat(),
+        finished_at=datetime.now(UTC).isoformat(),
+        sample_count=sample_count,
+        observation_ids=observation_ids,
+        create_request_ids=create_request_ids,
+        scenario_counts=scenario_counts,
+    )
 
 
 def main() -> None:

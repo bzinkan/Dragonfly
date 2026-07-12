@@ -25,7 +25,7 @@ import pytest
 from fastapi import HTTPException, Response
 from httpx import ASGITransport, AsyncClient
 from PIL import Image
-from sqlalchemy import func, select, text, update
+from sqlalchemy import event, func, select, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
@@ -1507,6 +1507,113 @@ def _expedition_body(expedition_id: str) -> models.JsonDict:
     }
 
 
+async def test_durable_dex_state_advances_not_in_dex_and_replays_once(
+    pg_harness: PgHarness,
+) -> None:
+    handlers = [DexHandler(), ExpeditionHandler()]
+    async with pg_harness.sessions() as session:
+        rows = await _seed_observation(session, taxon_id=9083)
+        expedition_id = "postgres_not_in_dex"
+        session.add_all(
+            [
+                models.ExpeditionContent(
+                    id=expedition_id,
+                    tier=1,
+                    content_hash="d" * 64,
+                    body={
+                        "id": expedition_id,
+                        "title": "New species",
+                        "tier": 1,
+                        "duration_minutes": 10,
+                        "environments": ["yard"],
+                        "intro": "Find something new.",
+                        "outro": "Done.",
+                        "prerequisites": [],
+                        "steps": [
+                            {
+                                "id": "newfind",
+                                "description": "Find a new species",
+                                "match": {"kind": "not_in_dex"},
+                            }
+                        ],
+                    },
+                    archived=False,
+                ),
+                models.ExpeditionProgress(
+                    id=_new_id(),
+                    user_id=rows.identity.user_id,
+                    group_id=rows.identity.group_id,
+                    expedition_id=expedition_id,
+                    completed_steps={},
+                    completed_at=None,
+                    created_at=datetime.now(UTC) - timedelta(days=1),
+                ),
+                *[
+                    models.ObservationHandlerRun(
+                        observation_id=rows.observation_id,
+                        handler_name=handler.name,
+                        handler_version=str(getattr(handler, "version", "1")),
+                        status="pending",
+                        state={},
+                        rewards=[],
+                        attempt_count=0,
+                    )
+                    for handler in handlers
+                ],
+            ]
+        )
+        await session.commit()
+
+        first = await dispatch(await _context(session, rows), handlers)
+
+    async with pg_harness.sessions() as session:
+        replay = await dispatch(await _context(session, rows), handlers)
+        progress = (
+            await session.execute(
+                select(models.ExpeditionProgress).where(
+                    models.ExpeditionProgress.user_id == rows.identity.user_id,
+                    models.ExpeditionProgress.expedition_id == expedition_id,
+                )
+            )
+        ).scalar_one()
+        contributions = (
+            (
+                await session.execute(
+                    select(models.ExpeditionObservationContribution).where(
+                        models.ExpeditionObservationContribution.observation_id
+                        == rows.observation_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        runs = (
+            (
+                await session.execute(
+                    select(models.ObservationHandlerRun).where(
+                        models.ObservationHandlerRun.observation_id == rows.observation_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    assert [reward.type for reward in first] == [
+        "first_find",
+        "expedition_complete",
+        "expedition_step",
+    ]
+    assert replay == first
+    assert set(progress.completed_steps) == {"newfind"}
+    assert len(contributions) == 1
+    assert {run.handler_name: run.attempt_count for run in runs} == {
+        "dex": 1,
+        "expedition": 1,
+    }
+
+
 async def test_expedition_contribution_gate_blocks_replay_from_advancing_again(
     pg_harness: PgHarness,
 ) -> None:
@@ -2202,25 +2309,140 @@ async def test_rejection_recovers_after_db_failure_once_clean_source_is_gone(
     assert revocation.attempt_count == 2
 
 
-class ProbeHandler:
-    version = "1"
+@pytest.mark.slow
+async def test_dispatcher_w1_unknown_query_budget(pg_harness: PgHarness) -> None:
+    async with pg_harness.sessions() as session:
+        rows = await _seed_observation(session, taxon_id=None)
+        for handler in HANDLERS:
+            session.add(
+                models.ObservationHandlerRun(
+                    observation_id=rows.observation_id,
+                    handler_name=handler.name,
+                    handler_version=str(getattr(handler, "version", "1")),
+                    status="pending",
+                    state={},
+                    rewards=[],
+                    attempt_count=0,
+                )
+            )
+        await session.commit()
+        ctx = await _context(session, rows)
 
-    def __init__(self, name: str) -> None:
-        self.name = name
+        statements: list[str] = []
 
-    async def handle(self, ctx: Context) -> HandlerResult:
-        del ctx
-        return HandlerResult(rewards=[])
+        def record_statement(
+            _connection: object,
+            _cursor: object,
+            statement: str,
+            _parameters: object,
+            _context: object,
+            _executemany: bool,
+        ) -> None:
+            statements.append(" ".join(statement.lower().split()))
+
+        event.listen(pg_harness.engine.sync_engine, "before_cursor_execute", record_statement)
+        try:
+            await dispatch(ctx, HANDLERS)
+        finally:
+            event.remove(
+                pg_harness.engine.sync_engine,
+                "before_cursor_execute",
+                record_statement,
+            )
+        ledger_rows = (
+            (
+                await session.execute(
+                    select(models.ObservationHandlerRun).where(
+                        models.ObservationHandlerRun.observation_id == rows.observation_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    assert len(statements) == 7, statements
+    assert sum(statement.startswith("savepoint ") for statement in statements) == 1
+    assert sum(statement.startswith("release savepoint ") for statement in statements) == 1
+    ledger_updates = [
+        statement
+        for statement in statements
+        if statement.startswith("update observation_handler_runs")
+    ]
+    assert len(ledger_updates) == 1
+    assert sum(" from expedition_progress " in statement for statement in statements) == 1
+    assert not any(" from dex_entries " in statement for statement in statements)
+    assert not any(" from rarity_cache " in statement for statement in statements)
+    assert not any(" from sanctuary_" in statement for statement in statements)
+    assert ctx.observation.dispatch_status == "complete"
+    assert ctx.observation.rewards == []
+    assert {run.handler_name: (run.status, run.attempt_count) for run in ledger_rows} == {
+        "dex": ("succeeded", 1),
+        "rarity": ("succeeded", 1),
+        "world": ("succeeded", 1),
+        "expedition": ("succeeded", 1),
+    }
 
 
 @pytest.mark.slow
-async def test_dispatcher_lightweight_p95_under_300ms(pg_harness: PgHarness) -> None:
+async def test_dispatcher_representative_p95_under_300ms(pg_harness: PgHarness) -> None:
     sample_count = int(os.getenv("OBSERVATION_DISPATCHER_PROBE_RUNS", "50"))
     if sample_count < 20:
         pytest.fail("OBSERVATION_DISPATCHER_PROBE_RUNS must be at least 20")
 
     async with pg_harness.sessions() as session:
         identity = await _seed_identity(session)
+        expedition_id = "dispatcher_representative_probe"
+        session.add_all(
+            [
+                models.SpeciesCache(
+                    taxon_id=9083,
+                    scientific_name="Cardinalis cardinalis",
+                    common_name="Northern Cardinal",
+                    rank="species",
+                    iconic_taxon="Aves",
+                    ancestor_ids=[3],
+                    aliases=["cardinal"],
+                    active=True,
+                    catalog_version="dispatcher-probe",
+                    source_payload={},
+                ),
+                models.ExpeditionContent(
+                    id=expedition_id,
+                    tier=1,
+                    content_hash="e" * 64,
+                    body={
+                        "id": expedition_id,
+                        "title": "Dispatcher probe",
+                        "tier": 1,
+                        "duration_minutes": 10,
+                        "environments": ["yard"],
+                        "intro": "Probe.",
+                        "outro": "Done.",
+                        "prerequisites": [],
+                        "steps": [
+                            {
+                                "id": f"step_{index}",
+                                "description": "Find an organism",
+                                "match": {"kind": "any_organism"},
+                            }
+                            for index in range(min(sample_count, 5))
+                        ],
+                    },
+                    archived=False,
+                ),
+                models.ExpeditionProgress(
+                    id=_new_id(),
+                    user_id=identity.user_id,
+                    group_id=identity.group_id,
+                    expedition_id=expedition_id,
+                    completed_steps={},
+                    completed_at=None,
+                    created_at=datetime.now(UTC) - timedelta(days=1),
+                ),
+            ]
+        )
+        await session.commit()
         rows: list[ObservationRows] = []
         for index in range(sample_count):
             photo_id, submission_key = await _add_photo(session, identity)
@@ -2231,9 +2453,21 @@ async def test_dispatcher_lightweight_p95_under_300ms(pg_harness: PgHarness) -> 
                     photo_id=photo_id,
                     submission_key=submission_key,
                     observation_id=observation_id,
-                    taxon_id=10_000 + index,
+                    taxon_id=None if index % 2 == 0 else 9083,
                 )
             )
+            for handler in HANDLERS:
+                session.add(
+                    models.ObservationHandlerRun(
+                        observation_id=observation_id,
+                        handler_name=handler.name,
+                        handler_version=str(getattr(handler, "version", "1")),
+                        status="pending",
+                        state={},
+                        rewards=[],
+                        attempt_count=0,
+                    )
+                )
             await session.commit()
             rows.append(
                 ObservationRows(
@@ -2244,25 +2478,20 @@ async def test_dispatcher_lightweight_p95_under_300ms(pg_harness: PgHarness) -> 
                 )
             )
 
-    handlers = [
-        ProbeHandler("dex"),
-        ProbeHandler("rarity"),
-        ProbeHandler("world"),
-        ProbeHandler("expedition"),
-    ]
     durations_ms: list[float] = []
     for observation_rows in rows:
         async with pg_harness.sessions() as session:
             ctx = await _context(session, observation_rows)
             started = perf_counter()
-            await dispatch(ctx, handlers)
+            await dispatch(ctx, HANDLERS)
             durations_ms.append((perf_counter() - started) * 1000)
+            assert ctx.observation.dispatch_status == "complete"
 
     ordered = sorted(durations_ms)
     p95_index = max(0, math.ceil(0.95 * len(ordered)) - 1)
     p95_ms = ordered[p95_index]
     print(
-        "dispatcher_probe "
+        "dispatcher_representative_probe "
         f"samples={len(ordered)} p95_ms={p95_ms:.2f} "
         f"min_ms={ordered[0]:.2f} max_ms={ordered[-1]:.2f}"
     )

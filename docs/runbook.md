@@ -101,6 +101,13 @@ HINTERLAND_SMOKE_ENTRA_BEARER="<access-token>" \
 python scripts/smoke_azure_parent_kid.py
 ```
 
+The protected promotion additionally requires at least 900 seconds of token
+lifetime before the authenticated stage. Its throwaway kid seeds 50 mixed
+dispatcher samples, then the workflow polls exact-revision Log Analytics and
+fails closed unless every sample is complete and nearest-rank p95 is below
+300 ms. The resulting artifact contains aggregate timings and bounded request
+IDs, never SAS URLs, coordinates, image bytes, or child text.
+
 It records the exact current consent version with an in-memory 256-bit nonce,
 then requires parent signup to present that exact receipt/proof and link it to
 the canonical adult. The raw nonce is never written to logs or evidence. A
@@ -166,8 +173,10 @@ powershell -File scripts/verify_observation_postgres.ps1
 ```
 
 The Observation verification script runs migrations and concurrency,
-failure/replay, review race, rebuild, and dispatcher-p95 tests against a
-disposable PostgreSQL 16 container.
+failure/replay, review race, rebuild, a bounded Unknown-path SQL budget, and a
+mixed real-handler dispatcher-p95 probe against disposable PostgreSQL 16. The
+protected workflow separately verifies deployed Azure p95; localhost timing is
+not accepted as release evidence.
 
 ## W1 Internal Testing Configuration
 
