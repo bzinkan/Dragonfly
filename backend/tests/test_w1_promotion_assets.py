@@ -176,11 +176,8 @@ def test_w1_promotion_order_and_containment_are_explicit() -> None:
     assert workflow.count('--arg expected_client "$job_uami_client_id"') >= 2
     assert workflow.count('.identity.type == "UserAssigned"') >= 2
     assert workflow.count('select(.name == "AZURE_CLIENT_ID")') >= 2
-    assert workflow.count('== [$expected_client]') >= 2
-    assert (
-        'assert_env app "${AZURE_CONTAINER_APP}" AZURE_CLIENT_ID "$uami_client_id"'
-        in workflow
-    )
+    assert workflow.count("== [$expected_client]") >= 2
+    assert 'assert_env app "${AZURE_CONTAINER_APP}" AZURE_CLIENT_ID "$uami_client_id"' in workflow
     assert (
         'assert_env app "${AZURE_ROLLBACK_CONTAINER_APP}" AZURE_CLIENT_ID \\\n            "$rollback_uami_client_id"'
         in workflow
